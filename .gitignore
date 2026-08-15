@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+.vercel/
+.supabase/
+
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# never commit real clinic data
+/data/
+*.dump
+*.sql.gz
