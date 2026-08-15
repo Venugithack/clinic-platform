@@ -230,6 +230,7 @@ Nothing here is unusual, but the build genuinely cannot finish without it.
 | **Supplier list** with WhatsApp numbers | |
 | **A physical stock count** on one day, clinic closed | Everything after this depends on the opening numbers being right |
 | **Documents for Meta verification** — GST certificate or registration, address proof | Start day one |
+| **A privacy policy published on your website** | Meta has required this since January 2026 before any automated message can be sent. I draft it, you approve and publish |
 | **A new SIM** for WhatsApp | It cannot be a number already on WhatsApp or WhatsApp Business |
 | **A 4G backup on your internet router** | ~₹300/month. So a broadband failure never stops a consultation |
 | **Drug licence and pharmacist details** | Needed for the Schedule H1 register |

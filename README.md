@@ -10,6 +10,7 @@ one is a demo, this one has a paying client and a real drug shelf behind it.
 |---|---|---|
 | [`PLAN.md`](PLAN.md) | **you only** | the full build plan — architecture, data model, day estimates, risk register, your pricing anchors, and the questions you need to answer yourself. Not for the client |
 | [`PROPOSAL.md`](PROPOSAL.md) | **the client** | the same plan written for the doctor — what he gets, what it costs him, what he must supply, what he must decide. Safe to send as-is once the bracketed placeholders are filled |
+| [`WHATSAPP.md`](WHATSAPP.md) | **you only** | why WhatsApp automation is a grey area — six separate ambiguities, how to spot an unofficial vendor, and every message in this build classified by risk. Decides the supplier-send question |
 
 Placeholders to fill in `PROPOSAL.md` before sending: clinic name, date, build
 fee (§10). Everything else is complete.

@@ -281,6 +281,7 @@ Start these on **day 1, before the first commit**:
 | Task | Owner | Lead time |
 |---|---|---|
 | Meta Business Account + **business verification** (needs GST cert / incorporation docs / utility bill) | Client, you assist | **3 days – 3 weeks**, unpredictable |
+| **Published privacy policy at a public URL** — mandatory since Jan 2026 before any template can send | You draft, client publishes | 1 day |
 | Dedicated phone number for WhatsApp Business Platform — must **not** be on the WhatsApp or WhatsApp Business app | Client | 1 day (new SIM) |
 | Display-name approval | Client | 1–3 days |
 | Message template submission and approval | You | Hours – 2 days each, rejections common |
@@ -295,6 +296,10 @@ Quote 12 weeks. Do not quote 6.
 ---
 
 ## 10. WhatsApp — the part that can sink this
+
+> Full treatment in [`WHATSAPP.md`](WHATSAPP.md) — the six distinct grey areas,
+> how to spot an unofficial vendor, and every message in this build classified
+> by category, opt-in status and risk. Read it before answering §18 Q5.
 
 ### 10.1 What Meta actually allows
 
