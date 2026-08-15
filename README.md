@@ -4,7 +4,17 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**No code yet. [`PLAN.md`](PLAN.md) is the whole repo until §20 is signed off.**
+**No code yet.** Two documents:
+
+| File | Audience | |
+|---|---|---|
+| [`PLAN.md`](PLAN.md) | **you only** | the full build plan — architecture, data model, day estimates, risk register, your pricing anchors, and the questions you need to answer yourself. Not for the client |
+| [`PROPOSAL.md`](PROPOSAL.md) | **the client** | the same plan written for the doctor — what he gets, what it costs him, what he must supply, what he must decide. Safe to send as-is once the bracketed placeholders are filled |
+
+Placeholders to fill in `PROPOSAL.md` before sending: clinic name, date, build
+fee (§10). Everything else is complete.
+
+Build starts after `PLAN.md` §20 is signed off.
 
 | | |
 |---|---|
