@@ -4,7 +4,7 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**No code yet.** Six documents:
+**No code yet.** Seven documents:
 
 | File | Audience | |
 |---|---|---|
@@ -14,6 +14,7 @@ one is a demo, this one has a paying client and a real drug shelf behind it.
 | [`HOSTING.md`](HOSTING.md) | **you only** | how this runs for ₹0/month, what free costs in reliability, the backup rig that replaces what free tiers omit, and the one-day exit ramp to paid |
 | [`INVENTORY.md`](INVENTORY.md) | **you only** | the inventory design brief — base units, barcode, costing, blind stock-take, expiry returns, salt-based substitution, reorder intelligence |
 | [`TABLET.md`](TABLET.md) | **you only** | the tablet-first UI/UX brief — layout, touch rules, the three interactions that decide whether it feels good, and the USB-printer trap |
+| [`BUILD.md`](BUILD.md) | **you only** | how the build actually starts — M0 day by day, the gates after it, what is blocked and on whom. **Read §0 first: one decision blocks the first migration** |
 
 Placeholders to fill in `PROPOSAL.md` before sending: clinic name, date, build
 fee (§10). Everything else is complete.
@@ -36,5 +37,6 @@ Build starts after `PLAN.md` §20 is signed off.
 4. The §18.2 WhatsApp session with the doctor — six decisions, ~30 minutes, gates Meta verification
 5. Free-tier risks accepted in writing (`HOSTING.md` §9)
 6. Check the model number of the clinic's A4 printer — **a tablet cannot print over USB** (`TABLET.md` §1)
-7. Meta business verification started (day 1, it gates two modules)
-8. §20 signed
+7. Meta business verification started (day 1, and `WHATSAPP.md` §0 may show it is not needed at all)
+8. **`BUILD.md` §0 — Q15, multi-tenant or not.** Venu's call, and it blocks the first migration
+9. §20 signed
