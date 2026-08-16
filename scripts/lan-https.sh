@@ -41,8 +41,18 @@ cat <<BANNER
         - confirm https://${HOST}:3000 shows no warning
         - then install the PWA from the browser menu
 
- Both tablets need this. A certificate the tablet does not trust
- fails exactly like no certificate at all.
+   4. Install the printer's Android print service plugin:
+        - Mopria Print Service if the printer is Mopria-certified,
+          otherwise the manufacturer's own (HP / Canon / Brother /
+          Epson Print Enabler)
+        - Android does NOT discover network printers on its own. With
+          no plugin the print dialog finds nothing, and the printer
+          looks broken when it is not.
+        - then print one real prescription and keep the sheet
+
+ Both tablets need all of this. A certificate the tablet does not trust
+ fails exactly like no certificate at all, and a print dialog with no
+ plugin behind it fails exactly like a printer that is switched off.
 
 ─────────────────────────────────────────────────────────────
 BANNER
@@ -79,10 +89,12 @@ Serve the app over it with:
     --experimental-https-key  ${CERT_DIR}/${HOST}-key.pem \\
     --experimental-https-cert ${CERT_DIR}/${HOST}.pem
 
-Then, on each tablet, confirm all three before calling M0 §1.3 done:
+Then, on each tablet, confirm all four before calling M0 §1.3 done:
 
   [ ] https://${HOST}:3000 loads with no certificate warning
   [ ] the app installs to the home screen and opens fullscreen
   [ ] the camera opens when a scan button is tapped
+  [ ] the clinic's A4 appears in the print dialog, and a real
+      prescription prints on it
 
 DONE

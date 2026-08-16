@@ -304,20 +304,23 @@ Worth recording because each was invisible to the layer above it:
 The M1 gate does not close until the prescription prints on the clinic's own A4
 printer, and that is now the riskiest open item in the build.
 
-**16 Aug 2026: the clinic's printer is a Bluetooth printer.** That does not
-solve the trap in `TABLET.md` §1 — it is the same trap wearing a different
-cable. Web Bluetooth is BLE-only and cannot speak the Classic SPP that thermal
-printers use; Web Serial can, but only on desktop Chrome, not Android; and
-Mopria, which is what `window.print()` reaches on Android, excludes Bluetooth
-outright. A Bluetooth-*only* printer is unreachable from these tablets.
+**16 Aug 2026 — resolved, and it went the good way.** The clinic's A4 is a
+Bluetooth printer **and** has Wi-Fi/Ethernet. Nothing to buy, nothing to build:
+the tablets reach it over the clinic Wi-Fi and the Bluetooth radio is never
+used.
 
-What settles it is the **model number**, not the word "Bluetooth":
+It is worth recording how close this came to being expensive. Bluetooth is not
+a network, and had the printer been Bluetooth-only it would have been as
+unusable as USB — Web Bluetooth is BLE-only and cannot speak the Classic SPP
+that thermal printers use; Web Serial can, but only on desktop Chrome, not
+Android; and Mopria, which is what `window.print()` reaches on Android,
+excludes Bluetooth outright (`TABLET.md` §1). The word "Bluetooth" nearly read
+as reassurance when it was the opposite.
 
-| The spec sheet says | What it costs |
-|---|---|
-| Bluetooth **and** Wi-Fi / Wi-Fi Direct / Ethernet | Nothing. Use the network, ignore the Bluetooth |
-| Bluetooth only, A4 | ~₹2,000 Wi-Fi print server, or replace the printer |
-| Bluetooth only, 80 mm thermal | ~₹3–5k for a Wi-Fi thermal. The alternative — a native companion app to bridge the PWA to a Classic SPP socket — is days of work and an app to maintain forever, for one printer |
+**One residual step, added to the M0 §1.3 tablet setup:** Android does not
+discover network printers by itself. It needs Mopria Print Service, or the
+manufacturer's own plugin, installed on each tablet. Without one the print
+dialog finds nothing and the printer looks broken when it is not.
 
-No code changes either way: the print view already renders HTML and hands it to
-the OS print dialog, which is correct for any printer the tablet can see.
+So the M1 gate now needs exactly one thing, and it is ten minutes in the
+clinic: install the plugin on both tablets and print one real prescription.

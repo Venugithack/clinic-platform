@@ -55,9 +55,24 @@ extra hazard: everybody assumes Bluetooth works, so nobody checks.
 and ignore the Bluetooth. Many mid-range A4 printers are both, which is why the
 model number — not the word "Bluetooth" — is the thing that settles this.
 
-**Check the model number this week**, and specifically whether the spec sheet
-lists Wi-Fi, Wi-Fi Direct or Ethernet alongside Bluetooth. If it lists only
-Bluetooth, that is a purchase he needs to plan.
+#### Settled 16 Aug 2026
+
+**The clinic's A4 is Bluetooth *and* Wi-Fi/Ethernet.** Nothing to buy, nothing
+to build: the tablets reach it over the clinic Wi-Fi and the Bluetooth radio is
+never used. Had it been Bluetooth-only, none of the above would have worked.
+
+One residual step remains, and it belongs in the M0 §1.3 tablet setup because
+that is when both tablets are already in hand:
+
+> **Install the printer's Android print service plugin on both tablets.**
+> Android does not discover network printers by itself — it goes through
+> Mopria Print Service (if the printer is Mopria-certified) or the
+> manufacturer's own plugin: HP Print Service, Canon Print Service, Brother
+> Print Service, Epson Print Enabler. Without one, the print dialog finds
+> nothing and the printer looks broken when it is not.
+
+Then print one real prescription on it before go-live. That is the last thing
+standing between M1 and a closed gate.
 
 Sources: [Chrome — Serial over Bluetooth on the
 web](https://developer.chrome.com/blog/serial-over-bluetooth) ·
