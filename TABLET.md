@@ -22,23 +22,48 @@ people who are looking at a patient more than at a screen.
 
 ### The printing trap — settle this before go-live
 
-**A tablet cannot print to a USB printer.** No driver, no cable, no workaround.
-His answer to Q9 was "A4 now, small printer later," and that answer has a hidden
-requirement in it.
+**A tablet can only print to a printer the tablet can reach over the network.**
+Not USB, and — corrected 16 Aug 2026 — **not Bluetooth either.**
 
 | | Requirement | If not |
 |---|---|---|
-| **Existing A4** | must be **network or Wi-Fi** capable | add a ~₹2,000 Wi-Fi print server, or it cannot be used from a tablet at all |
-| **Small printer, when he buys it** | **80 mm thermal, Wi-Fi or LAN** | Bluetooth-only works on Android via Web Bluetooth but is fragile; USB-only does not work at all |
+| **Existing A4** | reachable over **Wi-Fi or the LAN** | a ~₹2,000 Wi-Fi print server, or it cannot be used from a tablet at all |
+| **Small printer, when he buys it** | **80 mm thermal, Wi-Fi or LAN** | a Bluetooth-only thermal needs a native companion app — days of work plus an app to maintain forever. Buy Wi-Fi |
 
 Print itself is plain HTML with `@page` rules — A4 for prescriptions and full
 bills, 80 mm for counter receipts — rendered client-side and sent through the
 OS print dialog. Same codebase, two stylesheets, no server involved and nothing
 to install.
 
-**Check the model number of his current printer this week.** If it is USB-only,
-that is a purchase he needs to plan, and finding out on go-live day is the worst
-possible time.
+#### Bluetooth is not the escape hatch — corrected 16 Aug 2026
+
+An earlier version of this section said a Bluetooth-only printer "works on
+Android via Web Bluetooth but is fragile." **That was wrong**, and it was the
+kind of wrong that only surfaces on go-live day. Three independent facts close
+the path:
+
+| Fact | Consequence |
+|---|---|
+| The **Web Bluetooth API is BLE GATT only** — it does not speak Bluetooth Classic SPP/RFCOMM, and there is no BLE replacement for SPP | ESC/POS thermal printers are Classic SPP. The PWA cannot open a socket to one |
+| The **Web Serial API** *can* speak RFCOMM to paired Classic devices — but only in **Chrome 117+ on desktop** | The clinic's devices are Android tablets. The one web-native path that exists does not exist on the hardware being bought |
+| **Mopria Print Service explicitly excludes Bluetooth**: it prints over Wi-Fi or Wi-Fi Direct only | `window.print()` reaches the Android print framework, and the print framework cannot see the printer |
+
+So a Bluetooth-only printer is in the same category as a USB-only one, with one
+extra hazard: everybody assumes Bluetooth works, so nobody checks.
+
+**A printer that is Bluetooth *and* Wi-Fi is completely fine.** Use the Wi-Fi
+and ignore the Bluetooth. Many mid-range A4 printers are both, which is why the
+model number — not the word "Bluetooth" — is the thing that settles this.
+
+**Check the model number this week**, and specifically whether the spec sheet
+lists Wi-Fi, Wi-Fi Direct or Ethernet alongside Bluetooth. If it lists only
+Bluetooth, that is a purchase he needs to plan.
+
+Sources: [Chrome — Serial over Bluetooth on the
+web](https://developer.chrome.com/blog/serial-over-bluetooth) ·
+[WICG/serial Bluetooth
+explainer](https://github.com/WICG/serial/blob/main/EXPLAINER_BLUETOOTH.md) ·
+[Mopria print and scan support FAQ](https://mopria.org/faq)
 
 ---
 

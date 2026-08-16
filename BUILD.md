@@ -301,7 +301,23 @@ Worth recording because each was invisible to the layer above it:
 
 ### Still outstanding, and still not code
 
-The M1 gate does not close until the prescription prints on the clinic's own
-A4 printer. That is a physical test, and `TABLET.md` §1's trap applies first:
-**a tablet cannot print over USB at all.** The printer's model number is the
-thing to check this week.
+The M1 gate does not close until the prescription prints on the clinic's own A4
+printer, and that is now the riskiest open item in the build.
+
+**16 Aug 2026: the clinic's printer is a Bluetooth printer.** That does not
+solve the trap in `TABLET.md` §1 — it is the same trap wearing a different
+cable. Web Bluetooth is BLE-only and cannot speak the Classic SPP that thermal
+printers use; Web Serial can, but only on desktop Chrome, not Android; and
+Mopria, which is what `window.print()` reaches on Android, excludes Bluetooth
+outright. A Bluetooth-*only* printer is unreachable from these tablets.
+
+What settles it is the **model number**, not the word "Bluetooth":
+
+| The spec sheet says | What it costs |
+|---|---|
+| Bluetooth **and** Wi-Fi / Wi-Fi Direct / Ethernet | Nothing. Use the network, ignore the Bluetooth |
+| Bluetooth only, A4 | ~₹2,000 Wi-Fi print server, or replace the printer |
+| Bluetooth only, 80 mm thermal | ~₹3–5k for a Wi-Fi thermal. The alternative — a native companion app to bridge the PWA to a Classic SPP socket — is days of work and an app to maintain forever, for one printer |
+
+No code changes either way: the print view already renders HTML and hands it to
+the OS print dialog, which is correct for any printer the tablet can see.
