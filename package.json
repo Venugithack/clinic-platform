@@ -14,7 +14,7 @@
     "lint": "eslint . && node scripts/lint-css-hover.mjs",
     "test:unit": "vitest run",
     "test:db": "./scripts/db-test.sh",
-    "test:e2e": "playwright test",
+    "test:e2e": "./scripts/dev-stack.sh && playwright test",
     "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:db && pnpm test:e2e",
     "db:start": "./scripts/db-start.sh",
     "db:stop": "./scripts/db-stop.sh",
@@ -36,11 +36,14 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@types/ws": "^8.18.1",
     "eslint": "^10.8.1",
+    "pg": "^8.23.0",
     "supabase": "2.114.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.67.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "ws": "^8.21.3"
   }
 }

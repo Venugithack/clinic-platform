@@ -24,6 +24,8 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import pg from 'pg';
+import { WebSocketServer } from 'ws';
 
 const PG_PORT = process.env.PGPORT ?? '54329';
 const PG_DB = process.env.PGDATABASE ?? 'clinic';
@@ -95,10 +97,24 @@ writeFileSync(
 );
 
 const pgrst = spawn(PGRST_BIN, [confPath], { stdio: ['ignore', 'inherit', 'inherit'] });
+
 pgrst.on('error', (error) => {
   console.error(`could not start PostgREST (${PGRST_BIN}): ${error.message}`);
   process.exit(1);
 });
+
+// If PostgREST dies — most often because an orphan from a previous run still
+// holds the port — take the whole stack down with it. The alternative is this
+// proxy happily forwarding to somebody else's PostgREST, serving a schema cache
+// from before the latest migration.
+pgrst.on('exit', (code) => {
+  console.error(`PostgREST exited (${code}); shutting down so nothing answers in its place`);
+  process.exit(1);
+});
+
+// Kill the child on every path out, not just the signal handlers. A SIGKILL to
+// this process leaves PostgREST orphaned and holding port 54322.
+process.on('exit', () => pgrst.kill());
 
 // ---------------------------------------------------------------------------
 // supabase-js posts to `${url}/rest/v1/...`; PostgREST serves at the root. The
@@ -133,17 +149,60 @@ const proxy = createServer((clientReq, clientRes) => {
   clientReq.pipe(upstream);
 });
 
+// ---------------------------------------------------------------------------
+// Realtime, over LISTEN/NOTIFY.
+//
+// This is the WebSocket half of HOSTING.md §7: "Realtime behind one adapter —
+// swap for a WS server without touching a screen." lib/realtime's websocket
+// adapter connects here, and the screens cannot tell it from Supabase Realtime.
+//
+// The relay forwards the notification verbatim — table, op and id, nothing
+// more. Row data would bypass RLS on its way to the browser; the client is told
+// that something changed and re-reads it through lib/db.
+// ---------------------------------------------------------------------------
+const realtime = new WebSocketServer({ noServer: true });
+
+proxy.on('upgrade', (request, socket, head) => {
+  if (!request.url?.startsWith('/realtime')) {
+    socket.destroy();
+    return;
+  }
+  realtime.handleUpgrade(request, socket, head, (client) => {
+    realtime.emit('connection', client, request);
+  });
+});
+
+const listener = new pg.Client({
+  host: '127.0.0.1',
+  port: Number(PG_PORT),
+  user: PG_USER,
+  database: PG_DB,
+});
+
+await listener.connect();
+await listener.query('listen clinic_changes');
+
+listener.on('notification', (message) => {
+  if (!message.payload) return;
+  for (const client of realtime.clients) {
+    if (client.readyState === 1) client.send(message.payload);
+  }
+});
+
 proxy.listen(PUBLIC_PORT, '127.0.0.1', () => {
   console.log(`dev API   http://127.0.0.1:${PUBLIC_PORT}`);
+  console.log(`realtime  ws://127.0.0.1:${PUBLIC_PORT}/realtime`);
   console.log(`anon key  ${anonKey}`);
   console.log('');
   console.log('Put these in .env.local:');
   console.log(`  NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:${PUBLIC_PORT}`);
   console.log(`  NEXT_PUBLIC_SUPABASE_ANON_KEY=${anonKey}`);
+  console.log(`  NEXT_PUBLIC_REALTIME_WS_URL=ws://127.0.0.1:${PUBLIC_PORT}/realtime`);
 });
 
 const shutdown = () => {
   pgrst.kill();
+  void listener.end();
   proxy.close();
   process.exit(0);
 };

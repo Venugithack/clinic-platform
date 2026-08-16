@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0 and M1 are built** (16 Aug 2026) — see [What is built](#what-is-built)
-below, and `BUILD.md` §5–6. Seven documents describe the rest:
+**M0, M1 and M2 are built** (16 Aug 2026) — see [What is built](#what-is-built)
+below, and `BUILD.md` §5–7. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -14,7 +14,7 @@ below, and `BUILD.md` §5–6. Seven documents describe the rest:
 | [`WHATSAPP.md`](WHATSAPP.md) | **you only** | why WhatsApp automation is a grey area — six separate ambiguities, how to spot an unofficial vendor, and every message in this build classified by risk. Decides the supplier-send question |
 | [`HOSTING.md`](HOSTING.md) | **you only** | how this runs for ₹0/month, what free costs in reliability, the backup rig that replaces what free tiers omit, and the one-day exit ramp to paid |
 | [`INVENTORY.md`](INVENTORY.md) | **you only** | the inventory design brief — base units, barcode, costing, blind stock-take, expiry returns, salt-based substitution, reorder intelligence |
-| [`TABLET.md`](TABLET.md) | **you only** | the tablet-first UI/UX brief — layout, touch rules, the three interactions that decide whether it feels good, and the USB-printer trap |
+| [`TABLET.md`](TABLET.md) | **you only** | the tablet-first UI/UX brief — layout, touch rules, the three interactions that decide whether it feels good, and the printer trap |
 | [`BUILD.md`](BUILD.md) | **you only** | how the build actually starts — M0 day by day, the gates after it, what is blocked and on whom. **Read §0 first: one decision blocks the first migration** |
 
 Placeholders to fill in `PROPOSAL.md` before sending: clinic name, date, build
@@ -23,21 +23,26 @@ fee (§10). Everything else is complete.
 ## What is built
 
 **M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
-consult, a signed prescription and a printable A4 sheet.
+consult, a signed prescription and a printable A4 sheet. **M2** — the
+doctor↔counter live link, the feature the clinic actually bought.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
-  (clinic)/         queue · register walk-in · consult · Rx print
+  (clinic)/         queue · register walk-in · consult · Rx print · counter
   p/  now/          patient portal and public status page, default-deny
-components/         three-pane shell, numpad, drug search, quantity pad
+components/         three-pane shell, numpad, drug search, quantity pad,
+                    the counter's questions
 lib/
   db/               the ONLY module that imports @supabase/* — lint-enforced
   transitions/      typed wrappers over the plpgsql RPCs
-  auth/  realtime/  swappable adapters (HOSTING.md §7)
+  auth/             device session + staff PIN (TABLET.md §5)
+  realtime/         two adapters: Supabase Realtime, and WebSocket over
+                    LISTEN/NOTIFY — the HOSTING.md §7 swap, exercised on
+                    every test run rather than asserted
   units/            base-unit conversion (INVENTORY.md §1)
 supabase/
-  migrations/       10 forward-only migrations — the schema
-  tests/            91 pgTAP assertions
+  migrations/       12 forward-only migrations — the schema
+  tests/            120 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -59,10 +64,15 @@ database enforces rather than something the team remembers.
 **The M1 gate** is `e2e/m1-gate.spec.ts`, driven against a real Postgres with
 real RLS and the real transitions — not a stubbed API.
 
+**The M2 gate** is `e2e/m2-live-link.spec.ts`, driven across two browser
+contexts because one context proves nothing about a link between two devices.
+It measures the latency and fails above 1.5s, so a regression to polling breaks
+the build. It currently runs at ~130ms.
+
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
-tablets, PWA install, and the printer check. All four happen in the clinic, and
-the printer one comes first: **a tablet cannot print over USB at all.**
-`scripts/lan-https.sh` is the runbook.
+tablets, PWA install, the printer's Android print service plugin, and one real
+sheet printed. All of it happens in the clinic; `scripts/lan-https.sh` is the
+runbook and carries the checklist.
 
 Build continues after `PLAN.md` §20 is signed off.
 
@@ -81,7 +91,7 @@ Build continues after `PLAN.md` §20 is signed off.
 3. ~~§10.4 supplier send mode chosen~~ — **one-tap approval**, chosen 16 Aug 2026
 4. The §18.2 WhatsApp session with the doctor — six decisions, ~30 minutes, gates Meta verification
 5. Free-tier risks accepted in writing (`HOSTING.md` §9)
-6. Check the model number of the clinic's A4 printer — **a tablet cannot print over USB** (`TABLET.md` §1)
+6. ~~Check the model number of the clinic's A4 printer~~ — **settled 16 Aug 2026: it is Bluetooth *and* Wi-Fi, so nothing to buy.** Bluetooth alone would not have worked (`TABLET.md` §1)
 7. Meta business verification started (day 1, and `WHATSAPP.md` §0 may show it is not needed at all)
 8. ~~**`BUILD.md` §0 — Q15, multi-tenant or not**~~ — **single-tenant, decided 16 Aug 2026.** The first migration is applied
 9. §20 signed

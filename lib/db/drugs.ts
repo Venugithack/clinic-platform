@@ -81,6 +81,58 @@ export async function frequentDrugs(limit = 12): Promise<DrugRow[]> {
   );
 }
 
+/**
+ * What the counter may propose instead.
+ *
+ * INVENTORY.md §7: same salt + same strength + same dosage form = substitutable,
+ * and nothing else is. Matching identical salts is a lookup, not a clinical
+ * inference — no interaction checking, no therapeutic alternatives, no
+ * "similar" drugs. The transition enforces the same rule on the way in, so this
+ * query cannot widen it; it only decides what the pharmacist is shown.
+ */
+export async function equivalentDrugs(drug: DrugRow): Promise<DrugRow[]> {
+  const { data, error } = await db()
+    .from('drug_availability')
+    .select('*')
+    .eq('active', true)
+    .eq('salt_composition', drug.salt_composition)
+    .eq('strength', drug.strength)
+    .eq('form', drug.form)
+    .neq('id', drug.id)
+    .order('name');
+
+  if (error) throw new Error(error.message);
+
+  // In stock first: an equivalent that is also out is not a proposal worth
+  // sending to the doctor.
+  return ((data ?? []) as DrugRow[]).sort(
+    (a, b) => b.qty_base_available - a.qty_base_available,
+  );
+}
+
+export async function drugsByIds(ids: string[]): Promise<Map<string, DrugRow>> {
+  if (ids.length === 0) return new Map();
+
+  const { data, error } = await db()
+    .from('drug_availability')
+    .select('*')
+    .in('id', ids);
+
+  if (error) throw new Error(error.message);
+  return new Map(((data ?? []) as DrugRow[]).map((drug) => [drug.id, drug]));
+}
+
+export async function getDrug(id: string): Promise<DrugRow | null> {
+  const { data, error } = await db()
+    .from('drug_availability')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data as DrugRow) ?? null;
+}
+
 /** "18 in stock · Mar 2027", or "OUT". Expiries read as printed on the strip. */
 export function stockBadge(drug: DrugRow): { label: string; out: boolean } {
   if (drug.qty_base_available <= 0) return { label: 'OUT', out: true };

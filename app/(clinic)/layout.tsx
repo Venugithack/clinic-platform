@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { currentSession, touch, type StaffSession } from '@/lib/auth';
+import { CounterQueries } from '@/components/CounterQueries';
 
 export default function ClinicLayout({
   children,
@@ -44,7 +45,15 @@ export default function ClinicLayout({
   if (session === undefined) return null;
   if (session === null) return null;
 
-  return <div className="h-full">{children}</div>;
+  return (
+    <div className="flex h-full flex-col">
+      {/* The counter's questions ride above every clinic screen, because the
+          doctor is not reliably sitting on the consult screen when the
+          pharmacist reaches the shelf (PLAN.md §11.1). */}
+      <CounterQueries />
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
 }
 
 function throttle(fn: () => void, ms: number): () => void {

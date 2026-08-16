@@ -324,3 +324,63 @@ dialog finds nothing and the printer looks broken when it is not.
 
 So the M1 gate now needs exactly one thing, and it is ten minutes in the
 clinic: install the plugin on both tablets and print one real prescription.
+
+---
+
+## 7. M2 status — the live link, built 16 Aug 2026
+
+**This is the demo.** It is the feature the doctor bought and the first moment
+the build justifies itself in the room (§4). Show it the day it works.
+
+**Gate:** *"Rx signed on tablet A is on tablet B in under a second, in the two
+real rooms, over the clinic Wi-Fi. Counter raises 'out of stock', doctor answers
+without leaving the consult screen."*
+
+Both halves are built and covered by a Playwright test driving **two browser
+contexts** — separate storage, separate PIN sessions, separate subscriptions,
+because one context proves nothing about a link between two devices. Measured
+latency on the loopback stack is **126–166 ms**, and the test fails above 1.5 s
+so a regression to polling breaks the build rather than quietly costing a
+second.
+
+| Delivered | |
+|---|---|
+| **Pharmacy queue** | Newest signed prescription at the top, arriving live, colour-coded full / partial / out. The colour is computed in the view, so the counter and the doctor cannot disagree about what "partial" means |
+| **The return leg** | The counter raises out-of-stock, proposes a substitute, or asks a question. One open question per line |
+| **The doctor's answer** | A strip above every clinic screen, not just the consult — the doctor is rarely still on that patient when the pharmacist reaches the shelf. Approve, amend or reject, then back to what they were doing |
+| **Substitution** | Same salt, same strength, same form, or nothing — enforced on **both** ends of the loop, so neither a wrong screen nor a hand-written call can widen it (INVENTORY.md §7) |
+
+Two tables and four transitions, exactly as §11.1 predicted:
+`prescriptions` + `counter_queries`, and `sign_prescription` + `raise` +
+`answer` + `withdraw`.
+
+### Realtime is now real, and so is the exit ramp
+
+`lib/realtime` had been an adapter with nothing behind it. It now ships two:
+Supabase Realtime for production, and a WebSocket adapter over Postgres
+`LISTEN/NOTIFY` for local development and the E2E suite. HOSTING.md §7's promise
+— *"swap for a WS server without touching a screen"* — is therefore exercised on
+every test run rather than asserted in a document, and the fallback it names
+actually exists.
+
+A change carries an **id, never a row**. The realtime payload does not pass
+through RLS, so handing it to a screen would hand over fields the reader's
+policies might not allow; screens are told that something changed and re-read it
+through `lib/db`.
+
+**What this does not prove** is the clause about the two real rooms. Wi-Fi
+latency, a tablet's radio sleeping and the range from the cabin to the counter
+are physical facts, and §2 already schedules that check for the throwaway deploy
+around M4.
+
+### A failure mode worth keeping
+
+The E2E suite depended on a dev API somebody had started earlier. When an
+orphaned PostgREST outlived its parent it kept the port and served a schema
+cache from **before** the latest migration — so a transition that psql could see
+perfectly well returned "could not find the function", and a button on the
+counter screen quietly did nothing.
+
+`scripts/dev-stack.sh` now owns the whole stack, kills orphans, and refuses to
+report itself ready until every transition the app calls is visible through the
+API. That class of bug is silent by nature; the probe is what makes it loud.

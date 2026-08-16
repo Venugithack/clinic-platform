@@ -15,6 +15,8 @@ export type TransitionErrorCode =
   | 'BAD_REQUEST'
   | 'INVALID_STATE_CHANGE'
   | 'ALREADY_SIGNED'
+  | 'NOT_EQUIVALENT'
+  | 'QUERY_ALREADY_OPEN'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -26,6 +28,8 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   PT006: 'BAD_REQUEST',
   PT007: 'INVALID_STATE_CHANGE',
   PT008: 'ALREADY_SIGNED',
+  PT009: 'NOT_EQUIVALENT',
+  PT010: 'QUERY_ALREADY_OPEN',
 };
 
 export class TransitionError extends Error {
