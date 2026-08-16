@@ -13,6 +13,144 @@ rules and sold as though it were not.
 
 ---
 
+## 0. Do we need Meta's paperwork at all? (added 16 Aug 2026)
+
+Venu's question: *does one-tap, one-message-at-a-time still need Meta business
+verification?* The answer depends entirely on **who presses send** — and there
+are two mechanisms that both look like "one tap" from the outside.
+
+| | **A — Cloud API, human-approved** | **B — deep link (`wa.me`)** |
+|---|---|---|
+| What happens on tap | the **server** calls Meta's API | the app opens **WhatsApp on his device**, message pre-filled; he presses send inside WhatsApp |
+| Meta sees | a business-initiated template send | a person typing to a contact |
+| Business verification | **required** | **not required** |
+| Dedicated number, display-name approval | **required** | none — his existing number |
+| Pre-approved templates | **required** | none, any text |
+| Opt-in machinery | **required** | not applicable |
+| Privacy policy URL | **required** | not required |
+| Cost | per message | **₹0** |
+| Policy exposure | real (see §5, §9) | **none** |
+| Commercial use of the link itself | n/a | explicitly permitted |
+
+**Volume is irrelevant to this.** Meta's rules key on *who initiates*, not how
+many. One template a day through the Cloud API needs the whole apparatus; five
+hundred deep links a day need none of it.
+
+So the direct answer, per channel:
+
+| Channel | Verdict |
+|---|---|
+| **Supplier purchase orders** | **No Meta paperwork needed** — if we use deep-link mode. This is already row 1 of the ladder in §9, ranked safest. The automation being paid for (knowing *what* to order and *when*, drafting the PO, tracking the reply) is entirely intact. Only the send button moves, from our app into his WhatsApp |
+| **Patient messages** — appointment confirmed, token, Rx ready, bill ready, dose digest | **Cloud API, and therefore the paperwork.** ~60 patients a day cannot be tapped out by hand. There is no deep-link path to automation at this volume |
+
+### 0a. A purely reactive bot — asked 16 Aug 2026
+
+Venu's follow-up: *if we never send the patient anything unless they ask first,
+and reply with pre-placed buttons, do we still need verification?*
+
+**Yes — but for one reason only, and nearly everything else falls away.**
+
+**Why it is still needed.** A test/development WhatsApp Business account can
+only exchange messages with **five verified test numbers**. Letting *arbitrary
+patients* message the clinic means going to production, and that gate is
+business verification. There is no reactive-bot exemption, because the gate is
+"can members of the public talk to this number at all" — which is precisely
+what a patient bot is for. You also need the Cloud API regardless: it is the
+only permitted way to receive an inbound message and reply programmatically.
+
+**What the reactive design removes — and this is the valuable part:**
+
+| Burden | Status under a reactive bot |
+|---|---|
+| **Template approval** | **Gone.** Inside the 24-hour window anything goes — free text, images, documents, **interactive buttons**. No submission, no rejection, no waiting |
+| **Template category risk** (§3) | **Gone.** Nothing is categorised because nothing is a template |
+| **Opt-in** (§2) | **Gone.** The patient messaged first; consent is inherent. This is what §8 already says for service messages |
+| **Per-message cost** | **≈ ₹0.** Service replies are free in most markets. Confirm against Meta's India card, but the patient channel stops being a line item |
+| **Messaging limits / tier progression** | **Not binding.** Those govern business-*initiated* conversations. A reactive bot initiates none |
+| **Spam-report risk** | **Collapses.** You never send unprompted, so the quality rating stays clean — this was the largest single risk in the build (§9) |
+| Business verification | **Still required**, once |
+| Dedicated number, display-name approval | **Still required** |
+| Privacy policy URL | **Still required** (and needed for DPDP anyway) |
+
+### The trick that makes it cover the whole visit
+
+**The 24-hour window resets every time the patient messages.** So the visit
+does not have to be pull-only:
+
+```
+patient scans the QR at the clinic door
+   └─ wa.me link, pre-filled "I'm here for my appointment"
+        └─ window opens ────────────────── 24 hours ──────────────────►
+             bot replies with buttons          clinic pushes freely, free,
+             (token · queue · doctor in?)      no templates:
+                                                 "you're next but one"
+                                                 "your prescription is ready"
+                                                 "your bill is ₹340"
+```
+
+One tap by the patient on arrival opens the window, and **the entire visit
+lifecycle then fits inside it** — token updates, queue position, Rx ready, bill
+ready — as free-form interactive messages, at no cost, with no template ever
+submitted.
+
+Note that the QR is the same `wa.me` deep-link mechanism as §0's supplier
+answer, pointed the other way. Put it on the door, on the appointment card, and
+in the WhatsApp business profile.
+
+### What genuinely cannot be done reactively
+
+Honest accounting — these three cross the 24-hour boundary and therefore still
+need approved templates, business-initiated, at per-message cost:
+
+| Message | Worth keeping? |
+|---|---|
+| Appointment reminder for tomorrow | Marginal. The patient booked it; a reminder is a nicety |
+| Daily dose digest over a 5-day course | This was already the cost trap in `PLAN.md` §10.2. Reactive design makes dropping it cheap |
+| **"Clinic closed today"** | **Yes.** Rare, genuinely wanted, and the one exception `PLAN.md` §13.3 already argues for |
+
+So the template list drops from eight to **one or two**, and the doctor decides
+whether reminders are worth reintroducing after he has seen the system run.
+
+### Two things the reactive design owes the patient
+
+1. **A human fallback.** A menu that cannot answer "my child has a fever, can I
+   come now?" is worse than no bot. One button — *talk to the clinic* — that
+   hands off to a person, and the staff see it in the app.
+2. **An away message** outside clinic hours, pointing at the `/now` page and
+   saying when the clinic reopens. Otherwise silence reads as being ignored.
+
+### The question worth resolving before anyone starts the paperwork
+
+Meta's **messaging limit is counted in unique recipients per rolling 24 hours**,
+not messages. An *unverified* number sits at **250 unique recipients/day**.
+
+This clinic is ~60 patients/day. **It may fit under the unverified ceiling
+permanently** — which would take business verification, the single longest and
+least predictable item in `PLAN.md` §9, off the critical path entirely.
+
+**But the sources conflict, and this is not settled.** §11 below records that
+since January 2026 verification and a privacy policy URL are mandatory *before
+any template send*; several vendor sources say an unverified number can send to
+250 recipients/day and verification only lifts the tier to 1K → 10K → 100K.
+Both cannot be true.
+
+Vendor blogs recycle each other and go stale. **Check Meta's own documentation
+before deciding**, specifically:
+
+1. Can an unverified WABA send an approved template to a non-test recipient at all?
+2. Is the 250/day limit unique recipients or messages?
+3. Is the privacy policy URL gating template *approval*, or template *sending*?
+4. Does display-name approval require business verification as a prerequisite?
+
+If the unverified path is real, the recommendation changes: **start unverified,
+begin verification in parallel anyway** (it is free and it lifts the ceiling),
+and stop treating it as a go-live blocker. If it is not, §9's calendar stands.
+
+Either way, **supplier ordering in deep-link mode needs none of this and can
+ship first.**
+
+---
+
 ## 1. First, the thing that is not grey
 
 There are two entirely different products both marketed as "WhatsApp API".
@@ -320,7 +458,7 @@ being optional. And his choice goes in the contract in writing.
 
 | Change | Effect here |
 |---|---|
-| Business verification **and a privacy policy URL** mandatory before any template send (Jan 2026) | Adds a client deliverable — the clinic needs a published privacy policy. That is now on the §7 list in the proposal |
+| Business verification **and a privacy policy URL** mandatory before any template send (Jan 2026) — ⚠️ **disputed, see §0.** Other 2026 sources describe an unverified tier sending to 250 unique recipients/day, with verification only lifting the ceiling. Resolve against Meta's own docs before it is treated as a blocker | Adds a client deliverable — the clinic needs a published privacy policy. That is now on the §7 list in the proposal |
 | Opt-in proof requirements tightened | Consent capture at registration must be timestamped and stored, not assumed |
 | Spam-report thresholds lowered | Fewer reports needed to damage the number. Raises the supplier risk |
 | Unanswered-message counting added to detection | Reminder-heavy and order-heavy patterns look worse than they used to |

@@ -1,6 +1,6 @@
 # Clinic platform — build plan
 
-**Status: DRAFT. Not approved. No code until the sign-off box at §18 is filled.**
+**Status: DRAFT. Not approved. No code until the sign-off box at §20 is filled.**
 
 One doctor, one clinic, one in-house pharmacy. A paying client with a real
 shelf, real patients and a real drug licence — so this is not the hospital
@@ -8,6 +8,12 @@ prototype with features deleted. It is a smaller surface built deeper.
 
 Read §1–§4 to decide whether the shape is right. §5–§14 are the build. §15–§18
 are what has to be true before anyone starts.
+
+**Updated 16 Aug 2026** with the client's answers to §18 (recorded there) and
+three constraints from Venu — host it free, tablets are the devices, inventory
+is the centrepiece. Each has its own document: [`HOSTING.md`](HOSTING.md),
+[`TABLET.md`](TABLET.md), [`INVENTORY.md`](INVENTORY.md). §5, §12, §17 and §18
+below are the sections those changed.
 
 ---
 
@@ -58,8 +64,8 @@ Each of these changes the work if wrong. Get answers in writing.
 | # | Assumption | If wrong |
 |---|---|---|
 | A1 | India. DPDP Act 2023, Drugs & Cosmetics Act, CDSCO, GST. | Whole of §15 is rewritten |
-| A2 | The clinic holds a **retail drug licence** and either a registered pharmacist or a valid dispensing-doctor exemption for its state | If not, the pharmacy module cannot legally sell — it becomes stock tracking for his own dispensing only, and counter sale is dropped |
-| A3 | At least one non-doctor staff member sits at the counter | If he is genuinely alone, the counter and consult windows merge into one screen and M2 shrinks by ~2 days but the "connection" requirement partly evaporates — clarify |
+| A2 | ✅ **CONFIRMED 16 Aug 2026.** The clinic holds a retail drug licence and employs a registered pharmacist. The pharmacy sells OTC as well as prescription medicines, and bills from the pharmacist's window | — |
+| A3 | ✅ **CONFIRMED 16 Aug 2026.** Two screens: the doctor in his cabin, the pharmacist at the counter. The live link in §11 is the real requirement, not a nicety | — |
 | A4 | ≤ 100 patients/day, ≤ 5 concurrent devices | None. Load is trivial at any plausible number for one clinic |
 | A5 | Reliable-enough clinic internet, or willing to add a 4G backup on the router | Architecture changes to LAN-first, +8 days. See §5.2 |
 | A6 | He will buy a WhatsApp Business Platform number in the clinic's name and pay Meta's per-message fees | No supplier automation, no patient push. The product still works; the two headline features do not |
@@ -95,23 +101,34 @@ Roughly 40% of the prototype's code ports across; the rest is new. Detail in §6
 
 ### 5.1 Stack
 
+Revised 16 Aug 2026 for the zero-hosting-cost constraint. Full reasoning,
+limits, sizing and the migration path in [`HOSTING.md`](HOSTING.md).
+
 | Layer | Choice | Why |
 |---|---|---|
 | App | Next.js 16 + React 19 + TypeScript + Tailwind 4 | Same as prototype; the ported code compiles unchanged |
-| DB | Postgres via **Supabase, ap-south-1 (Mumbai)** | Data residency for DPDP. Realtime is what makes §11 work. Auth + Storage included |
+| DB | Postgres via **Supabase free, ap-south-1 (Mumbai)** | Data residency for DPDP. Realtime is what makes §11 work. Auth included. 500 MB holds ~2 years — `HOSTING.md` §4 |
 | Live sync | Supabase Realtime on `prescriptions`, `presence`, `appointments` | The doctor↔counter link is a subscription, not polling |
-| Auth | Supabase Auth, email+password, per-staff | Small user count; no SSO complexity |
-| Hosting | Vercel Pro | Zero-ops deploys, preview envs, rollback in one click |
+| Auth | Supabase Auth + **staff PIN over a registered device session** | Shared tablets. `TABLET.md` §5 |
+| Hosting | **Cloudflare Workers / Pages, free** | The only major free tier that permits commercial use. Vercel Hobby forbids it — `HOSTING.md` §2 |
+| Server logic | **Supabase Edge Functions** (WhatsApp webhook, sends) + `pg_cron` | Keeps the Worker under Cloudflare's 3 MiB free-plan ceiling |
+| State transitions | **`plpgsql`, `SECURITY DEFINER`**, direct write grants revoked | Rules 2 and 3 below become DB-enforced instead of convention — `HOSTING.md` §3 |
 | WhatsApp | **Meta Cloud API, direct**, on the clinic's own Meta Business account | No BSP monthly fee, no third party holding patient phone numbers, client owns the asset |
-| Errors | Sentry | You will not be sitting in the clinic when it breaks |
-| Tests | Vitest (unit) + Playwright (E2E) | Replaces the prototype's bespoke `loop-test.js` |
+| Backups | `pg_dump` → GitHub Actions → Cloudflare R2, hourly, restore-tested weekly | Free tiers have none. This is ours to build — `HOSTING.md` §5 |
+| Errors | Sentry free · UptimeRobot free | You will not be sitting in the clinic when it breaks |
+| Tests | Vitest + Playwright (tablet viewport) + **pgTAP** for the transitions | pgTAP is new: the transitions now live in the database |
+| Devices | 2 × 10–11" Android tablet, PWA-installed | `TABLET.md` §1 |
+
+**Total hosting cost: ₹0/month.** Unavoidable running cost drops to ~₹390 (§17),
+and most of that is the 4G router backup rather than anything to do with software.
 
 **Rejected:** BSP aggregators (WATI/AiSensy/Interakt) — ₹2–5k/month forever, and
 patient numbers sit in a third party's database, which is a DPDP problem you
 would own. Revisit only if Cloud API onboarding stalls. **Rejected:** on-premise
 server in the clinic — patient WhatsApp needs the internet anyway, so an
 on-prem box buys nothing and makes backups, hardware failure and remote support
-your problem.
+your problem. **Rejected:** Vercel Hobby — its fair-use terms define a paid
+consultant's build as commercial, so it is off-limits regardless of usage.
 
 ### 5.2 The internet question
 
@@ -134,7 +151,7 @@ Eight. Each is enforced by a test, not by discipline.
 | # | Rule | Broken means |
 |---|---|---|
 | 1 | **One seam** — only `lib/db/*` talks to Supabase | a component runs a query with no RLS, no audit, no transaction |
-| 2 | **One writer** — every state change is one function in `lib/transitions/*`, in a DB transaction, writing its audit row in the same transaction | a change happens that nobody can explain three months later |
+| 2 | **One writer** — every state change is one `plpgsql` function, in a DB transaction, writing its audit row in the same transaction. Direct write grants on those tables are revoked, so the bypass is refused by Postgres rather than discouraged by convention (`HOSTING.md` §3) | a change happens that nobody can explain three months later |
 | 3 | **Stock is a ledger** — `stock_movements` is the truth. `qty_on_hand` is a cache updated in the same transaction; a nightly job asserts they agree and alerts on drift | the shelf and the screen disagree and nobody knows when they started to |
 | 4 | **Money and stock never move unattended** — no cron, no webhook, no auto-rule writes a sale, a dispense or a purchase order send | one bad reorder level orders ten times the stock and he pays for it |
 | 5 | **Every send is a row before it is a send** — WhatsApp messages are persisted with an idempotency key, then dispatched; retries are safe | a webhook retry sends the same order to the supplier twice |
@@ -145,6 +162,11 @@ Eight. Each is enforced by a test, not by discipline.
 Rules 1, 2, 7 and 8 are carried from the prototype, where they were earned.
 Rules 3, 4, 5, 6 are new and exist because this build touches money, stock and a
 third party.
+
+**Ninth rule, added 16 Aug 2026:** *stock is always stored in base units — one
+tablet, one ml, one piece — and pack configuration lives on the batch, not on
+the drug.* Broken means every historical quantity is silently wrong the first
+time a manufacturer changes a strip size. `INVENTORY.md` §1.
 
 ---
 
@@ -258,7 +280,7 @@ Days = focused working days for one developer. Calendar is longer — see §9.
 | **M1** | Clinic core: patients, appointments, tokens, queue, consult form, diagnosis, Rx composer, prescription print | 4 | Doctor registers a walk-in, consults, signs an Rx, prints it on the clinic's printer |
 | **M2** | **Doctor ↔ counter live link** (§11) | 4 | Rx signed on device A is on device B in < 1s; counter raises "out of stock", doctor sees it and substitutes without leaving the consult screen |
 | **M3** | Inventory: drugs, suppliers, batches, movements ledger, GRN, FEFO dispense, partial dispense, counter sale, stock-take, expiry block | 6 | Two batches of one drug with different expiries; dispensing takes the earlier; an expired batch is refused; ledger and `qty_on_hand` reconcile |
-| **M4** | Billing: consult fee + medicines, discount, GST, print, day-book | 3 | A bill prints correctly for a consult + 4 medicines across 2 batches, and the day's total matches the sum of its bills |
+| **M4** | Billing: consult fee + medicines, discount, print (A4 + 80mm), day-book, counter till and cash day-close. **GST fields captured, GST off** (Q4) | 4 | A bill prints correctly for a consult + 4 medicines across 2 batches; the day's total matches the sum of its bills; the till reconciles against counted cash |
 | **M5** | Purchasing + supplier WhatsApp (§10.4, §12.5) | 4 | Low stock drafts one PO per supplier; approve sends a template message; supplier's reply is captured; goods received against the PO create batches |
 | **M6** | Presence + public status page (§13) | 2 | Doctor logs in → status live in 30s. Laptop shut → "away" within 5 min. Closing time → "closed" regardless of session |
 | **M7** | Patient WhatsApp + portal (§14) | 7 | A real phone books an appointment, gets a token, opens the queue page, gets an "Rx ready" message, opens the prescription |
@@ -266,21 +288,50 @@ Days = focused working days for one developer. Calendar is longer — see §9.
 | **M9** | Hardening: E2E suite, offline write queue, backups + **tested restore**, monitoring, error states, permissions review, load of real data | 5 | Restore drill completes from a backup into a scratch project with zero data loss; Playwright covers the six critical paths |
 | **M10** | Training, parallel run, go-live | 3 + 2 weeks calendar | §16 |
 
-**Build total: 46 working days.** Add the calendar dependencies in §9.
+**Build total: 46 working days** as originally scoped. The 16 Aug 2026
+constraints add to it:
+
+| Addition | Days | Where |
+|---|---|---|
+| Inventory depth — base units, barcode, costing, blind stock-take, expiry returns, substitution, reorder intelligence | +12 | `INVENTORY.md` §10 |
+| Tablet-first UI — layout system, numpad, search overlay, PWA, PIN auth, print on real hardware | +6 net | `TABLET.md` §9 |
+| Transitions rewritten in `plpgsql` with pgTAP | +4 | `HOSTING.md` §3 |
+| Free-tier ops rig — hourly dumps to R2, weekly restore drill, keep-alive, monitoring (net of what M9 already carried) | +2 | `HOSTING.md` §5 |
+| Counter till and cash day-close (from Q3) | +1 | §18 |
+| **Revised total** | **~71 days** | |
+
+**Quote ~70 days, not 46.** The increase is real work the client asked for —
+inventory as the centrepiece and tablets as the devices — and roughly ₹4,300/month
+of hosting saved pays a slice of it back every year.
 
 M0 → M1 → M2 → M3 are strictly sequential. M4–M8 can reorder. M7 cannot start
 until the WhatsApp number is verified (§9), which is why the paperwork starts on
-day 1.
+day 1. **M3 must start from `INVENTORY.md` §1** — the base-unit model is not a
+feature that can be retrofitted onto recorded stock.
 
 ---
 
 ## 9. Calendar — the long pole is paperwork, not code
+
+**Revised 16 Aug 2026: build local first** (`HOSTING.md` §1a). Supabase runs in
+Docker on the dev machine, both tablets connect over the clinic Wi-Fi, and M0–M4,
+M6 and M8 complete with no hosting account, no Meta account and no spend. M5 ships
+in deep-link mode, which needs no Meta paperwork at all (`WHATSAPP.md` §0). Only
+**M7 — patient WhatsApp — actually requires the outside world.**
+
+That removes hosting from the critical path. It does *not* remove Meta
+verification, if verification turns out to be required at all — see the open
+question in `WHATSAPP.md` §0, which may take it off the critical path too. Until
+that is resolved against Meta's own docs, treat the table below as live and start
+it on day 1 anyway: it is free, and starting it late only moves the delay to the
+end.
 
 Start these on **day 1, before the first commit**:
 
 | Task | Owner | Lead time |
 |---|---|---|
 | Meta Business Account + **business verification** (needs GST cert / incorporation docs / utility bill) | Client, you assist | **3 days – 3 weeks**, unpredictable |
+| **Confirm he has a GST registration certificate** — his Q4 answer deferred GST *billing*, which is not the same as being unregistered. If he has none, Meta verification needs the drug licence + clinic registration + a utility bill instead, and that path is slower | Client | ask this week |
 | **Published privacy policy at a public URL** — mandatory since Jan 2026 before any template can send | You draft, client publishes | 1 day |
 | Dedicated phone number for WhatsApp Business Platform — must **not** be on the WhatsApp or WhatsApp Business app | Client | 1 day (new SIM) |
 | Display-name approval | Client | 1–3 days |
@@ -289,9 +340,17 @@ Start these on **day 1, before the first commit**:
 | Drug master list with pack sizes, suppliers, MRPs | Client | **1–2 weeks of his time** — the real bottleneck |
 | Opening stock count | Client + you | 1 day, done in one sitting, clinic closed |
 
-**Realistic calendar: 10–12 weeks from signature to go-live**, of which ~9 weeks
-is build and the rest is verification, data preparation and the parallel run.
-Quote 12 weeks. Do not quote 6.
+Add, from the 16 Aug 2026 answers:
+
+| Task | Owner | Lead time |
+|---|---|---|
+| **2 tablets, stands, and a network-capable printer** — check whether the existing A4 is USB-only | Client | 1 week to procure |
+| **Clinic hours, weekly off, holiday calendar** (Q10 — he configures at handover) | Client | during the parallel run |
+| **Salt composition and strength** on every drug in the master (Q8: no existing system, so this is typed from scratch) | Client, you assist | folded into the 1–2 weeks above, but it is now a harder ask |
+
+**Realistic calendar: 14–16 weeks from signature to go-live** (was 10–12), of
+which ~14 weeks is build and the rest is verification, data preparation and the
+parallel run. Quote 16 weeks. Do not quote 6.
 
 ---
 
@@ -325,23 +384,47 @@ messages/month — around ₹2,200/month, more than the hosting.
 | Option | Cost/month (40 Rx/day) | Recommendation |
 |---|---|---|
 | Per-dose push | ~₹2,200 | No |
-| **One daily digest — "today's doses", opt-in per prescription** | ~₹150 | **Yes, default** |
-| Portal only, no push | ₹0 | Offer as the off switch |
+| One daily digest — "today's doses", opt-in per prescription | ~₹150 | Viable, but not in v1 |
+| **Portal only, no push** | **₹0** | **Yes, v1 default** |
 
-Make it a clinic setting so he can turn it off when he sees the bill.
+**Revised 16 Aug 2026.** Under the reactive-bot design (§10.3) reminders are the
+*only* patient message left that costs anything — everything else moved inside
+the free 24-hour service window. That makes them easy to defer: ship v1 without
+them, and let him ask after a month of running the clinic. If he does, it is the
+daily digest, opt-in per prescription, behind a clinic setting he can switch off
+when he sees the bill.
 
 ### 10.3 Templates to build (v1)
 
-| Code | Category | Trigger | Body shape |
-|---|---|---|---|
-| `appt_confirmed` | utility | booking accepted | "Booked — {{date}}, token {{token}}. Track your turn: {{link}}" |
-| `turn_near` | utility | 2 ahead in queue | "You're next but one. {{link}}" |
-| `rx_ready` | utility | prescription signed | "Your prescription from Dr {{name}} is ready. {{link}}" |
-| `bill_ready` | utility | bill generated | "Your bill for {{date}} — ₹{{amount}}. {{link}}" |
-| `dose_digest` | utility | daily, opt-in | "Today's medicines: {{summary}}. Details: {{link}}" |
-| `clinic_closed` | utility | unplanned closure | "The clinic is closed today ({{reason}}). Your appointment will be rebooked." |
-| `po_to_supplier` | utility | PO approved | "Order from {{clinic}}: {{lines}}. Confirm on this chat." |
-| `low_stock_digest` | utility | daily, to staff | "{{n}} medicines at or below reorder level. {{link}}" |
+**Revised 16 Aug 2026 — reactive-bot design (`WHATSAPP.md` §0a).** The patient
+channel is now service-only: the patient always messages first (a QR at the
+door, pre-filled), which opens a 24-hour window, and everything during the visit
+is a free-form interactive reply inside it. No template, no category, no opt-in
+machinery, no cost.
+
+| Message | Now | Why |
+|---|---|---|
+| Booking confirmation | **free-form, in window** | the patient booked *through* the bot — the window is open by definition |
+| Queue position / "you're next but one" | **free-form, in window** | |
+| Prescription ready | **free-form, in window** | |
+| Bill ready | **free-form, in window** | |
+| `po_to_supplier` | **deep link — no template** | `WHATSAPP.md` §0. Sent from his own WhatsApp |
+| Low stock to staff | **in-app only** | staff are looking at the screen anyway (§12.4). A message adds nothing |
+| `dose_digest` | **template — deferred** | crosses the 24h boundary. §10.2's cost trap; drop it from v1 and let him ask for it |
+| `clinic_closed` | **template — build it** | the one genuine exception (§13.3): rare, unprompted, and genuinely wanted |
+
+**One template in v1**, down from eight. That removes template rejection from
+the calendar, category reclassification from the risk register (`WHATSAPP.md`
+§3), and the per-message cost from §17.
+
+Two obligations this design creates, both in `WHATSAPP.md` §0a: a **human
+fallback button**, because a menu that cannot answer "my child has a fever" is
+worse than no bot; and an **away message** outside clinic hours pointing at
+`/now`.
+
+Carried unchanged: **a message never carries the record, only the fact that it
+exists plus a link** — now for privacy and Meta's restricted-goods list rather
+than for cost.
 
 Carried from the prototype and non-negotiable: **a message never carries the
 record, only the fact that it exists plus a link.** It keeps every template in
@@ -433,6 +516,13 @@ shelf untouched.
 ---
 
 ## 12. Inventory and purchasing
+
+> Venu's brief is that inventory is the centrepiece, so this section is now the
+> skeleton and [`INVENTORY.md`](INVENTORY.md) is the design: the base-unit model
+> (§1 there — start with it, it is a correctness requirement), barcode scanning
+> from the tablet camera, batch costing and valuation, blind stock-take, the
+> expiry-return-and-credit workflow, salt-based substitution, and reordering
+> that learns from measured supplier lead times. **+12 days** on M3/M4.
 
 ### 12.1 The ledger
 
@@ -615,7 +705,7 @@ are 8 days and not 2.
 | **Staging** | A full second environment with his real drug list and **fake patients**. Every change goes there first |
 | **Backups** | Supabase daily PITR **plus** a nightly logical dump to separate storage. An untested backup is not a backup — the restore drill in M9 is a deliverable, run again quarterly |
 | **Monitoring** | Sentry for errors, uptime check on `/now`, a daily reconcile job (§12.1) that alerts on stock drift |
-| **Rollback** | Vercel instant rollback; migrations are forward-only with a written down-path for each |
+| **Rollback** | Cloudflare deployment rollback, one click; migrations are forward-only with a written down-path for each |
 | **Parallel run** | **Two weeks running alongside paper before cutover.** Non-negotiable. It is the only way to find what he does that neither of us thought to ask about |
 | **Change freeze** | No feature changes during the parallel run. Bugs only |
 
@@ -636,33 +726,48 @@ are 8 days and not 2.
 
 ### One-time (client)
 
-Build fee — yours to set. Anchors: 46 build days plus ~15 days of setup,
+Build fee — yours to set. Anchors: ~71 build days (§8) plus ~15 days of setup,
 training, data loading and support. Price the whole thing, not the days, and
 price the parallel run in.
 
 ### Running (client pays vendors directly wherever possible — do not front these)
 
+Revised 16 Aug 2026 for the free-hosting constraint. Working in
+[`HOSTING.md`](HOSTING.md).
+
 | Item | Indicative ₹/month | Note |
 |---|---|---|
-| Supabase Pro | ~2,100 | Free tier has no PITR and pauses. Not acceptable for a clinic |
-| Vercel Pro | ~1,700 | Commercial use requires it |
-| Domain | ~100 | |
-| WhatsApp messages | 300–800 | With the daily-digest design in §10.2. Per-dose pushes would be ~₹2,200 |
-| 4G router backup | ~300 | Prerequisite, not optional (§5.2) |
-| Second WhatsApp number (supplier traffic) | ~200 | Recommended (§10.4) |
-| Sentry | 0 | Free tier is enough |
-| **Total** | **~4,700–5,200** | Plus your support/AMC |
+| Supabase free (ap-south-1) | **0** | 500 MB holds ~2 years. No PITR — we run our own hourly dumps instead |
+| Cloudflare Workers/Pages | **0** | Free plan permits commercial use |
+| Backups — GitHub Actions + R2 | **0** | Within both free tiers |
+| Sentry, UptimeRobot | **0** | Free tiers are enough |
+| Domain (.in) | ~70 | Optional. A `*.pages.dev` URL is free, but a QR on the clinic door deserves better |
+| WhatsApp — patient channel | **~0** | Reactive bot, service messages only (§10.3, `WHATSAPP.md` §0a) |
+| WhatsApp — `clinic_closed` template | ~20 | The one remaining template. Fires a handful of times a year |
+| WhatsApp — supplier orders | **0** | Deep-link mode (`WHATSAPP.md` §0) |
+| 4G router backup | ~300 | Prerequisite, not optional (§5.2). A clinic expense, not a hosting one |
+| Second WhatsApp number | **0** | No longer needed — supplier traffic never touches the Cloud API number |
+| **Total** | **~390** | Down from ~₹4,700. Plus your support/AMC |
 
-A cheaper path exists — a single ₹1,200/month Mumbai VPS running everything —
-and it trades roughly ₹3,000/month for your ops time and a worse outage story.
-Not recommended for the first client.
+One-time, client: **2 × tablet + stands, ~₹35–45k** (`TABLET.md` §1), and
+possibly a Wi-Fi print server or a network-capable printer — his current A4 must
+be checked, because **a tablet cannot print to a USB printer.**
+
+**What free costs, stated plainly:** no vendor SLA, and up to one hour of data
+loss in a total-loss scenario against the five minutes a paid plan's PITR would
+give. He accepts both in writing, or he pays ₹2,100/month for Supabase Pro alone
+— hosting stays free either way. `HOSTING.md` §9. Every free tier here is behind
+an adapter, so escalating to paid is a configuration change of at most a day,
+not a rewrite (`HOSTING.md` §7).
 
 ### Client obligations — put these in the contract
 
-Drug master with pack sizes and MRPs · supplier list with WhatsApp numbers ·
-opening stock count · Meta business verification documents · a dedicated SIM ·
-the 4G backup · clinical sign-off (A8) · a named person available for training ·
-payment of vendor bills in his own name.
+Drug master **with salt composition and strength** (`INVENTORY.md` §9) and pack
+sizes and MRPs · supplier list with WhatsApp numbers **and return windows** ·
+opening stock count · Meta business verification documents · a published privacy
+policy · a dedicated SIM · the 4G backup · **2 tablets and stands** · **a
+network-capable printer** (`TABLET.md` §1) · clinical sign-off (A8) · a named
+person available for training · payment of vendor bills in his own name.
 
 **Payment structure to propose:** 40% on signature, 30% on M3 acceptance (he
 sees the doctor↔pharmacy loop working on real stock), 30% on go-live acceptance.
@@ -671,24 +776,54 @@ changes and support hours.
 
 ---
 
-## 18. Open questions — answer before build
+## 18. Open questions — answered 16 Aug 2026
 
-**For the client:**
+**Client answers, of record.** Nine of twelve are settled; three are not.
 
-| # | Question | What it decides |
-|---|---|---|
-| 1 | Retail drug licence and pharmacist — yes or no? (A2) | Whether counter sale and H1 selling exist at all |
-| 2 | Who sits at the counter? Anyone besides him? (A3) | Whether M2 is two windows or one |
-| 3 | Does the pharmacy serve walk-ins without a prescription? | Counter-sale module, ~2 days |
-| 4 | GST registered? Invoice format required? | Bill layout and tax handling |
-| 5 | Supplier ordering: one-tap approve, or true unattended? (§10.4) | Compliance exposure and which number is at risk |
-| 6 | How many suppliers, and are they on WhatsApp? | Whether M5 is worth building at all |
-| 7 | Patients/day, and how many have smartphones with data? | Whether the portal or the WhatsApp text carries the weight |
-| 8 | Existing software? Any data to migrate? | Migration is unscoped and could be days |
-| 9 | Printer: A5 laser, thermal, or existing letterhead? | Print CSS is not one-size |
-| 10 | Clinic hours, weekly off, how he handles emergencies out of hours | Presence auto-close and the closure flow |
-| 11 | Will he accept patients seeing diagnosis labels? | Some doctors will not. Advice-only fallback is a config flag |
-| 12 | Who owns the code — assignment or perpetual licence? | Contract, and whether this becomes a product |
+| # | Question | Answer | Consequence |
+|---|---|---|---|
+| 1 | Retail drug licence and pharmacist? (A2) | **Yes** — licence, pharmacist, pharmacy sells OTC and prescription, bills from the pharmacist's window | A2 confirmed. Counter sale and H1 selling are both in. Full §12 scope |
+| 2 | Who sits at the counter? (A3) | **Two screens** — doctor in his cabin, pharmacist at the counter | A3 confirmed. M2 stays two windows. §11 is the real requirement |
+| 3 | Walk-ins without a prescription? | **Yes — add the counter-sale monitor** | Counter sale confirmed, +2 days. Brings a till and a cash day-close with it |
+| 4 | GST registered? | **Deferred** — set aside for now, planned later | **Do not** drop the fields. Capture cost, MRP and HSN from day 1 so switching GST on is a rate column and a bill layout, not a migration (`INVENTORY.md` §4) |
+| 5 | Supplier ordering mode? (§10.4) | **One-tap approval** — with more clarification wanted | Recommended option taken. Remaining detail in §18.1 |
+| 6 | How many suppliers, on WhatsApp? | **N suppliers, all reachable on WhatsApp** | M5 is worth building. Supplier management is unbounded CRUD, not a fixed list. Per-supplier return windows matter (`INVENTORY.md` §6) |
+| 7 | Patients/day? | **Varies — needs clarification** | A4 (≤100/day) holds at any plausible number, so this blocks nothing. Sizing in `HOSTING.md` §4 assumes ~60 consults/day; revisit if he says otherwise |
+| 8 | Existing software to migrate? | **No** | Migration risk gone. But there is no drug master to import either — §9's 1–2 week client bottleneck stands, and `INVENTORY.md` §9 makes it a harder ask |
+| 9 | Printer? | **A4 now, small printer planned** | Print CSS for both A4 and 80 mm. **Check his A4 is network-capable — a tablet cannot print over USB** (`TABLET.md` §1) |
+| 10 | Clinic hours and weekly off? | **He will configure once the platform is ready** | Hours, weekly off and holidays must be settings, not constants. Presence auto-close reads them (§13.2) |
+| 11 | Patients seeing diagnosis labels? | **Depends** | Build the config flag, default **off**, advice-only fallback. Costs little and defers the decision safely |
+| 12 | Code ownership? | **Thinking about it** | Open. Blocks the contract, not the build. Your §15 below is the same question |
+
+### 18.1 Still open — and what each one blocks
+
+| # | Open | Blocks | Needed by |
+|---|---|---|---|
+| 5 | WhatsApp specifics — the six items in §18.2 | M5, M7 | before Meta verification starts (day 1) |
+| 7 | Patients/day, smartphone share | nothing structural — affects the portal-vs-text emphasis in M7 | before M7 |
+| 12 | Code ownership | the contract | before signature |
+| — | ~~Does he accept free-tier's no-SLA and ≤1h data-loss window?~~ | ~~the hosting decision~~ | **deferred 16 Aug 2026** — build local, decide with a working system in the room (`HOSTING.md` §1a) |
+| — | **Is business verification actually required at this volume?** (`WHATSAPP.md` §0) | whether the longest pole in §9 exists at all | before M7, ideally week 1 |
+
+### 18.2 WhatsApp — the session to have with the doctor
+
+He asked for clarification and so did Venu. [`WHATSAPP.md`](WHATSAPP.md) is the
+reference; these are the six decisions that actually have to come out of that
+conversation. One sitting, ~30 minutes.
+
+| # | Decision | Options | Recommendation |
+|---|---|---|---|
+| 1 | Which number sends supplier orders | main · second number · his personal phone via deep link | **Deep link, revised 16 Aug 2026.** It needs no Meta account, no verification, no templates and costs ₹0 — and it lets M5 ship during the local build (`WHATSAPP.md` §0). The second number stays the upgrade path if he later wants the send unattended |
+| 2 | If he later wants true unattended supplier send | second number + Cloud API | Then, and only then, the paperwork applies. Revisit after go-live with real usage in hand |
+| 3 | Per-supplier consent | ask each supplier for a written "yes, send orders here" | **Do it.** A WhatsApp reply is a record, and it is more than most businesses have |
+| 4 | Dose reminders | per-dose · one daily digest · off | **Off in v1.** They are the only meaningful cost left and the only remaining template beyond `clinic_closed`. Let him run the clinic for a month and ask for them, if he still wants them (§10.3) |
+| 5 | Who owns the Meta Business account | clinic · developer | **Clinic.** It is his asset, his verification, his number. Venu gets admin access, not ownership |
+| 6 | Privacy policy URL | mandatory since Jan 2026 before any template sends | Venu drafts, clinic publishes. One day, and it gates every send (§9) |
+
+Two things are **not** on the table and he should hear why: unofficial WhatsApp
+libraries at any price (`WHATSAPP.md` §1), and a "doctor has arrived" broadcast
+— marketing-category traffic that gets a number reported, replaced by the free,
+always-current `/now` link (§13.3).
 
 **For you:**
 
@@ -705,13 +840,19 @@ changes and support hours.
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Meta business verification stalls | Medium | Blocks M5, M7 | Start day 1. Deep-link fallback (§10.4) keeps supplier ordering alive |
-| WhatsApp number restricted after supplier messaging | Medium if unattended | Kills patient channel | Separate number; one-tap approval; opt-in enforced in code |
+| ~~WhatsApp number restricted after supplier messaging~~ | **Eliminated** | — | Supplier orders now go by deep link from his own WhatsApp (`WHATSAPP.md` §0). The Cloud API number never touches supplier traffic |
+| ~~Number reported by patients, quality rating drops~~ | **Low** | Kills patient channel | Reactive bot only replies to people who messaged first (`WHATSAPP.md` §0a). Almost nothing to report |
 | Drug master never arrives from the client | **High** | Blocks M3, go-live | Make it a payment milestone. Offer to type it from his purchase invoices, billed |
 | Scope creep — "can it also do…" | **High** | Slips everything | §2 change control, agreed in writing at signature |
 | Opening stock count is wrong | High | Every stock number wrong from day 1 | Stock-take in M3 exists for this. Reconcile nightly during parallel run |
 | Clinic internet outage during consult | Medium | Consult stops | Offline write queue + 4G backup (§5.2) |
 | He wants interaction checking / diagnosis help | Medium | Regulatory and liability exposure | §15.3. Decline or quote a licensed database separately |
-| Fixed price with unknowns 1–12 unanswered | High | You absorb the overrun | Answer §18 before quoting |
+| Fixed price with unknowns 1–12 unanswered | ~~High~~ **Low** | You absorb the overrun | ✅ 9 of 12 answered 16 Aug 2026. Three remain, none of them structural (§18.1) |
+| **Free tier withdrawn or limits cut mid-contract** | Medium — Oracle halved its ARM free tier on 18 Aug 2026 | Emergency migration | Every free tier behind an adapter; escalation to paid is ≤1 day and costed (`HOSTING.md` §7). Re-verify at §8 there before signature |
+| **Supabase free 500 MB reached** | Low in 2 years, certain eventually | Writes fail | Audit rows store changed fields only, never full snapshots. Alert at 400 MB, archive to R2, Pro is ₹2,100/mo (`HOSTING.md` §4) |
+| **Free tier outage with no support queue** | Low, but no SLA | Clinic stops | §5.2 paper fallback + backfill. He accepts this in writing (`HOSTING.md` §9) |
+| **His A4 printer is USB-only** | Medium — most cheap ones are | Nothing prints from a tablet on go-live day | Check the model number this week. Wi-Fi print server ~₹2,000 (`TABLET.md` §1) |
+| **Pack sizes retrofitted after stock is recorded** | Low if `INVENTORY.md` §1 is built first | Every historical quantity silently wrong | Base units from the first migration. Non-negotiable, and it is why M3 starts there |
 | Sole-developer bus factor | Certain | He is running a clinic on it | Documented runbook, client owns credentials, code in a repo he can be given access to |
 
 ---
@@ -722,9 +863,11 @@ Nothing gets built until this is filled in.
 
 ```
 Scope (§2) agreed as written                    [ ]  date ______
-Assumptions §3 A1–A8 confirmed                  [ ]  date ______
-Open questions §18 1–12 answered                [ ]  date ______
-Supplier send mode chosen (§10.4)               [ ]  date ______
+Assumptions §3 A1–A8 confirmed                  [~]  A2, A3 done 16-08-2026
+Open questions §18 1–12 answered                [~]  9 of 12 done 16-08-2026
+  └─ remaining: Q7, Q12, and §18.2              [ ]  date ______
+Supplier send mode chosen (§10.4)               [x]  one-tap, 16-08-2026
+Free-tier risks accepted (HOSTING.md §9)        [ ]  date ______
 Price, milestones and running costs accepted    [ ]  date ______
 DPA drafted and reviewed                        [ ]  date ______
 Clinical sign-off process agreed (A8)           [ ]  date ______
