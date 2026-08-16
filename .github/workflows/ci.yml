@@ -98,6 +98,21 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The E2E suite drives the M1 gate against a real database, real RLS and
+      # the real transitions. Stubbing the API here would test the screens
+      # against a fiction — and the two bugs this suite has already caught (a
+      # build-time env inlining failure, and a plpgsql DEFAULT that does not
+      # apply to an explicit null) were both invisible to every other layer.
+      - name: Install Postgres 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16
+
+      - name: Database, seed and API
+        run: |
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          ./scripts/dev-stack.sh --reset
+
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 

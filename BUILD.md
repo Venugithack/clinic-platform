@@ -250,3 +250,58 @@ an hour on day 1 against a day in M3.
 they are M3–M5 work and are not written. The lint rule that forbids `.rpc()`
 outside `lib/transitions` is what keeps a screen from inventing its own path to
 the tables in the meantime.
+
+---
+
+## 6. M1 status — clinic core, built 16 Aug 2026
+
+**Gate:** *"Doctor registers a walk-in, consults, signs an Rx, and it prints on
+the clinic's actual printer at A4."* Everything except the last five words is
+built and covered end to end by a Playwright test at 1280×800 with touch,
+against a real Postgres with real RLS and the real transitions.
+
+| Delivered | |
+|---|---|
+| **Queue** | The default screen on both tablets. Big rows, token dominant, one tap to open. Allergies are legible from the queue, before the record is opened |
+| **Walk-in registration** | Name, phone, age, sex, allergies, and DPDP consent as a deliberate recorded step (§15.1) — registration is blocked until it is given. A phone already on file offers a chooser rather than an answer, because families share one handset |
+| **Consult** | Three panes: patient history and allergies, the form, and the rail with Sign Rx. Diagnosis, advice and follow-up, all typed |
+| **Rx composer** | Full-screen drug search overlay, results in the top half above the keyboard, matching brand, generic and salt at three characters, with the frequent list before anything is typed. Quantities on the app's own numpad, converting strips and boxes to base units live |
+| **Print** | A4, in millimetres. Clinic header, prescriber and registration number, and a signature block with real space in it — A7 makes the hand-signed sheet the legal document |
+
+**Three transitions**, each with its invariant in plpgsql rather than in a form:
+`book_appointment` allocates the day's token under an advisory lock so two
+simultaneous walk-ins both get a number; `set_appointment_status` refuses a
+queue that walks backwards; `sign_prescription` closes the prescription — only
+the prescriber can sign it, an empty one cannot be signed, and a signed one
+cannot be edited by anybody, including the doctor who signed it.
+
+**91 pgTAP assertions, 10 unit tests, 8 Playwright tests, all green.**
+
+### One thing built earlier than planned
+
+The **live stock badge in the composer** (`PLAN.md` §11.2) was scheduled for M2
+with real numbers wired in M3. It reads `available_stock`, which already exists
+and already excludes expired batches, so it cost one view — and a composer that
+shows what is on the shelf is the difference between prescribing and guessing.
+
+### Three bugs the tests caught
+
+Worth recording because each was invisible to the layer above it:
+
+1. A plpgsql parameter `DEFAULT` does not apply when the caller passes an
+   explicit `null`, and a JSON-RPC caller sends `{"p_date": null}` rather than
+   omitting the key. Every registration from the browser failed on a not-null
+   constraint; every pgTAP test passed, because they all omitted the argument.
+2. `process.env[name]` with a dynamic key is not inlined by Next at build time,
+   so the browser bundle had no database URL at all. Silent at build, total at
+   runtime.
+3. A request that neither succeeds nor fails left the lock screen empty
+   forever, with no staff and no explanation. Every request is now bounded at
+   12 seconds — the free tier has no SLA, so this is not hypothetical.
+
+### Still outstanding, and still not code
+
+The M1 gate does not close until the prescription prints on the clinic's own
+A4 printer. That is a physical test, and `TABLET.md` §1's trap applies first:
+**a tablet cannot print over USB at all.** The printer's model number is the
+thing to check this week.

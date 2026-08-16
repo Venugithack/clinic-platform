@@ -64,3 +64,6 @@ blob-report/
 #   pnpm-lock.yaml        reproducible installs
 #   supabase/migrations/  *.sql migrations are the schema
 #   supabase/tests/       pgTAP
+
+# local dev tooling fetched by scripts/dev-stack.sh
+.tools/

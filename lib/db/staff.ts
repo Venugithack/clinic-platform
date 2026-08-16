@@ -24,5 +24,12 @@ export async function listActiveStaff(): Promise<StaffMember[]> {
     .order('name');
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as StaffMember[];
+
+  // A null body with no error is not an empty clinic — it is a request that did
+  // not complete. Coalescing it to [] would render a lock screen with nobody on
+  // it and no explanation, which is exactly the "failed save as a mystery"
+  // PLAN.md §5.2 rules out.
+  if (data === null) throw new Error('The clinic database did not respond.');
+
+  return data as StaffMember[];
 }

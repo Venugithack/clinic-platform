@@ -25,6 +25,13 @@ insert into staff (id, name, role, reg_no, auth_user_id) values
   ('5eed0000-0000-0000-0000-000000000003', 'Admin',    'admin',   null,
    'a5ed0000-0000-0000-0000-000000000003');
 
+-- A known PIN for every seeded staff member, so a fresh checkout can sign in.
+-- Development only: app.set_staff_pin() is the real path and it requires an
+-- admin to already be signed in, which is a chicken-and-egg the seed sidesteps
+-- by writing the digest directly as superuser. The digits are in the repository
+-- on purpose — this database holds no real patient.
+update staff set pin_hash = crypt('481920', gen_salt('bf', 12)), pin_set_at = now();
+
 insert into devices (label, device_token, idle_timeout_seconds, registered_by) values
   -- 10 minutes in the cabin, 3 at the counter (TABLET.md §5).
   ('Cabin tablet',   'seed-device-cabin',   600, '5eed0000-0000-0000-0000-000000000003'),

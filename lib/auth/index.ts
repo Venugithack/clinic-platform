@@ -14,16 +14,18 @@
  * through lib/db. Swapping Supabase Auth for something else is this file plus
  * lib/db, and no screen changes (HOSTING.md §7's exit ramp).
  */
-import { db } from '@/lib/db';
+import {
+  appSchema,
+  clearStoredSession,
+  db,
+  readStoredSession,
+  writeStoredSession,
+  type StoredSession,
+} from '@/lib/db';
 
-const SESSION_STORAGE_KEY = 'clinic.staffSession';
+export type StaffSession = StoredSession;
 
-export interface StaffSession {
-  token: string;
-  staffId: string;
-  staffName: string;
-  role: 'doctor' | 'counter' | 'admin';
-}
+const DEVICE_TOKEN_KEY = 'clinic.deviceToken';
 
 /**
  * The device token identifies the tablet, not the person. It is written once at
@@ -31,11 +33,11 @@ export interface StaffSession {
  */
 export function deviceToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem('clinic.deviceToken');
+  return window.localStorage.getItem(DEVICE_TOKEN_KEY);
 }
 
 export function registerDeviceLocally(token: string): void {
-  window.localStorage.setItem('clinic.deviceToken', token);
+  window.localStorage.setItem(DEVICE_TOKEN_KEY, token);
 }
 
 /**
@@ -51,7 +53,7 @@ export async function unlock(staffId: string, pin: string): Promise<StaffSession
     throw new Error('This tablet is not registered. Ask the administrator to register it.');
   }
 
-  const { data, error } = await db().rpc('unlock', {
+  const { data, error } = await appSchema().rpc('unlock', {
     p_device_token: device,
     p_staff_id: staffId,
     p_pin: pin,
@@ -74,14 +76,12 @@ export async function unlock(staffId: string, pin: string): Promise<StaffSession
     role: staff?.role ?? 'counter',
   };
 
-  window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  writeStoredSession(session);
   return session;
 }
 
 export function currentSession(): StaffSession | null {
-  if (typeof window === 'undefined') return null;
-  const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
-  return raw ? (JSON.parse(raw) as StaffSession) : null;
+  return readStoredSession();
 }
 
 /** Called on activity, not on a timer. The idle window comes from the device. */
@@ -89,9 +89,9 @@ export async function touch(): Promise<boolean> {
   const session = currentSession();
   if (!session) return false;
 
-  const { data } = await db().rpc('touch_session', { p_token: session.token });
+  const { data } = await appSchema().rpc('touch_session', { p_token: session.token });
   if (data !== true) {
-    lockLocally();
+    clearStoredSession();
     return false;
   }
   return true;
@@ -100,24 +100,7 @@ export async function touch(): Promise<boolean> {
 export async function lock(): Promise<void> {
   const session = currentSession();
   if (session) {
-    await db().rpc('lock', { p_token: session.token });
+    await appSchema().rpc('lock', { p_token: session.token });
   }
-  lockLocally();
-}
-
-function lockLocally(): void {
-  window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
-}
-
-/**
- * The staff session token travels to Postgres in the `app.staff_session` GUC,
- * where app.current_staff_id() reads it — see 20260816090700_auth_device_pin.sql.
- *
- * On Supabase that is wired with a `db-pre-request` function reading the
- * request headers; locally and in tests the GUC is set directly. Either way the
- * token, not the device's auth user, is what names the person in audit_log.
- */
-export function sessionHeaders(): Record<string, string> {
-  const session = currentSession();
-  return session ? { 'x-staff-session': session.token } : {};
+  clearStoredSession();
 }

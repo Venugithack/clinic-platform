@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Numpad } from '@/components/Numpad';
 import { currentSession, deviceToken, unlock, type StaffSession } from '@/lib/auth';
 
@@ -22,6 +23,7 @@ interface StaffOption {
 const PIN_LENGTH = 6;
 
 export default function LockScreen() {
+  const router = useRouter();
   const [session, setSession] = useState<StaffSession | null>(null);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [selected, setSelected] = useState<StaffOption | null>(null);
@@ -38,10 +40,11 @@ export default function LockScreen() {
   useEffect(() => {
     if (!registered) return;
     void (async () => {
-      // Read through the seam; lib/db is the only module that knows Supabase.
-      const { listActiveStaff } = await import('@/lib/db/staff');
       try {
+        // Read through the seam; lib/db is the only module that knows Supabase.
+        const { listActiveStaff } = await import('@/lib/db/staff');
         setStaff(await listActiveStaff());
+        setError(null);
       } catch {
         setError('Cannot reach the clinic database.');
       }
@@ -84,6 +87,13 @@ export default function LockScreen() {
         <p className="mt-3 text-muted">
           {session.role === 'doctor' ? 'Consulting room' : 'Pharmacy counter'}
         </p>
+        <button
+          type="button"
+          onClick={() => router.replace('/queue')}
+          className="mt-8 h-14 rounded-xl border border-ink bg-ink px-8 text-lg font-medium text-white"
+        >
+          Open the queue
+        </button>
       </Centered>
     );
   }

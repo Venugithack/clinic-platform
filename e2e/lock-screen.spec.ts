@@ -19,18 +19,31 @@ test.describe('lock screen', () => {
     ).toBeVisible();
   });
 
-  test('a registered tablet that cannot reach the database degrades gracefully', async ({
-    page,
-  }) => {
+  test('a registered tablet offers the staff who can unlock it', async ({ page }) => {
     await page.addInitScript(() => {
-      window.localStorage.setItem('clinic.deviceToken', 'e2e-device');
+      window.localStorage.setItem('clinic.deviceToken', 'seed-device-cabin');
     });
     await page.goto('/');
 
-    // PLAN.md §5.2: the consult room must not present a failed save as a
-    // mystery. The same applies to the lock screen — an unreachable database is
-    // a sentence, not a stack trace.
-    await expect(page.getByText('Cannot reach the clinic database.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Who is this?' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Dr Seed' })).toBeVisible();
+  });
+
+  test('an unreachable database is a sentence, not a stack trace', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('clinic.deviceToken', 'seed-device-cabin');
+    });
+    // PLAN.md §5.2: the clinic must never be shown a failed request as a
+    // mystery. Free tiers have no SLA (HOSTING.md §9), so this is a state the
+    // staff will genuinely see one day.
+    await page.route('**/rest/v1/**', (route) => route.abort());
+    await page.goto('/');
+
+    // lib/db bounds every request at 12s, so this is the worst case the staff
+    // wait before being told something rather than nothing.
+    await expect(page.getByText('Cannot reach the clinic database.')).toBeVisible({
+      timeout: 20_000,
+    });
   });
 });
 

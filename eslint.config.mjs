@@ -105,7 +105,7 @@ export default tseslint.config(
   {
     files: ['scripts/**/*.mjs', '*.config.{ts,mts,mjs}', 'eslint-rules/**/*.mjs'],
     languageOptions: {
-      globals: { console: 'readonly', process: 'readonly' },
+      globals: { console: 'readonly', process: 'readonly', Buffer: 'readonly' },
     },
   },
 );

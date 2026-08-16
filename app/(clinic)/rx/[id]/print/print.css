@@ -1,0 +1,171 @@
+/*
+ * Prescription print styles. A4 now; the 80mm counter roll arrives with billing
+ * in M4 (PLAN.md §18 Q9 — "A4 now, small printer planned").
+ *
+ * Written in millimetres rather than pixels because the output is a physical
+ * sheet of paper, and tested on the clinic's own printer before go-live
+ * (TABLET.md §8). Nothing here depends on colour: a mono laser is the likely
+ * device, and a prescription that needs colour to be legible is a bad
+ * prescription.
+ */
+
+.rx-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 15mm 18mm;
+  background: white;
+  color: black;
+  font-size: 11pt;
+  line-height: 1.5;
+}
+
+.rx-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10mm;
+  border-bottom: 0.5mm solid black;
+  padding-bottom: 4mm;
+}
+
+.rx-clinic {
+  font-size: 16pt;
+  font-weight: 700;
+  margin: 0;
+}
+
+.rx-prescriber {
+  text-align: right;
+}
+
+.rx-doctor {
+  font-size: 12pt;
+  font-weight: 600;
+  margin: 0;
+}
+
+.rx-small {
+  font-size: 9pt;
+}
+
+.rx-patient {
+  display: flex;
+  gap: 12mm;
+  margin-top: 5mm;
+  padding-bottom: 4mm;
+  border-bottom: 0.2mm solid #999;
+}
+
+.rx-label {
+  display: block;
+  font-size: 8.5pt;
+  text-transform: uppercase;
+  letter-spacing: 0.4pt;
+  color: #444;
+}
+
+.rx-value {
+  display: block;
+  font-size: 12pt;
+}
+
+.rx-block {
+  margin-top: 6mm;
+}
+
+.rx-rx {
+  font-size: 20pt;
+  margin: 0 0 2mm;
+}
+
+.rx-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rx-table th {
+  text-align: left;
+  font-size: 8.5pt;
+  text-transform: uppercase;
+  letter-spacing: 0.4pt;
+  color: #444;
+  border-bottom: 0.2mm solid #999;
+  padding: 1.5mm 2mm;
+}
+
+.rx-table td {
+  padding: 2.5mm 2mm;
+  border-bottom: 0.1mm solid #ddd;
+  vertical-align: top;
+}
+
+.rx-col-num {
+  width: 8mm;
+}
+
+.rx-col-qty {
+  width: 18mm;
+  text-align: right;
+}
+
+.rx-footer {
+  margin-top: 20mm;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.rx-signature {
+  text-align: center;
+  min-width: 60mm;
+}
+
+/* Real space to sign in. A7 makes the hand-signed sheet the legal document,
+   so this is not decoration. */
+.rx-signature-line {
+  height: 18mm;
+  border-bottom: 0.3mm solid black;
+  margin-bottom: 2mm;
+}
+
+.rx-signature p {
+  margin: 0;
+}
+
+@media screen {
+  .rx-screen {
+    background: #e9e9ec;
+    min-height: 100%;
+    overflow-y: auto;
+  }
+
+  .rx-sheet {
+    margin: 8mm auto;
+    box-shadow: 0 2px 12px rgb(0 0 0 / 0.15);
+  }
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  .rx-screen {
+    background: white;
+  }
+
+  .rx-sheet {
+    box-shadow: none;
+    margin: 0;
+  }
+
+  /* Long prescriptions must not split a medicine across two sheets. */
+  .rx-table tr {
+    break-inside: avoid;
+  }
+
+  .rx-footer {
+    break-inside: avoid;
+  }
+}

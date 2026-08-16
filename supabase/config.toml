@@ -1,0 +1,39 @@
+project_id = "clinic-platform"
+
+[api]
+enabled = true
+port = 54321
+# `app` is exposed alongside `public` because the state transitions live there
+# (lib/db calls them with .schema('app')). Keeping them out of `public` means
+# the boundary between "a read under RLS" and "a state change in a transaction"
+# is visible in the client call, not just in a comment.
+schemas = ["public", "app"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 16
+
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+# The device holds a long-lived session and the PIN holds the identity
+# (TABLET.md §5), so the refresh window is deliberately generous: staff should
+# never be asked for a password on a shared tablet.
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = false
+
+[analytics]
+enabled = false

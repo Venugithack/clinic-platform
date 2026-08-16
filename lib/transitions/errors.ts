@@ -13,6 +13,8 @@ export type TransitionErrorCode =
   | 'MRP_EXCEEDED'
   | 'NOT_SIGNED_IN'
   | 'BAD_REQUEST'
+  | 'INVALID_STATE_CHANGE'
+  | 'ALREADY_SIGNED'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -22,6 +24,8 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   PT004: 'MRP_EXCEEDED',
   PT005: 'NOT_SIGNED_IN',
   PT006: 'BAD_REQUEST',
+  PT007: 'INVALID_STATE_CHANGE',
+  PT008: 'ALREADY_SIGNED',
 };
 
 export class TransitionError extends Error {

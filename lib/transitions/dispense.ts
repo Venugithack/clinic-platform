@@ -11,7 +11,7 @@
  *
  * This is the pattern the other eleven transitions copy (BUILD.md §1.5).
  */
-import { db } from '@/lib/db';
+import { appSchema } from '@/lib/db';
 import { toTransitionError, TransitionError } from './errors';
 
 export interface DispenseLine {
@@ -36,7 +36,7 @@ export interface DispenseInput {
 }
 
 export async function dispense(input: DispenseInput): Promise<string> {
-  const { data, error } = await db().rpc('dispense', {
+  const { data, error } = await appSchema().rpc('dispense', {
     p_lines: input.lines.map((line) => ({
       drug_id: line.drugId,
       qty_base: line.qtyBase,

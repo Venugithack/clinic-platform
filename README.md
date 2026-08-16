@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0 is built** (16 Aug 2026) — see [What is built](#what-is-built) below, and
-`BUILD.md` §5. Seven documents describe the rest:
+**M0 and M1 are built** (16 Aug 2026) — see [What is built](#what-is-built)
+below, and `BUILD.md` §5–6. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -22,40 +22,46 @@ fee (§10). Everything else is complete.
 
 ## What is built
 
-M0 — foundations. Everything in `BUILD.md` §1 that does not need the clinic's
-own hardware.
+**M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
+consult, a signed prescription and a printable A4 sheet.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
-  (clinic)/         three-pane tablet shell, consult + counter routes
+  (clinic)/         queue · register walk-in · consult · Rx print
   p/  now/          patient portal and public status page, default-deny
+components/         three-pane shell, numpad, drug search, quantity pad
 lib/
   db/               the ONLY module that imports @supabase/* — lint-enforced
   transitions/      typed wrappers over the plpgsql RPCs
   auth/  realtime/  swappable adapters (HOSTING.md §7)
   units/            base-unit conversion (INVENTORY.md §1)
 supabase/
-  migrations/       7 forward-only migrations — the schema
-  tests/            63 pgTAP assertions
+  migrations/       10 forward-only migrations — the schema
+  tests/            91 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
-scripts/            local Postgres, migrations, backup, restore drill, LAN HTTPS
+scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
 ```
 
 ```
 pnpm install
-pnpm db:reset && pnpm db:seed     # local Postgres, migrations, seed
+./scripts/dev-stack.sh --reset    # Postgres, migrations, seed, API, .env.local
+pnpm dev                           # then open the app
 pnpm test                          # typecheck · lint · unit · pgTAP · e2e
 ```
 
-**The two tests that matter** are in `supabase/tests/20_transition_grants.sql`:
-a direct write to the stock ledger is refused by Postgres with `42501`, and the
-same role can still call `app.dispense`. That is `PLAN.md` §5.3 rules 2 and 3
-becoming something the database enforces rather than something the team
-remembers.
+**The two tests that matter most** are in
+`supabase/tests/20_transition_grants.sql`: a direct write to the stock ledger is
+refused by Postgres with `42501`, and the same role can still call
+`app.dispense`. That is `PLAN.md` §5.3 rules 2 and 3 becoming something the
+database enforces rather than something the team remembers.
+
+**The M1 gate** is `e2e/m1-gate.spec.ts`, driven against a real Postgres with
+real RLS and the real transitions — not a stubbed API.
 
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
-tablets, PWA install, and the printer check. All four happen in the clinic.
+tablets, PWA install, and the printer check. All four happen in the clinic, and
+the printer one comes first: **a tablet cannot print over USB at all.**
 `scripts/lan-https.sh` is the runbook.
 
 Build continues after `PLAN.md` §20 is signed off.

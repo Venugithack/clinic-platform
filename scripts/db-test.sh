@@ -33,3 +33,12 @@ if [ "${failed}" -ne 0 ]; then
   exit 1
 fi
 echo "pgTAP: all green"
+
+# Leave the database usable.
+#
+# Every pgTAP file rolls back, but this script resets the schema first, which
+# takes the development seed with it. Without this the next thing to run —
+# `pnpm test:e2e`, or a developer opening the app — meets an empty clinic with
+# no staff, no drugs and no explanation.
+"$(dirname "${BASH_SOURCE[0]}")/db-seed.sh" >/dev/null
+echo "seed restored"
