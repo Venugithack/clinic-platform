@@ -429,3 +429,46 @@ must leave the counter working.
 None of it is blocked. `app.dispense`, `app.receive_goods` and the base-unit
 model are in place, so each of these is a transition and a screen on top of
 foundations that already hold.
+
+### Second slice — stock-take done, counter sale NOT
+
+**The blind stock-take is complete** and behaves the way `INVENTORY.md` §5 asks:
+
+| | |
+|---|---|
+| Blind, enforced | The counting role has no `SELECT` privilege on the expected quantity — column grants, not a screen politely looking away. A screen that decided to peek gets an error |
+| Variance, by rupee value | Five missing thyroid tablets outrank twenty-two missing paracetamol. Sorting by count buries the one that matters, which is why this report is the theft-and-drift detector |
+| Recount is a gate | Anything over the threshold is counted again before anything can post. Not a warning — the approval refuses |
+| Only the doctor posts | And only then does one `adjust` movement per batch reach the ledger, carrying the take id as its reason |
+| The counter keeps working | A count in progress moves no stock, and each line's variance is measured against the shelf as it was when the person stood in front of it |
+
+One design mistake worth recording: the first cut made the variance view
+`security_invoker`, so it ran as the counting role — which the column grant had
+just denied the expected quantity. Blindness enforced so hard that the report
+could never be produced. The two mechanisms now split the job properly: the
+column grant stops direct reads, and the view's `WHERE` decides when the numbers
+exist at all.
+
+### The counter sale is NOT ready, and this is why
+
+The happy path works — a walk-in buys an OTC medicine, the total is right to the
+paise, the ledger is written. **A failing sale hangs.** The dispense RPC issues
+no request, resolves nothing and rejects nothing, so the button sits on
+"Selling…" forever and the pharmacist is told nothing at all. That is worse than
+a visible error, and it is not shippable.
+
+The refusal itself is sound: `10_transition_dispense.sql` proves Schedule H1
+cannot leave on a counter sale. What is broken is this screen's ability to
+surface the refusal. Localised so far, and recorded in `e2e/m3-inventory.spec.ts`
+next to the skipped test:
+
+- a plain read immediately before the call succeeds — the client is not wedged
+- the same `dispense()` wrapper works from the prescription screen
+- nothing reaches PostgREST, and no query is blocked in Postgres
+- not the dev proxy's hop-by-hop headers, and not the stubbed auth endpoints —
+  both were found, both were fixed, neither changed this
+
+Three dev-stack faults *were* found and fixed on the way, all of which had made
+failures point somewhere other than their cause: an orphaned PostgREST serving a
+pre-migration schema cache, a proxy crash that took the whole stack down
+mid-run, and no readiness probe to make either loud.

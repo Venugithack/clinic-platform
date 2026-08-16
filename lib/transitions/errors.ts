@@ -20,6 +20,8 @@ export type TransitionErrorCode =
   | 'EXPIRY_IN_PAST'
   | 'EXPIRY_BEFORE_DISPENSED'
   | 'BARCODE_TAKEN'
+  | 'STOCK_TAKE_IN_PROGRESS'
+  | 'RECOUNT_REQUIRED'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -36,6 +38,8 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   PT011: 'EXPIRY_IN_PAST',
   PT012: 'EXPIRY_BEFORE_DISPENSED',
   PT013: 'BARCODE_TAKEN',
+  PT014: 'STOCK_TAKE_IN_PROGRESS',
+  PT015: 'RECOUNT_REQUIRED',
 };
 
 export class TransitionError extends Error {

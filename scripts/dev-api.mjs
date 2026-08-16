@@ -124,29 +124,96 @@ process.on('exit', () => pgrst.kill());
 const proxy = createServer((clientReq, clientRes) => {
   const path = clientReq.url.replace(/^\/rest\/v1/, '') || '/';
 
-  // supabase-js checks for a session on init. There is no Auth server here and
-  // there does not need to be: the anon key already carries the device's role
-  // and subject, which is what the JWT would have said anyway.
+  // There is no Auth server here and there does not need to be: the anon key
+  // already carries the device's role and subject, which is what the JWT would
+  // have said anyway.
+  //
+  // But the answer has to be one supabase-js UNDERSTANDS. A bare 404 is not:
+  // GoTrue treats it as a transient failure, retries the token refresh with
+  // backoff, and holds its session lock while it does. Every later .from() and
+  // .rpc() then queues behind that lock and simply never resolves — no request
+  // issued, no error, a button stuck on "Selling…". Answering the way a real
+  // auth server answers an anonymous client makes it give up immediately.
   if (path.startsWith('/auth/') || clientReq.url.startsWith('/auth/')) {
-    clientRes.writeHead(404, { 'content-type': 'application/json' });
-    clientRes.end('{"message":"no local auth server; the anon key is the device session"}');
+    const isToken = clientReq.url.includes('/token');
+    clientRes.writeHead(isToken ? 400 : 401, { 'content-type': 'application/json' });
+    clientRes.end(
+      isToken
+        ? '{"error":"invalid_grant","error_description":"no local auth server; the anon key is the device session"}'
+        : '{"code":401,"message":"no local auth server; the anon key is the device session"}',
+    );
     return;
   }
 
   const upstream = httpRequest(
-    { host: '127.0.0.1', port: PGRST_PORT, path, method: clientReq.method, headers: clientReq.headers },
+    {
+      host: '127.0.0.1',
+      port: PGRST_PORT,
+      path,
+      method: clientReq.method,
+      headers: clientReq.headers,
+      // No connection pooling. A reused socket that desyncs surfaces as a
+      // nonsense status ("Invalid status code: 3") and, unguarded, takes the
+      // whole dev stack down mid-test-run — where it reads as "cannot reach the
+      // clinic database" in some unrelated test, which is a long way from the
+      // cause. A dev proxy has no use for keep-alive anyway.
+      agent: false,
+    },
     (upstreamRes) => {
-      clientRes.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      const status = upstreamRes.statusCode;
+      const valid = Number.isInteger(status) && status >= 100 && status <= 599;
+
+      // Strip hop-by-hop headers. Forwarding `transfer-encoding: chunked`
+      // verbatim makes Node frame the body a second time, and the response
+      // never completes: the browser's fetch hangs forever, so a failing RPC
+      // neither resolves nor rejects and a button sits on "Selling…". The
+      // successful path survives it, which is what made this look like a
+      // product bug in one screen rather than proxy hygiene missing from all
+      // of them. It is also what desynced a pooled socket into the earlier
+      // "Invalid status code: 3" crash.
+      const headers = { ...upstreamRes.headers };
+      for (const hop of [
+        'transfer-encoding',
+        'connection',
+        'keep-alive',
+        'upgrade',
+        'proxy-authenticate',
+        'proxy-authorization',
+        'te',
+        'trailer',
+      ]) {
+        delete headers[hop];
+      }
+
+      try {
+        clientRes.writeHead(valid ? status : 502, headers);
+      } catch {
+        clientRes.destroy();
+        return;
+      }
       upstreamRes.pipe(clientRes);
     },
   );
 
   upstream.on('error', (error) => {
+    if (clientRes.headersSent) {
+      clientRes.destroy();
+      return;
+    }
     clientRes.writeHead(502, { 'content-type': 'application/json' });
     clientRes.end(JSON.stringify({ message: error.message }));
   });
 
+  clientReq.on('error', () => upstream.destroy());
   clientReq.pipe(upstream);
+});
+
+proxy.on('clientError', (_error, socket) => socket.destroy());
+
+// One malformed exchange must not end the stack. Everything downstream of a
+// dead dev API fails in a way that points somewhere else entirely.
+process.on('uncaughtException', (error) => {
+  console.error(`dev API: recovered from ${error.message}`);
 });
 
 // ---------------------------------------------------------------------------

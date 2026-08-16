@@ -26,7 +26,8 @@ fee (§10). Everything else is complete.
 **M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
 consult, a signed prescription and a printable A4 sheet. **M2** — the
 doctor↔counter live link, the feature the clinic actually bought. **M3, first
-slice** — goods receipt, barcodes, and FEFO dispensing with scan-to-verify.
+slice** — goods receipt, barcodes, and FEFO dispensing with scan-to-verify,
+plus the blind stock-take.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
@@ -44,8 +45,8 @@ lib/
   units/            base-unit conversion (INVENTORY.md §1)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       14 forward-only migrations — the schema
-  tests/            146 pgTAP assertions
+  migrations/       15 forward-only migrations — the schema
+  tests/            170 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -75,6 +76,12 @@ the build. It currently runs at ~150ms.
 **The M3 gate** is `e2e/m3-dispense.spec.ts`: two batches of one drug with
 different expiries, MRPs and strip sizes, FEFO taking the earlier one, and a
 barcode scan stopping a pack that is not on the prescription.
+
+**One known defect, and it blocks the counter sale:** a *failing* sale hangs
+instead of showing the refusal — the button sits on "Selling…" and says nothing.
+The refusal itself is proven in pgTAP; the screen cannot surface it. Written up
+in `BUILD.md` §8 and beside the skipped test in `e2e/m3-inventory.spec.ts`. The
+counter sale is not shippable until it is fixed.
 
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
 tablets, PWA install, the printer's Android print service plugin, and one real
