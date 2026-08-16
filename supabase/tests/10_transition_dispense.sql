@@ -151,7 +151,7 @@ select throws_ok(
        jsonb_build_array(jsonb_build_object(
          'drug_id', 'd0000000-0000-0000-0000-000000000003', 'qty_base', 1)),
        null, '60000000-0000-0000-0000-000000000001', true) $$,
-  'PT002',
+  'CL002',
   null,
   'an expired batch is excluded from on-hand entirely, not merely flagged'
 );
@@ -167,7 +167,7 @@ select throws_ok(
        jsonb_build_array(jsonb_build_object(
          'drug_id', 'd0000000-0000-0000-0000-000000000004', 'qty_base', 10)),
        null, '60000000-0000-0000-0000-000000000001', true) $$,
-  'PT001',
+  'CL001',
   null,
   'stock can never go negative: a short dispense fails rather than inventing stock'
 );
@@ -183,7 +183,7 @@ select throws_ok(
        jsonb_build_array(jsonb_build_object(
          'drug_id', 'd0000000-0000-0000-0000-000000000002', 'qty_base', 10)),
        null, '60000000-0000-0000-0000-000000000001', true) $$,
-  'PT003',
+  'CL003',
   null,
   'a Schedule H1 drug cannot leave on a counter sale (PLAN.md §15.2)'
 );
@@ -264,7 +264,7 @@ select throws_ok(
        jsonb_build_array(jsonb_build_object(
          'drug_id', 'd0000000-0000-0000-0000-000000000006', 'qty_base', 1)),
        null, '60000000-0000-0000-0000-000000000001', true) $$,
-  'PT005',
+  'CL005',
   null,
   'a dispense with nobody signed in is refused'
 );

@@ -26,8 +26,8 @@ fee (§10). Everything else is complete.
 **M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
 consult, a signed prescription and a printable A4 sheet. **M2** — the
 doctor↔counter live link, the feature the clinic actually bought. **M3, first
-slice** — goods receipt, barcodes, and FEFO dispensing with scan-to-verify,
-plus the blind stock-take.
+slice** — goods receipt, barcodes, FEFO dispensing with scan-to-verify, the
+blind stock-take, and the counter sale.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
@@ -77,11 +77,12 @@ the build. It currently runs at ~150ms.
 different expiries, MRPs and strip sizes, FEFO taking the earlier one, and a
 barcode scan stopping a pack that is not on the prescription.
 
-**One known defect, and it blocks the counter sale:** a *failing* sale hangs
-instead of showing the refusal — the button sits on "Selling…" and says nothing.
-The refusal itself is proven in pgTAP; the screen cannot surface it. Written up
-in `BUILD.md` §8 and beside the skipped test in `e2e/m3-inventory.spec.ts`. The
-counter sale is not shippable until it is fixed.
+**The bug worth knowing about:** every transition refusal in the build was
+invisible until 16 Aug 2026. PostgREST reserves SQLSTATEs starting `PT` and
+reads the rest as an HTTP status, so `PT003` asked for HTTP status 3 — the
+response never framed and the screen hung instead of showing the refusal. Only
+success paths worked, which is why it survived three milestones. Codes are now
+`CL0xx`; see `BUILD.md` §8.
 
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
 tablets, PWA install, the printer's Android print service plugin, and one real

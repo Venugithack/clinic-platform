@@ -119,16 +119,16 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   if not exists (select 1 from patients where id = p_patient_id) then
-    raise exception 'unknown patient %', p_patient_id using errcode = 'PT006';
+    raise exception 'unknown patient %', p_patient_id using errcode = 'CL006';
   end if;
 
   -- A clinic does not take bookings for last week.
   if v_date < current_date then
-    raise exception 'cannot book an appointment in the past' using errcode = 'PT006';
+    raise exception 'cannot book an appointment in the past' using errcode = 'CL006';
   end if;
 
   -- Serialise token allocation for this day only. Two different days never
@@ -185,12 +185,12 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   select status into v_current from appointments where id = p_appointment_id for update;
   if not found then
-    raise exception 'unknown appointment %', p_appointment_id using errcode = 'PT006';
+    raise exception 'unknown appointment %', p_appointment_id using errcode = 'CL006';
   end if;
 
   v_allowed := case v_current
@@ -202,7 +202,7 @@ begin
 
   if not (p_status = any (v_allowed)) then
     raise exception 'cannot move an appointment from % to %', v_current, p_status
-      using errcode = 'PT007';
+      using errcode = 'CL007';
   end if;
 
   update appointments set status = p_status
@@ -248,28 +248,28 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   select * into v_rx from prescriptions where id = p_prescription_id for update;
   if not found then
-    raise exception 'unknown prescription %', p_prescription_id using errcode = 'PT006';
+    raise exception 'unknown prescription %', p_prescription_id using errcode = 'CL006';
   end if;
 
   -- Only the prescriber signs. The counter cannot, and neither can another
   -- doctor: §15.2 requires the prescriber's name against every H1 line.
   if v_rx.doctor_id <> v_staff_id then
     raise exception 'only the prescribing doctor can sign this prescription'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   if v_rx.signed_at is not null then
     raise exception 'this prescription was already signed at %', v_rx.signed_at
-      using errcode = 'PT008';
+      using errcode = 'CL008';
   end if;
 
   if jsonb_array_length(v_rx.items) = 0 then
-    raise exception 'an empty prescription cannot be signed' using errcode = 'PT006';
+    raise exception 'an empty prescription cannot be signed' using errcode = 'CL006';
   end if;
 
   -- Every line must name a drug that exists and a positive quantity in base
@@ -279,11 +279,11 @@ begin
   loop
     if not exists (select 1 from drugs where id = (v_item ->> 'drug_id')::uuid) then
       raise exception 'prescription line names a drug that is not in the catalogue'
-        using errcode = 'PT006';
+        using errcode = 'CL006';
     end if;
     if coalesce((v_item ->> 'qty_base')::int, 0) <= 0 then
       raise exception 'every prescription line needs a positive quantity'
-        using errcode = 'PT006';
+        using errcode = 'CL006';
     end if;
   end loop;
 

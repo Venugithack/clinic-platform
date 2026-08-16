@@ -36,7 +36,7 @@ select isnt(
 
 select throws_ok(
   $$ select app.set_staff_pin('50000000-0000-0000-0000-00000000000b', '4819') $$,
-  'PT006',
+  'CL006',
   null,
   'a staff PIN is exactly 6 digits'
 );
@@ -46,21 +46,21 @@ select throws_ok(
 -- ---------------------------------------------------------------------------
 select throws_ok(
   $$ select app.unlock('device-counter-token', '50000000-0000-0000-0000-00000000000b', '000000') $$,
-  'PT005',
+  'CL005',
   null,
   'the wrong PIN is refused'
 );
 
 select throws_ok(
   $$ select app.unlock('device-lost-token', '50000000-0000-0000-0000-00000000000b', '481920') $$,
-  'PT005',
+  'CL005',
   null,
   'a revoked device is refused before the PIN is even considered — the lost-tablet story'
 );
 
 select throws_ok(
   $$ select app.unlock('no-such-device', '50000000-0000-0000-0000-00000000000b', '481920') $$,
-  'PT005',
+  'CL005',
   null,
   'an unregistered device is refused: a PIN alone is useless on any other device'
 );

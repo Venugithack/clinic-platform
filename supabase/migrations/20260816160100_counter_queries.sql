@@ -196,21 +196,21 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   select * into v_rx from prescriptions where id = p_prescription_id;
   if not found then
-    raise exception 'unknown prescription %', p_prescription_id using errcode = 'PT006';
+    raise exception 'unknown prescription %', p_prescription_id using errcode = 'CL006';
   end if;
 
   -- A draft is not a prescription. There is nothing to query until it is signed.
   if v_rx.signed_at is null then
-    raise exception 'that prescription has not been signed yet' using errcode = 'PT006';
+    raise exception 'that prescription has not been signed yet' using errcode = 'CL006';
   end if;
 
   if v_rx.status in ('dispensed', 'cancelled') then
-    raise exception 'that prescription is already %', v_rx.status using errcode = 'PT006';
+    raise exception 'that prescription is already %', v_rx.status using errcode = 'CL006';
   end if;
 
   -- The query has to be about a line that is actually on the prescription.
@@ -218,7 +218,7 @@ begin
     select 1 from jsonb_array_elements(v_rx.items) as i(item)
     where (i.item ->> 'drug_id')::uuid = p_drug_id
   ) then
-    raise exception 'that drug is not on this prescription' using errcode = 'PT006';
+    raise exception 'that drug is not on this prescription' using errcode = 'CL006';
   end if;
 
   select * into v_original from drugs where id = p_drug_id;
@@ -226,7 +226,7 @@ begin
   if p_proposed_drug_id is not null then
     select * into v_proposed from drugs where id = p_proposed_drug_id;
     if not found then
-      raise exception 'unknown substitute %', p_proposed_drug_id using errcode = 'PT006';
+      raise exception 'unknown substitute %', p_proposed_drug_id using errcode = 'CL006';
     end if;
 
     -- INVENTORY.md §7: same salt + same strength + same dosage form, or
@@ -238,17 +238,17 @@ begin
       raise exception
         '"%" is not an equivalent of "%" — substitution needs the same salt, strength and form',
         v_proposed.name, v_original.name
-        using errcode = 'PT009';
+        using errcode = 'CL009';
     end if;
 
     if v_proposed.id = v_original.id then
-      raise exception 'that is the same drug' using errcode = 'PT006';
+      raise exception 'that is the same drug' using errcode = 'CL006';
     end if;
   end if;
 
   if p_kind = 'substitution' and p_proposed_drug_id is null then
     raise exception 'a substitution query has to name the proposed drug'
-      using errcode = 'PT006';
+      using errcode = 'CL006';
   end if;
 
   insert into counter_queries
@@ -267,7 +267,7 @@ begin
 exception
   when unique_violation then
     raise exception 'there is already an open question about that line'
-      using errcode = 'PT010';
+      using errcode = 'CL010';
 end
 $$;
 
@@ -304,23 +304,23 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   select * into v_query from counter_queries where id = p_query_id for update;
   if not found then
-    raise exception 'unknown query %', p_query_id using errcode = 'PT006';
+    raise exception 'unknown query %', p_query_id using errcode = 'CL006';
   end if;
 
   if v_query.status <> 'open' then
-    raise exception 'that question was already %', v_query.status using errcode = 'PT008';
+    raise exception 'that question was already %', v_query.status using errcode = 'CL008';
   end if;
 
   select * into v_rx from prescriptions where id = v_query.prescription_id;
 
   if v_rx.doctor_id <> v_staff_id then
     raise exception 'only the prescribing doctor can answer this'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   -- Approving a substitution means approving the drug the counter proposed;
@@ -333,14 +333,14 @@ begin
   end;
 
   if p_decision = 'approved' and v_query.kind = 'substitution' and v_approved_id is null then
-    raise exception 'approving a substitution needs a drug' using errcode = 'PT006';
+    raise exception 'approving a substitution needs a drug' using errcode = 'CL006';
   end if;
 
   -- Caught here rather than by the check constraint, so the counter gets a
   -- sentence instead of a constraint name.
   if p_decision = 'amended' and v_approved_id is null then
     raise exception 'an amendment has to name the drug to dispense instead'
-      using errcode = 'PT006';
+      using errcode = 'CL006';
   end if;
 
   if v_approved_id is not null then
@@ -348,7 +348,7 @@ begin
     select * into v_approved from drugs where id = v_approved_id;
 
     if not found then
-      raise exception 'unknown drug %', v_approved_id using errcode = 'PT006';
+      raise exception 'unknown drug %', v_approved_id using errcode = 'CL006';
     end if;
 
     if v_approved.salt_composition is distinct from v_original.salt_composition
@@ -357,7 +357,7 @@ begin
       raise exception
         '"%" is not an equivalent of "%" — substitution needs the same salt, strength and form',
         v_approved.name, v_original.name
-        using errcode = 'PT009';
+        using errcode = 'CL009';
     end if;
   end if;
 
@@ -406,21 +406,21 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   select * into v_query from counter_queries where id = p_query_id for update;
   if not found then
-    raise exception 'unknown query %', p_query_id using errcode = 'PT006';
+    raise exception 'unknown query %', p_query_id using errcode = 'CL006';
   end if;
 
   if v_query.status <> 'open' then
-    raise exception 'that question was already %', v_query.status using errcode = 'PT008';
+    raise exception 'that question was already %', v_query.status using errcode = 'CL008';
   end if;
 
   if v_query.raised_by <> v_staff_id then
     raise exception 'only the person who raised it can withdraw it'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   update counter_queries

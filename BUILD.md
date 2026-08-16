@@ -449,24 +449,43 @@ could never be produced. The two mechanisms now split the job properly: the
 column grant stops direct reads, and the view's `WHERE` decides when the numbers
 exist at all.
 
-### The counter sale is NOT ready, and this is why
+### The counter sale, and the bug that was hiding behind every success path
 
-The happy path works — a walk-in buys an OTC medicine, the total is right to the
-paise, the ledger is written. **A failing sale hangs.** The dispense RPC issues
-no request, resolves nothing and rejects nothing, so the button sits on
-"Selling…" forever and the pharmacist is told nothing at all. That is worse than
-a visible error, and it is not shippable.
+The counter sale is done: a walk-in buys, the total is right to the paise, the
+ledger is written, and Schedule H1 is refused — by the database, not by the
+screen.
 
-The refusal itself is sound: `10_transition_dispense.sql` proves Schedule H1
-cannot leave on a counter sale. What is broken is this screen's ability to
-surface the refusal. Localised so far, and recorded in `e2e/m3-inventory.spec.ts`
-next to the skipped test:
+Getting there turned up the most serious defect found in the build so far, and
+it is worth writing down because of *how* it hid.
 
-- a plain read immediately before the call succeeds — the client is not wedged
-- the same `dispense()` wrapper works from the prescription screen
-- nothing reaches PostgREST, and no query is blocked in Postgres
-- not the dev proxy's hop-by-hop headers, and not the stubbed auth endpoints —
-  both were found, both were fixed, neither changed this
+**PostgREST reserves SQLSTATEs beginning `PT`**, and reads the three characters
+after the prefix as the HTTP status to return. Every transition in this build
+raised `PT001`…`PT015`. So a Schedule H1 refusal (`PT003`) asked PostgREST for
+HTTP status **3**. The response never framed, the browser's `fetch` neither
+resolved nor rejected, and the counter screen sat on "Selling…" telling the
+pharmacist nothing at all.
+
+Every refusal in the build was affected. Stock never negative, expired batch,
+MRP ceiling, H1, wrong prescriber, already signed, expiry in the past — none of
+them could reach a screen. **Only the success paths worked**, which is exactly
+why it survived M0, M1 and M2: no browser test had ever exercised a refusal.
+pgTAP could not see it either, because pgTAP talks to Postgres directly and
+never goes through PostgREST at all.
+
+Two false trails on the way, both fixed on their own merits and neither the
+cause: the dev proxy forwarding hop-by-hop headers, and its stubbed auth
+endpoints answering 404 where a real auth server answers 400. The thing that
+actually cracked it was noticing that the *successful* sale worked from the same
+screen, so it was never the screen — and that the earlier proxy crash had said
+`Invalid status code: 3` for `PT003`.
+
+The codes are now `CL001`…`CL015`, and `20260816090600_transition_dispense.sql`
+carries the reason so nobody shortens the prefix back. `e2e/m3-inventory.spec.ts`
+holds the regression guard: a refusal has to reach the pharmacist as a sentence.
+
+**The lesson for the remaining milestones:** a refusal is a feature, and every
+one of them needs a browser test. A suite that only ever asserts success will
+pass while every error in the system is invisible.
 
 Three dev-stack faults *were* found and fixed on the way, all of which had made
 failures point somewhere other than their cause: an orphaned PostgREST serving a

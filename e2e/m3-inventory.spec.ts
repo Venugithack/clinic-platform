@@ -47,26 +47,15 @@ test.describe('counter sale', () => {
     await expect(page.getByRole('button', { name: 'Sold' })).toBeDisabled();
   });
 
-  // KNOWN DEFECT — do not delete, and do not ship the counter sale until this
-  // is fixed. On the sale screen a FAILING dispense never settles: the RPC
-  // issues no request, resolves nothing and rejects nothing, so the button sits
-  // on "Selling…" forever and the pharmacist is told nothing at all. The
-  // successful path works, which is why the sale looks fine until the first
-  // refusal. Localised so far:
-  //
-  //   · a plain .from() read immediately before the call succeeds, so the
-  //     client is not wedged and the network is fine
-  //   · the same dispense() wrapper works from the prescription screen,
-  //     including its error paths
-  //   · nothing reaches PostgREST — zero rpc/dispense entries in its log — and
-  //     no query is blocked in Postgres
-  //   · not the dev proxy's hop-by-hop headers, and not the stubbed auth
-  //     endpoints; both were fixed and neither changed this
-  //
-  // The refusal ITSELF is sound and proven: 10_transition_dispense.sql asserts
-  // PT003 on an H1 counter sale. What is broken is this screen's ability to
-  // surface it, which is worse than a visible error, not better.
-  test.fixme('Schedule H1 is refused, by the database rather than the screen', async ({ page }) => {
+  // This test is the regression guard for a bug that hid behind every success
+  // path in the build. The refusal is raised with SQLSTATE CL003 — and it used
+  // to be PT003, which PostgREST reserves: it reads the three characters after
+  // `PT` as the HTTP status to return. So an H1 refusal asked for HTTP status
+  // 3, the response never framed, the browser's fetch neither resolved nor
+  // rejected, and this screen sat on "Selling…" telling the pharmacist nothing.
+  // Every transition refusal in the build was affected and none of them could
+  // reach a screen. See the note in 20260816090600_transition_dispense.sql.
+  test('Schedule H1 is refused, by the database rather than the screen', async ({ page }) => {
     await signIn(page, 'seed-device-counter', 'Counter');
     await page.goto('/counter/sale');
 
@@ -82,9 +71,7 @@ test.describe('counter sale', () => {
     await expect(page.getByText(/H1 — needs a prescription/)).toBeVisible();
 
     await page.getByRole('button', { name: 'Complete sale' }).click();
-    await expect(page.getByText(/cannot be sold without a prescription/)).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(page.getByText(/cannot be sold without a prescription/)).toBeVisible();
   });
 });
 

@@ -117,16 +117,16 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
-    raise exception 'a goods receipt needs at least one line' using errcode = 'PT006';
+    raise exception 'a goods receipt needs at least one line' using errcode = 'CL006';
   end if;
 
   if not coalesce(p_awaiting_invoice, false) and p_invoice_no is null then
     raise exception 'a goods receipt needs an invoice number, or the awaiting-invoice flag'
-      using errcode = 'PT006';
+      using errcode = 'CL006';
   end if;
 
   insert into goods_receipts
@@ -140,7 +140,7 @@ begin
   loop
     select * into v_drug from drugs where id = (v_line ->> 'drug_id')::uuid;
     if not found then
-      raise exception 'unknown drug %', v_line ->> 'drug_id' using errcode = 'PT006';
+      raise exception 'unknown drug %', v_line ->> 'drug_id' using errcode = 'CL006';
     end if;
 
     -- The expiry is printed as a month. Stock is good through the end of it,
@@ -153,7 +153,7 @@ begin
     if v_expiry < current_date then
       raise exception 'batch "%" of "%" expires % — that is in the past',
         v_line ->> 'batch_no', v_drug.name, to_char(v_expiry, 'Mon YYYY')
-        using errcode = 'PT011';
+        using errcode = 'CL011';
     end if;
 
     -- Catches the other mistyped year. If stock of this drug has already gone
@@ -173,7 +173,7 @@ begin
         'batch "%" expires % — earlier than a batch already dispensed against (%). Check the year',
         v_line ->> 'batch_no', to_char(v_expiry, 'Mon YYYY'),
         to_char(v_earliest_dispensed, 'Mon YYYY')
-        using errcode = 'PT012';
+        using errcode = 'CL012';
     end if;
 
     v_units_per_strip := coalesce((v_line ->> 'units_per_strip')::int,
@@ -194,13 +194,13 @@ begin
 
     if v_qty_base + v_free_base <= 0 then
       raise exception 'a goods receipt line has to bring something in'
-        using errcode = 'PT006';
+        using errcode = 'CL006';
     end if;
 
     v_cost := (v_line ->> 'cost_per_base_unit')::numeric;
     if v_cost is null then
       raise exception 'a goods receipt line needs a cost — valuation depends on it (INVENTORY.md §4)'
-        using errcode = 'PT006';
+        using errcode = 'CL006';
     end if;
 
     -- Free goods dilute the cost across everything that arrived, which is what

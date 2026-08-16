@@ -53,7 +53,7 @@ select is(
 
 select throws_ok(
   $$ select app.start_stock_take('Another one') $$,
-  'PT014',
+  'CL014',
   null,
   'two concurrent counts of the same shelf produce two answers and no way to choose'
 );
@@ -122,7 +122,7 @@ select ok(
 -- ---------------------------------------------------------------------------
 select throws_ok(
   $$ select app.approve_stock_take((select id from t_take)) $$,
-  'PT005',
+  'CL005',
   null,
   'the counter cannot approve its own count'
 );
@@ -131,7 +131,7 @@ select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000f1
 
 select throws_ok(
   $$ select app.approve_stock_take((select id from t_take)) $$,
-  'PT015',
+  'CL015',
   null,
   'and the doctor cannot either, while a line over the threshold is uncounted'
 );
@@ -186,7 +186,7 @@ select is_empty(
 
 select throws_ok(
   $$ select app.approve_stock_take((select id from t_take)) $$,
-  'PT007',
+  'CL007',
   null,
   'an approved stock-take cannot be approved again'
 );

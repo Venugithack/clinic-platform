@@ -19,7 +19,7 @@ select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000b1
 
 select throws_ok(
   $$ select app.learn_barcode('123', 'd0000000-0000-0000-0000-0000000000b1') $$,
-  'PT006',
+  'CL006',
   null,
   'three digits is not a barcode'
 );
@@ -51,7 +51,7 @@ select is(
 -- and the whole point of scan-to-verify is that a wrong box gets stopped.
 select throws_ok(
   $$ select app.learn_barcode('8901234567890', 'd0000000-0000-0000-0000-0000000000b2') $$,
-  'PT013',
+  'CL013',
   null,
   'a code already registered to one drug cannot be quietly re-pointed at another'
 );

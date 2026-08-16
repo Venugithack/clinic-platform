@@ -148,13 +148,13 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   -- A second concurrent count of the same shelf produces two answers and no
   -- way to choose between them.
   if exists (select 1 from stock_takes where status = 'counting') then
-    raise exception 'a stock-take is already in progress' using errcode = 'PT014';
+    raise exception 'a stock-take is already in progress' using errcode = 'CL014';
   end if;
 
   insert into stock_takes (counted_by, scope_note, recount_threshold_value)
@@ -189,21 +189,21 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   select * into v_take from stock_takes where id = p_take_id;
   if not found then
-    raise exception 'unknown stock-take %', p_take_id using errcode = 'PT006';
+    raise exception 'unknown stock-take %', p_take_id using errcode = 'CL006';
   end if;
 
   if p_counted_qty_base < 0 then
-    raise exception 'a count cannot be negative' using errcode = 'PT006';
+    raise exception 'a count cannot be negative' using errcode = 'CL006';
   end if;
 
   select * into v_batch from stock_batches where id = p_batch_id;
   if not found then
-    raise exception 'unknown batch %', p_batch_id using errcode = 'PT006';
+    raise exception 'unknown batch %', p_batch_id using errcode = 'CL006';
   end if;
 
   if v_take.status = 'counting' then
@@ -223,12 +223,12 @@ begin
     where take_id = p_take_id and batch_id = p_batch_id;
 
     if not found then
-      raise exception 'that batch was not part of this count' using errcode = 'PT006';
+      raise exception 'that batch was not part of this count' using errcode = 'CL006';
     end if;
 
   else
     raise exception 'this stock-take is % and cannot be counted into', v_take.status
-      using errcode = 'PT007';
+      using errcode = 'CL007';
   end if;
 end
 $$;
@@ -244,7 +244,7 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   update stock_takes
@@ -253,7 +253,7 @@ begin
   returning * into v_row;
 
   if not found then
-    raise exception 'that stock-take is not being counted' using errcode = 'PT007';
+    raise exception 'that stock-take is not being counted' using errcode = 'CL007';
   end if;
 
   perform app.write_audit('submit_stock_take', 'stock_takes', p_take_id,
@@ -283,28 +283,28 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   if app.current_staff_role() not in ('doctor', 'admin') then
-    raise exception 'a stock-take is approved by the doctor' using errcode = 'PT005';
+    raise exception 'a stock-take is approved by the doctor' using errcode = 'CL005';
   end if;
 
   select * into v_take from stock_takes where id = p_take_id for update;
   if not found then
-    raise exception 'unknown stock-take %', p_take_id using errcode = 'PT006';
+    raise exception 'unknown stock-take %', p_take_id using errcode = 'CL006';
   end if;
 
   if v_take.status <> 'review' then
     raise exception 'this stock-take is %, not awaiting approval', v_take.status
-      using errcode = 'PT007';
+      using errcode = 'CL007';
   end if;
 
   -- Step 4 is a gate, not a suggestion. A discrepancy worth real money is
   -- counted twice before anybody writes it into the ledger.
   if exists (select 1 from stock_take_variance where take_id = p_take_id and needs_recount) then
     raise exception 'some lines are over the recount threshold and have not been counted again'
-      using errcode = 'PT015';
+      using errcode = 'CL015';
   end if;
 
   for v_line in

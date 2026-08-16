@@ -93,14 +93,14 @@ select is(
 
 select throws_ok(
   $$ select app.book_appointment('60000000-0000-0000-0000-00000000001a', current_date - 1) $$,
-  'PT006',
+  'CL006',
   null,
   'a clinic does not take bookings for last week'
 );
 
 select throws_ok(
   $$ select app.book_appointment('60000000-0000-0000-0000-0000000000ff') $$,
-  'PT006',
+  'CL006',
   null,
   'an unknown patient cannot be given a token'
 );
@@ -144,7 +144,7 @@ select lives_ok(
 select throws_ok(
   $$ select app.set_appointment_status(
        (select id from t_tokens where token_no = 1), 'in_consult') $$,
-  'PT007',
+  'CL007',
   null,
   'done is terminal: a queue that walks backwards cannot be reconstructed at closing time'
 );
@@ -158,7 +158,7 @@ select lives_ok(
 select throws_ok(
   $$ select app.set_appointment_status(
        (select id from t_tokens where token_no = 2), 'in_consult') $$,
-  'PT007',
+  'CL007',
   null,
   'and no_show is terminal too'
 );
@@ -194,14 +194,14 @@ insert into prescriptions (id, encounter_id, patient_id, doctor_id, items) value
 
 select throws_ok(
   $$ select app.sign_prescription('90000000-0000-0000-0000-00000000001b') $$,
-  'PT006',
+  'CL006',
   null,
   'an empty prescription cannot be signed'
 );
 
 select throws_ok(
   $$ select app.sign_prescription('90000000-0000-0000-0000-00000000001c') $$,
-  'PT006',
+  'CL006',
   null,
   'nor one naming a drug that is not in the catalogue'
 );
@@ -211,7 +211,7 @@ select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000001b
 
 select throws_ok(
   $$ select app.sign_prescription('90000000-0000-0000-0000-00000000001a') $$,
-  'PT005',
+  'CL005',
   null,
   'only the prescribing doctor signs — §15.2 wants the prescriber against every H1 line'
 );
@@ -231,7 +231,7 @@ select isnt(
 
 select throws_ok(
   $$ select app.sign_prescription('90000000-0000-0000-0000-00000000001a') $$,
-  'PT008',
+  'CL008',
   null,
   'and it cannot be signed twice'
 );

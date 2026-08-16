@@ -61,11 +61,11 @@ begin
 
   -- An admin may set anyone's PIN; anyone may set their own. Nothing else.
   if v_actor is null or (v_role <> 'admin' and v_actor <> p_staff_id) then
-    raise exception 'not permitted to set this PIN' using errcode = 'PT005';
+    raise exception 'not permitted to set this PIN' using errcode = 'CL005';
   end if;
 
   if p_pin !~ '^[0-9]{6}$' then
-    raise exception 'a staff PIN is exactly 6 digits' using errcode = 'PT006';
+    raise exception 'a staff PIN is exactly 6 digits' using errcode = 'CL006';
   end if;
 
   update staff
@@ -74,7 +74,7 @@ begin
   where id = p_staff_id and active;
 
   if not found then
-    raise exception 'unknown or inactive staff member %', p_staff_id using errcode = 'PT006';
+    raise exception 'unknown or inactive staff member %', p_staff_id using errcode = 'CL006';
   end if;
 
   perform app.write_audit('set_pin', 'staff', p_staff_id, null,
@@ -111,12 +111,12 @@ begin
   -- This is the lost-tablet story: revoke from the admin screen and the PIN on
   -- it stops being worth anything.
   if not found then
-    raise exception 'this device is not registered' using errcode = 'PT005';
+    raise exception 'this device is not registered' using errcode = 'CL005';
   end if;
 
   select * into v_staff from staff where id = p_staff_id and active;
   if not found or v_staff.pin_hash is null then
-    raise exception 'incorrect PIN' using errcode = 'PT005';
+    raise exception 'incorrect PIN' using errcode = 'CL005';
   end if;
 
   -- Same message and same shape of failure as an unknown staff member: a PIN
@@ -124,7 +124,7 @@ begin
   if v_staff.pin_hash <> crypt(p_pin, v_staff.pin_hash) then
     perform app.write_audit('unlock_failed', 'staff', p_staff_id, null,
       jsonb_build_object('device_id', v_device.id), 'system');
-    raise exception 'incorrect PIN' using errcode = 'PT005';
+    raise exception 'incorrect PIN' using errcode = 'CL005';
   end if;
 
   v_token := encode(gen_random_bytes(32), 'hex');

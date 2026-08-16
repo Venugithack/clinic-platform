@@ -69,16 +69,16 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   if p_code is null or length(trim(p_code)) < 6 then
-    raise exception 'that does not look like a barcode' using errcode = 'PT006';
+    raise exception 'that does not look like a barcode' using errcode = 'CL006';
   end if;
 
   select * into v_drug from drugs where id = p_drug_id;
   if not found then
-    raise exception 'unknown drug %', p_drug_id using errcode = 'PT006';
+    raise exception 'unknown drug %', p_drug_id using errcode = 'CL006';
   end if;
 
   select * into v_existing from drug_barcodes where code = trim(p_code);
@@ -90,7 +90,7 @@ begin
     if v_existing.drug_id <> p_drug_id then
       raise exception 'that barcode is already registered to "%"',
         (select name from drugs where id = v_existing.drug_id)
-        using errcode = 'PT013';
+        using errcode = 'CL013';
     end if;
     return v_existing;
   end if;

@@ -101,7 +101,7 @@ select is_empty(
 select throws_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fb',
        'd0000000-0000-0000-0000-0000000000a1', 'out_of_stock') $$,
-  'PT006',
+  'CL006',
   null,
   'a draft cannot be queried — there is nothing to dispense against yet'
 );
@@ -109,7 +109,7 @@ select throws_ok(
 select throws_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fa',
        'd0000000-0000-0000-0000-0000000000a4', 'out_of_stock') $$,
-  'PT006',
+  'CL006',
   null,
   'nor can a drug that is not on the prescription'
 );
@@ -117,7 +117,7 @@ select throws_ok(
 select throws_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fa',
        'd0000000-0000-0000-0000-0000000000a1', 'substitution') $$,
-  'PT006',
+  'CL006',
   null,
   'a substitution query has to name what is being proposed'
 );
@@ -127,7 +127,7 @@ select throws_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fa',
        'd0000000-0000-0000-0000-0000000000a1', 'substitution',
        'd0000000-0000-0000-0000-0000000000a4') $$,
-  'PT009',
+  'CL009',
   null,
   'a different salt is not a substitute, however convenient'
 );
@@ -136,7 +136,7 @@ select throws_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fa',
        'd0000000-0000-0000-0000-0000000000a1', 'substitution',
        'd0000000-0000-0000-0000-0000000000a3') $$,
-  'PT009',
+  'CL009',
   null,
   'and neither is the same salt at a different strength'
 );
@@ -170,7 +170,7 @@ select is(
 select throws_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fa',
        'd0000000-0000-0000-0000-0000000000a1', 'out_of_stock') $$,
-  'PT010',
+  'CL010',
   null,
   'one open question per line — asking twice is the first one having scrolled away'
 );
@@ -187,7 +187,7 @@ select is(
 -- ---------------------------------------------------------------------------
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'approved') $$,
-  'PT005',
+  'CL005',
   null,
   'the counter cannot answer its own question'
 );
@@ -196,7 +196,7 @@ select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d2
 
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'approved') $$,
-  'PT005',
+  'CL005',
   null,
   'and neither can a doctor who did not write the prescription'
 );
@@ -206,14 +206,14 @@ select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d1
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'amended',
        'd0000000-0000-0000-0000-0000000000a4') $$,
-  'PT009',
+  'CL009',
   null,
   'the doctor cannot amend to a different salt either — the rule binds both ends'
 );
 
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'amended') $$,
-  'PT006',
+  'CL006',
   null,
   'an amendment has to name a drug'
 );
@@ -241,7 +241,7 @@ select results_eq(
 
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'rejected') $$,
-  'PT008',
+  'CL008',
   null,
   'a question is answered once'
 );
@@ -275,7 +275,7 @@ select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d1
 
 select throws_ok(
   $$ select app.withdraw_counter_query((select id from t_short)) $$,
-  'PT005',
+  'CL005',
   null,
   'the doctor answers a question, they do not withdraw it'
 );

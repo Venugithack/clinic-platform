@@ -18,13 +18,26 @@
 -- Postgres enforces against code that has not been written yet.
 --
 -- Error codes, so the TypeScript wrapper can map failures to messages a
--- pharmacist can act on:
---   PT001  insufficient stock
---   PT002  no usable (unexpired) batch
---   PT003  Schedule H1 cannot leave on a counter sale
---   PT004  line total would exceed MRP
---   PT005  no staff attribution
---   PT006  malformed input
+-- pharmacist can act on.
+--
+-- The `CL` prefix is not decoration and must not be "tidied" to something
+-- shorter. PostgREST — which is what Supabase puts in front of Postgres —
+-- reserves SQLSTATEs beginning `PT` and reads the remaining three characters as
+-- the HTTP status to return. An earlier version of this file used PT001…PT015,
+-- so a Schedule H1 refusal (PT003) asked PostgREST for HTTP status 3. The
+-- result was not an error the client could show: the response never framed
+-- properly, the browser's fetch neither resolved nor rejected, and the counter
+-- screen sat on "Selling…" forever while the pharmacist was told nothing at
+-- all. Every transition refusal in the build was affected, and only the success
+-- paths worked — which is exactly why it hid for so long.
+--
+-- Any class Postgres and PostgREST both leave alone will do. `CL` is free:
+--   CL001  insufficient stock
+--   CL002  no usable (unexpired) batch
+--   CL003  Schedule H1 cannot leave on a counter sale
+--   CL004  line total would exceed MRP
+--   CL005  no staff attribution
+--   CL006  malformed input
 
 -- ---------------------------------------------------------------------------
 -- Part 2, stated explicitly. These tables are transition-owned: the grants were
@@ -80,16 +93,16 @@ begin
   v_staff_id := app.current_staff_id();
   if v_staff_id is null then
     raise exception 'no active staff member is signed in on this device'
-      using errcode = 'PT005';
+      using errcode = 'CL005';
   end if;
 
   if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
-    raise exception 'dispense needs at least one line' using errcode = 'PT006';
+    raise exception 'dispense needs at least one line' using errcode = 'CL006';
   end if;
 
   if p_prescription_id is null and not p_is_counter_sale then
     raise exception 'a dispense must be against a prescription or flagged as a counter sale'
-      using errcode = 'PT006';
+      using errcode = 'CL006';
   end if;
 
   v_movement_type := case when p_is_counter_sale then 'sale' else 'dispense' end;
@@ -107,19 +120,19 @@ begin
 
     if v_drug_id is null or v_qty_base is null or v_qty_base <= 0 then
       raise exception 'each line needs a drug_id and a positive qty_base'
-        using errcode = 'PT006';
+        using errcode = 'CL006';
     end if;
 
     select * into v_drug from drugs where id = v_drug_id;
     if not found then
-      raise exception 'unknown drug %', v_drug_id using errcode = 'PT006';
+      raise exception 'unknown drug %', v_drug_id using errcode = 'CL006';
     end if;
 
     -- Legal, not a preference: a Schedule H1 drug cannot leave the counter
     -- without a prescription (PLAN.md §15.2, INVENTORY.md §3).
     if p_is_counter_sale and v_drug.schedule = 'H1' then
       raise exception 'Schedule H1 drug "%" cannot be sold without a prescription', v_drug.name
-        using errcode = 'PT003';
+        using errcode = 'CL003';
     end if;
 
     v_remaining := v_qty_base;
@@ -156,7 +169,7 @@ begin
       if v_amount > v_cap then
         raise exception 'line total % exceeds MRP ceiling % for batch %',
           v_amount, v_cap, v_batch.id
-          using errcode = 'PT004';
+          using errcode = 'CL004';
       end if;
 
       insert into dispense_lines (
@@ -189,12 +202,12 @@ begin
       if v_remaining = v_qty_base then
         raise exception
           'no unexpired stock of "%" — % base units required', v_drug.name, v_qty_base
-          using errcode = 'PT002';
+          using errcode = 'CL002';
       end if;
       raise exception
         'insufficient stock of "%" — short by % of % base units',
         v_drug.name, v_remaining, v_qty_base
-        using errcode = 'PT001';
+        using errcode = 'CL001';
     end if;
   end loop;
 

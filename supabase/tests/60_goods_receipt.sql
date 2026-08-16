@@ -84,7 +84,7 @@ select throws_ok(
          'mrp', 44.00, 'cost_per_base_unit', 3.6,
          'qty_packs', 1, 'pack_basis', 'box')),
        null, 'INV-002', current_date) $$,
-  'PT011',
+  'CL011',
   null,
   'a batch that has already expired cannot be received — the year is wrong, or the stock should not be on the shelf'
 );
@@ -111,7 +111,7 @@ select throws_ok(
          'mrp', 34.50, 'cost_per_base_unit', 1.9,
          'qty_packs', 1, 'pack_basis', 'box')),
        null, 'INV-003', current_date) $$,
-  'PT012',
+  'CL012',
   null,
   'a batch expiring earlier than one already dispensed against means FEFO was wrong then or the date is wrong now'
 );
@@ -128,7 +128,7 @@ select throws_ok(
          'mrp', 44.00, 'cost_per_base_unit', 3.6,
          'qty_packs', 1, 'pack_basis', 'box')),
        null, null, null) $$,
-  'PT006',
+  'CL006',
   null,
   'a receipt without an invoice number has to say so deliberately'
 );
