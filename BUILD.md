@@ -384,3 +384,48 @@ counter screen quietly did nothing.
 `scripts/dev-stack.sh` now owns the whole stack, kills orphans, and refuses to
 report itself ready until every transition the app calls is visible through the
 API. That class of bug is silent by nature; the probe is what makes it loud.
+
+---
+
+## 8. M3 status — inventory, first slice, 16 Aug 2026
+
+M3 is the centrepiece and the largest milestone in the plan — 6 days in
+`PLAN.md` §8 plus 12 in `INVENTORY.md` §10. This slice closes its gate; the rest
+follows below.
+
+**Gate:** *"Two batches, different expiries, different MRPs, different strip
+sizes — dispensing takes the earlier, charges the right MRP, and the ledger
+reconciles. An expired batch is refused. A barcode scan at dispense stops the
+wrong box."* **All of it green**, driven across two browser contexts against a
+real Postgres.
+
+| Delivered | |
+|---|---|
+| **`app.receive_goods`** | Packs in, base units stored — the one conversion, at the one boundary. Weighted average cost, with free goods diluting it across everything that arrived rather than arriving at zero |
+| **Two refusals that catch a typo** | A batch already expired cannot be received, and neither can one expiring earlier than a batch already dispensed against. Both exist because a mistyped year is silent and expensive: FEFO then hands out the wrong box for the life of that batch |
+| **The quick GRN** | Stock on the shelf with the invoice not yet entered is a daily occurrence. It posts a real receipt flagged `awaiting_invoice`, so there is a work queue instead of a negative shelf (INVENTORY.md §3) |
+| **Barcodes** | One meaning per code; the first scan of an unknown one asks which drug it is and remembers. A code already registered to one drug cannot be quietly re-pointed at another — that is the failure that would make a scan *look* like it worked |
+| **Scan-to-verify at dispense** | The safety feature worth naming to the doctor. Wrong drug is a red flash and a stop, the only place in the app that uses that treatment. A line with no barcode yet needs a deliberate second gesture rather than blocking the counter |
+| **FEFO shown before it is committed** | The counter reads "take 10 from DL2503B (exp Nov 2026)" — which box to reach for, decided by expiry rather than by what is at the front of the shelf |
+| **Valuation and margin** | `stock_valuation` and `dispense_margin`. Because the ledger records which batch each unit left from, cost of goods sold is exact rather than estimated (INVENTORY.md §4) |
+
+**Camera caveat:** scanning is exercised through the manual-entry path.
+`BarcodeDetector` and `getUserMedia` do not exist in headless Chromium — and
+`getUserMedia` does not exist over `http://192.168.x.x` either, so the camera is
+one more thing that depends on the LAN certificate in §1.3. Manual entry is real
+functionality rather than a test hook: a scuffed strip or a denied permission
+must leave the counter working.
+
+### What M3 still owes
+
+| Remaining | `INVENTORY.md` |
+|---|---|
+| Counter sale — walk-in, no prescription, with the till | §3, `PLAN.md` §18 Q3 |
+| Blind stock-take with variance, recount and approval | §5 |
+| Expiry returns, supplier credit notes, write-offs | §6 |
+| Reorder intelligence and supplier price history | §8 |
+| The goods-receipt **screen** (the transition is done) | §2 |
+
+None of it is blocked. `app.dispense`, `app.receive_goods` and the base-unit
+model are in place, so each of these is a transition and a screen on top of
+foundations that already hold.

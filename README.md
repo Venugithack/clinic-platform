@@ -4,8 +4,9 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0, M1 and M2 are built** (16 Aug 2026) — see [What is built](#what-is-built)
-below, and `BUILD.md` §5–7. Seven documents describe the rest:
+**M0–M2 are built, and M3's first slice** (16 Aug 2026) — see
+[What is built](#what-is-built) below, and `BUILD.md` §5–8. Seven documents
+describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -24,7 +25,8 @@ fee (§10). Everything else is complete.
 
 **M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
 consult, a signed prescription and a printable A4 sheet. **M2** — the
-doctor↔counter live link, the feature the clinic actually bought.
+doctor↔counter live link, the feature the clinic actually bought. **M3, first
+slice** — goods receipt, barcodes, and FEFO dispensing with scan-to-verify.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
@@ -40,9 +42,10 @@ lib/
                     LISTEN/NOTIFY — the HOSTING.md §7 swap, exercised on
                     every test run rather than asserted
   units/            base-unit conversion (INVENTORY.md §1)
+  barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       12 forward-only migrations — the schema
-  tests/            120 pgTAP assertions
+  migrations/       14 forward-only migrations — the schema
+  tests/            146 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -67,7 +70,11 @@ real RLS and the real transitions — not a stubbed API.
 **The M2 gate** is `e2e/m2-live-link.spec.ts`, driven across two browser
 contexts because one context proves nothing about a link between two devices.
 It measures the latency and fails above 1.5s, so a regression to polling breaks
-the build. It currently runs at ~130ms.
+the build. It currently runs at ~150ms.
+
+**The M3 gate** is `e2e/m3-dispense.spec.ts`: two batches of one drug with
+different expiries, MRPs and strip sizes, FEFO taking the earlier one, and a
+barcode scan stopping a pack that is not on the prescription.
 
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
 tablets, PWA install, the printer's Android print service plugin, and one real

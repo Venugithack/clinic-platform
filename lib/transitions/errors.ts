@@ -17,6 +17,9 @@ export type TransitionErrorCode =
   | 'ALREADY_SIGNED'
   | 'NOT_EQUIVALENT'
   | 'QUERY_ALREADY_OPEN'
+  | 'EXPIRY_IN_PAST'
+  | 'EXPIRY_BEFORE_DISPENSED'
+  | 'BARCODE_TAKEN'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -30,6 +33,9 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   PT008: 'ALREADY_SIGNED',
   PT009: 'NOT_EQUIVALENT',
   PT010: 'QUERY_ALREADY_OPEN',
+  PT011: 'EXPIRY_IN_PAST',
+  PT012: 'EXPIRY_BEFORE_DISPENSED',
+  PT013: 'BARCODE_TAKEN',
 };
 
 export class TransitionError extends Error {

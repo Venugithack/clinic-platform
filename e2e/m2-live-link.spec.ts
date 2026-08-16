@@ -91,7 +91,6 @@ test('a signed prescription reaches the counter, and the answer comes back', asy
   await expect(row).toBeVisible({ timeout: LATENCY_BUDGET_MS });
 
   const latency = Date.now() - signedAt;
-  // eslint-disable-next-line no-console
   console.log(`live link: prescription visible at the counter in ${latency}ms`);
   expect(latency).toBeLessThan(LATENCY_BUDGET_MS);
 
