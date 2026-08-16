@@ -4,6 +4,7 @@ out/
 build/
 dist/
 *.tsbuildinfo
+.pnpm-store/
 
 .env
 .env.*
@@ -21,5 +22,44 @@ Thumbs.db
 
 # never commit real clinic data
 /data/
+/backups/
 *.dump
 *.sql.gz
+
+# ── secret material ─────────────────────────────────────────────
+# mkcert LAN certificates (BUILD.md §1.3). A local CA private key in
+# git history is tedious to scrub and trusted on both tablets.
+*.pem
+*.p12
+/certs/
+# age/gpg keys for the encrypted backups (HOSTING.md §5)
+*.age
+*.key
+age.key*
+
+# ── local Supabase (BUILD.md §1.2) ──────────────────────────────
+# Note: supabase/config.toml and supabase/migrations/ ARE committed.
+supabase/.branches/
+supabase/.temp/
+
+# ── build & deploy output ───────────────────────────────────────
+.wrangler/
+.open-next/
+
+# ── generated service worker (TABLET.md §6) ─────────────────────
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/worker-*.js
+
+# ── test output (BUILD.md §1.7) ─────────────────────────────────
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Deliberately NOT ignored, and must stay that way:
+#   pnpm-lock.yaml        reproducible installs
+#   supabase/migrations/  *.sql migrations are the schema
+#   supabase/tests/       pgTAP
