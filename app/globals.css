@@ -1,0 +1,86 @@
+@import 'tailwindcss';
+
+/*
+ * Tablet-first, not a phone breakpoint that grew. TABLET.md §3.
+ *
+ * Target viewport is 1024–1366 CSS px, landscape, on a stand, read at arm's
+ * length rather than laptop distance. That changes the base type size and it
+ * changes how digits are set: quantities, doses, prices and stock counts are
+ * tabular so a column of numbers lines up and a wrong one looks wrong.
+ */
+
+@theme {
+  --font-size-base: 1.0625rem; /* 17px — arm's length, not laptop distance */
+  --color-ink: oklch(0.22 0.02 250);
+  --color-muted: oklch(0.55 0.02 250);
+  --color-line: oklch(0.9 0.01 250);
+  --color-surface: oklch(0.99 0.002 250);
+  --color-danger: oklch(0.55 0.19 25);
+  --color-ok: oklch(0.6 0.13 150);
+
+  /* TABLET.md §2 rule 2: 44px minimum, 56px for destructive or primary. */
+  --spacing-touch: 2.75rem;
+  --spacing-touch-primary: 3.5rem;
+}
+
+:root {
+  font-size: var(--font-size-base);
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  /* Landscape locked on both clinic screens: they are on stands, and rotation
+     is only a source of layout bugs (TABLET.md §2 rule 7). */
+  overscroll-behavior: none;
+}
+
+body {
+  /* A shared tablet in a clinic should not offer text selection on chrome —
+     a stray long-press mid-consult is a real failure mode. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+textarea,
+[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Digits that line up in a column. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/*
+ * TABLET.md §2 rule 1: nothing depends on hover, because there is no cursor.
+ *
+ * Any hover styling in this codebase is written inside this query, so a device
+ * without a pointer never has an affordance that exists only on hover. The
+ * companion ESLint rule catches the JSX form; scripts/lint-css-hover.mjs
+ * catches anything written directly in CSS.
+ */
+@media (hover: hover) {
+  .hoverable:hover {
+    background: color-mix(in oklch, var(--color-surface), var(--color-ink) 6%);
+  }
+}
+
+@media print {
+  /* A4 and 80mm both, tested on the clinic's own printer before go-live
+     (TABLET.md §8, PLAN.md §18 Q9). */
+  body {
+    background: white;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

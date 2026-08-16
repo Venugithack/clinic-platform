@@ -1,0 +1,45 @@
+{
+  "name": "clinic-platform",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && node scripts/lint-css-hover.mjs",
+    "test:unit": "vitest run",
+    "test:db": "./scripts/db-test.sh",
+    "test:e2e": "playwright test",
+    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:db && pnpm test:e2e",
+    "db:start": "./scripts/db-start.sh",
+    "db:stop": "./scripts/db-stop.sh",
+    "db:reset": "./scripts/db-reset.sh",
+    "db:migrate": "./scripts/db-migrate.sh",
+    "db:backup": "./scripts/db-backup.sh",
+    "db:restore-drill": "./scripts/db-restore-drill.sh"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "next": "16.3.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "eslint": "^10.8.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.10"
+  }
+}

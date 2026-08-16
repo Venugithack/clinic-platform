@@ -23,6 +23,7 @@ Thumbs.db
 # never commit real clinic data
 /data/
 /backups/
+.backups/
 *.dump
 *.sql.gz
 

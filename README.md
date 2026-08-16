@@ -4,7 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**No code yet.** Seven documents:
+**M0 is built** (16 Aug 2026) — see [What is built](#what-is-built) below, and
+`BUILD.md` §5. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -19,7 +20,45 @@ one is a demo, this one has a paying client and a real drug shelf behind it.
 Placeholders to fill in `PROPOSAL.md` before sending: clinic name, date, build
 fee (§10). Everything else is complete.
 
-Build starts after `PLAN.md` §20 is signed off.
+## What is built
+
+M0 — foundations. Everything in `BUILD.md` §1 that does not need the clinic's
+own hardware.
+
+```
+app/                Next 16 · React 19 · TS strict · Tailwind 4
+  (clinic)/         three-pane tablet shell, consult + counter routes
+  p/  now/          patient portal and public status page, default-deny
+lib/
+  db/               the ONLY module that imports @supabase/* — lint-enforced
+  transitions/      typed wrappers over the plpgsql RPCs
+  auth/  realtime/  swappable adapters (HOSTING.md §7)
+  units/            base-unit conversion (INVENTORY.md §1)
+supabase/
+  migrations/       7 forward-only migrations — the schema
+  tests/            63 pgTAP assertions
+  seed.sql          22-drug development seed
+e2e/                Playwright, 1280×800 with touch, no desktop project
+scripts/            local Postgres, migrations, backup, restore drill, LAN HTTPS
+```
+
+```
+pnpm install
+pnpm db:reset && pnpm db:seed     # local Postgres, migrations, seed
+pnpm test                          # typecheck · lint · unit · pgTAP · e2e
+```
+
+**The two tests that matter** are in `supabase/tests/20_transition_grants.sql`:
+a direct write to the stock ledger is refused by Postgres with `42501`, and the
+same role can still call `app.dispense`. That is `PLAN.md` §5.3 rules 2 and 3
+becoming something the database enforces rather than something the team
+remembers.
+
+**Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
+tablets, PWA install, and the printer check. All four happen in the clinic.
+`scripts/lan-https.sh` is the runbook.
+
+Build continues after `PLAN.md` §20 is signed off.
 
 | | |
 |---|---|
@@ -38,5 +77,5 @@ Build starts after `PLAN.md` §20 is signed off.
 5. Free-tier risks accepted in writing (`HOSTING.md` §9)
 6. Check the model number of the clinic's A4 printer — **a tablet cannot print over USB** (`TABLET.md` §1)
 7. Meta business verification started (day 1, and `WHATSAPP.md` §0 may show it is not needed at all)
-8. **`BUILD.md` §0 — Q15, multi-tenant or not.** Venu's call, and it blocks the first migration
+8. ~~**`BUILD.md` §0 — Q15, multi-tenant or not**~~ — **single-tenant, decided 16 Aug 2026.** The first migration is applied
 9. §20 signed

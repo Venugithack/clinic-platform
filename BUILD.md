@@ -13,24 +13,30 @@ M7.
 
 ## 0. Before day 1
 
-### One decision that genuinely blocks the first migration
+### ~~One decision that genuinely blocks the first migration~~ — answered
 
 **`PLAN.md` §18 Q15 — is this a one-off, or the first customer of a product?**
 
-It is unanswered, it is Venu's to make, not the doctor's, and it cannot wait
-because it changes the very first migration.
+**Answered 16 Aug 2026: a one-off. Single-tenant.** Venu's call, taken against
+the recommendation below, which is recorded as it stood.
 
-| | One-off | Multi-tenant from day 1 |
+| | One-off ← **chosen** | Multi-tenant from day 1 |
 |---|---|---|
 | Schema | no `clinic_id` | `clinic_id` on every table, in every RLS policy, in every transition |
 | Cost now | — | **~3 days** |
 | Cost later | — | **weeks.** Backfilling a tenant key through a live ledger, live RLS and twelve transitions, against real patient data |
 
-**Recommendation: multi-tenant from day 1.** Three days now against weeks later
-is a cheap option on a second customer ever existing, and the clinic pays nothing
-for it — a single-tenant deployment with a tenant column is indistinguishable
-from one without. Decide before the first migration; after that the cost curve
-turns.
+*Recommendation as written: multi-tenant from day 1. Three days now against weeks
+later is a cheap option on a second customer ever existing, and the clinic pays
+nothing for it — a single-tenant deployment with a tenant column is
+indistinguishable from one without.*
+
+**What the decision costs, now that it is made.** The cost curve has turned: the
+first migration is applied, and a second clinic is no longer a schema option
+that can be taken cheaply. If one is ever wanted, the honest estimate is weeks,
+not three days, and it is a migration against live patient data. The `clinic`
+table is deliberately a single-row singleton with a check constraint saying so,
+so the assumption is stated in the schema rather than merely absent from it.
 
 ### Non-code items to start this week
 
@@ -182,7 +188,7 @@ certificate behaviour, PWA install from a real origin, printing.
 
 | Blocked | On | Until then |
 |---|---|---|
-| First migration | **Venu — Q15, multi-tenant or not** | Nothing. This is the one that stops day 1 |
+| ~~First migration~~ | ~~Venu — Q15, multi-tenant or not~~ | **Unblocked 16 Aug 2026** — single-tenant. M0 is built; see §5 |
 | M3 completion | doctor — drug master with salt and strength | Build against a 20-drug seed; the schema does not care |
 | M4 GST | deferred by Q4 | Fields captured, calculation off |
 | M5 supplier orders | nothing — deep-link mode needs no Meta account | Ships during the local build |
@@ -200,3 +206,47 @@ certificate behaviour, PWA install from a real origin, printing.
 | **No clinical inference, ever** | Rule 8. The doctor's sign-off (A8) lifts it for artefacts he has personally reviewed, and for nothing else |
 | **Screens are built at 1280×800 touch from the first commit** | Not a desktop layout made responsive afterwards (`TABLET.md`) |
 | **Show the doctor M2 the day it works** | Momentum, and it is the cheapest possible moment to hear "actually, what I meant was…" |
+
+---
+
+## 5. M0 status — built 16 Aug 2026
+
+Everything in §1 that does not require the clinic's own hardware is written,
+running and green. What is in the repository:
+
+| §1.x | Delivered |
+|---|---|
+| 1.1 | Next 16 · React 19 · TS strict · Tailwind 4 · pnpm, in the §1.1 layout. The seam is an ESLint rule: `@supabase/*` cannot be imported outside `lib/db/**`, and `.rpc()` cannot be called outside `lib/transitions` |
+| 1.2 | Seven forward-only migrations under `supabase/migrations/`, applied by `scripts/db-migrate.sh` exactly once each. Nothing is clicked in Studio and kept |
+| 1.4 | Core tables from `PLAN.md` §7, single-tenant. `INVENTORY.md` §1 is in the first migration, not a later one: `base_unit` on the drug; `units_per_strip`, `strips_per_box`, `mrp`, `cost_per_base_unit` on the **batch**. Every quantity column is `qty_base`. RLS on every table in the migration that creates it |
+| 1.5 | `app.dispense` — plpgsql, `SECURITY DEFINER`, FEFO across batches, expired stock excluded rather than flagged, Schedule H1 refused on a counter sale, stock never negative, line total clamped to the MRP ceiling, audit row written inside the same transaction |
+| 1.6 | Registered device + 6-digit PIN + idle lock (`TABLET.md` §5). `app.current_staff_id()` resolves the PIN session first and the device's auth user only as a fallback, so `audit_log` names a person rather than a tablet |
+| 1.7 | GitHub Actions blocking on typecheck · lint · Vitest · pgTAP · Playwright at 1280×800 touch. Backup script and restore drill run in CI on every merge |
+
+**63 pgTAP assertions, 10 unit tests, 5 Playwright tests, all green.** The two
+that matter most, both in `supabase/tests/20_transition_grants.sql`: a direct
+write to `stock_movements` is refused by Postgres with `42501`, and the very
+same role can still call `app.dispense`. That is rules 2 and 3 stopping being a
+convention.
+
+### What M0 §1.8 still needs, and it is not code
+
+Four boxes cannot be ticked outside the clinic. They are all §1.3 or hardware:
+
+- [ ] **§1.3 LAN HTTPS.** `scripts/lan-https.sh` is written and documents the
+  router reservation and the root-CA install on both tablets. It has to be run
+  in the clinic, on the clinic Wi-Fi.
+- [ ] Both tablets open the app over HTTPS and install as PWAs
+- [ ] A staff member unlocks with a PIN **on the real tablets**
+- [ ] The A4 printer model number is checked — a tablet cannot print over USB
+
+Until §1.3 is done, the camera, the service worker and PWA install all fail
+silently on the tablets. That is the trap the section exists to avoid, and it is
+an hour on day 1 against a day in M3.
+
+### The one honest gap
+
+`app.dispense` is the reference transition and the other eleven copy it, but
+they are M3–M5 work and are not written. The lint rule that forbids `.rpc()`
+outside `lib/transitions` is what keeps a screen from inventing its own path to
+the tables in the meantime.

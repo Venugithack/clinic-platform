@@ -1,0 +1,112 @@
+name: CI
+
+# BUILD.md §1.7 — blocking on every merge.
+#
+# The list is not arbitrary. Each job here is the enforcement half of a rule
+# that PLAN.md §5.3 states and this repository would otherwise only intend:
+#
+#   typecheck / lint  rule 1 (one seam), rule 2 (one writer), rule 7 (patient
+#                     surfaces default-deny), and the two tablet rules
+#   pgTAP             rules 2 and 3 — the direct write is REFUSED by Postgres
+#   Playwright        the tablet viewport, at 1280x800 with touch
+#   restore drill     HOSTING.md §5 — a backup nobody has restored is a belief
+#
+# M0 §1.8's last box is "CI blocks a deliberately broken merge". That is proven
+# by opening a pull request that breaks one rule on purpose and watching this
+# fail — do it once, on the first PR, and never wonder again.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PGPORT: '54329'
+  PGHOST: '127.0.0.1'
+  PGDATABASE: clinic
+
+jobs:
+  static:
+    name: typecheck · lint · unit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint — the seam, the writer, the patient surfaces, the tablet rules
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+  database:
+    name: pgTAP · restore drill
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Postgres 16 and pgTAP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16 postgresql-16-pgtap
+
+      - name: Migrations, forward-only
+        run: |
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          ./scripts/db-start.sh
+          ./scripts/db-migrate.sh
+
+      - name: pgTAP
+        run: ./scripts/db-test.sh
+
+      # HOSTING.md §5: proof, not intent. The drill asserts row counts survive
+      # a full dump-and-restore, and it runs on every merge rather than weekly
+      # so that a schema change which breaks restorability is caught by the PR
+      # that introduced it.
+      - name: Seed, back up, restore, compare row counts
+        run: |
+          ./scripts/db-reset.sh
+          ./scripts/db-seed.sh
+          ./scripts/db-backup.sh daily
+          ./scripts/db-restore-drill.sh
+
+  e2e:
+    name: Playwright · 1280x800 touch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E
+        run: pnpm test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

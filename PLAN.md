@@ -831,7 +831,7 @@ always-current `/now` link (§13.3).
 |---|---|
 | 13 | Fixed price or time-and-materials? Fixed price with this much unknown is a risk you carry |
 | 14 | Are you available in person on go-live day and the week after? If not, don't sign |
-| 15 | Is this the first customer of a product, or a one-off? It changes whether the schema is multi-tenant from day 1 (~3 extra days now, weeks later) |
+| 15 | ~~Is this the first customer of a product, or a one-off?~~ **Answered 16 Aug 2026: a one-off, single-tenant.** No `clinic_id`; the `clinic` table is a single-row singleton with a constraint saying so. Taken against the `BUILD.md` §0 recommendation, and the cost curve has now turned — a second clinic is weeks of migration against live patient data, not three days of schema |
 
 ---
 
@@ -852,7 +852,8 @@ always-current `/now` link (§13.3).
 | **Supabase free 500 MB reached** | Low in 2 years, certain eventually | Writes fail | Audit rows store changed fields only, never full snapshots. Alert at 400 MB, archive to R2, Pro is ₹2,100/mo (`HOSTING.md` §4) |
 | **Free tier outage with no support queue** | Low, but no SLA | Clinic stops | §5.2 paper fallback + backfill. He accepts this in writing (`HOSTING.md` §9) |
 | **His A4 printer is USB-only** | Medium — most cheap ones are | Nothing prints from a tablet on go-live day | Check the model number this week. Wi-Fi print server ~₹2,000 (`TABLET.md` §1) |
-| **Pack sizes retrofitted after stock is recorded** | Low if `INVENTORY.md` §1 is built first | Every historical quantity silently wrong | Base units from the first migration. Non-negotiable, and it is why M3 starts there |
+| ~~Pack sizes retrofitted after stock is recorded~~ | **Eliminated** | — | Base units and batch-level pack config landed in the first migration, 16 Aug 2026, with a pgTAP assertion that fails any later migration putting `units_per_strip` or `mrp` back on the drug |
+| **A second clinic is wanted later** | Low, but it is now the expensive direction | Weeks of migration against live patient data | Accepted consequence of Q15 (one-off, 16 Aug 2026). Quote it as a project, never as a configuration change |
 | Sole-developer bus factor | Certain | He is running a clinic on it | Documented runbook, client owns credentials, code in a repo he can be given access to |
 
 ---
