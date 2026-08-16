@@ -4,9 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M2 are built, and M3's first slice** (16 Aug 2026) — see
-[What is built](#what-is-built) below, and `BUILD.md` §5–8. Seven documents
-describe the rest:
+**M0–M3 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
+and `BUILD.md` §5–8. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -25,13 +24,15 @@ fee (§10). Everything else is complete.
 
 **M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
 consult, a signed prescription and a printable A4 sheet. **M2** — the
-doctor↔counter live link, the feature the clinic actually bought. **M3, first
-slice** — goods receipt, barcodes, FEFO dispensing with scan-to-verify, the
-blind stock-take, and the counter sale.
+doctor↔counter live link, the feature the clinic actually bought. **M3** —
+inventory, the centrepiece: goods receipt, barcodes, FEFO dispensing with
+scan-to-verify, the counter sale, the blind stock-take, expiry returns and
+supplier credits, and reordering that learns from measured lead times.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
   (clinic)/         queue · register walk-in · consult · Rx print · counter
+                    receiving · stock-take · expiry · reorder
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -42,11 +43,11 @@ lib/
   realtime/         two adapters: Supabase Realtime, and WebSocket over
                     LISTEN/NOTIFY — the HOSTING.md §7 swap, exercised on
                     every test run rather than asserted
-  units/            base-unit conversion (INVENTORY.md §1)
+  units/            base-unit conversion and costing (INVENTORY.md §1, §4)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       15 forward-only migrations — the schema
-  tests/            170 pgTAP assertions
+  migrations/       17 forward-only migrations — the schema
+  tests/            222 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -76,6 +77,13 @@ the build. It currently runs at ~150ms.
 **The M3 gate** is `e2e/m3-dispense.spec.ts`: two batches of one drug with
 different expiries, MRPs and strip sizes, FEFO taking the earlier one, and a
 barcode scan stopping a pack that is not on the prescription.
+
+**The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
+stock back *months before* it expires — 3 to 6, and it differs per supplier — so
+the date that decides whether a batch can go back is `expiry −
+return_window_days`, not the expiry. A list sorted by expiry date finds out
+after the door has already shut, every time. That one design decision is most of
+what `INVENTORY.md` §6 is worth.
 
 **The bug worth knowing about:** every transition refusal in the build was
 invisible until 16 Aug 2026. PostgREST reserves SQLSTATEs starting `PT` and

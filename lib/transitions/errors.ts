@@ -22,6 +22,9 @@ export type TransitionErrorCode =
   | 'BARCODE_TAKEN'
   | 'STOCK_TAKE_IN_PROGRESS'
   | 'RECOUNT_REQUIRED'
+  | 'RETURN_WINDOW_CLOSED'
+  | 'NOT_EXPIRED'
+  | 'CREDIT_EXCEEDED'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -40,6 +43,9 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   CL013: 'BARCODE_TAKEN',
   CL014: 'STOCK_TAKE_IN_PROGRESS',
   CL015: 'RECOUNT_REQUIRED',
+  CL016: 'RETURN_WINDOW_CLOSED',
+  CL017: 'NOT_EXPIRED',
+  CL018: 'CREDIT_EXCEEDED',
 };
 
 export class TransitionError extends Error {

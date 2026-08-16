@@ -189,7 +189,7 @@ certificate behaviour, PWA install from a real origin, printing.
 | Blocked | On | Until then |
 |---|---|---|
 | ~~First migration~~ | ~~Venu — Q15, multi-tenant or not~~ | **Unblocked 16 Aug 2026** — single-tenant. M0 is built; see §5 |
-| M3 completion | doctor — drug master with salt and strength | Build against a 20-drug seed; the schema does not care |
+| ~~M3 completion~~ → M3 **go-live** | doctor — drug master with salt and strength | **The code is built** (§8, 16 Aug 2026) against a 22-drug seed and the schema does not care. What the drug master now blocks is the clinic using it, not the build continuing |
 | M4 GST | deferred by Q4 | Fields captured, calculation off |
 | M5 supplier orders | nothing — deep-link mode needs no Meta account | Ships during the local build |
 | M7 patient WhatsApp | Meta verification, *if* required (`WHATSAPP.md` §0) | Everything else proceeds |
@@ -387,7 +387,7 @@ API. That class of bug is silent by nature; the probe is what makes it loud.
 
 ---
 
-## 8. M3 status — inventory, first slice, 16 Aug 2026
+## 8. M3 status — inventory, complete, 16 Aug 2026
 
 M3 is the centrepiece and the largest milestone in the plan — 6 days in
 `PLAN.md` §8 plus 12 in `INVENTORY.md` §10. This slice closes its gate; the rest
@@ -416,19 +416,19 @@ one more thing that depends on the LAN certificate in §1.3. Manual entry is rea
 functionality rather than a test hook: a scuffed strip or a denied permission
 must leave the counter working.
 
-### What M3 still owes
+### What M3 owed after the first slice, and where it landed
 
-| Remaining | `INVENTORY.md` |
-|---|---|
-| Counter sale — walk-in, no prescription, with the till | §3, `PLAN.md` §18 Q3 |
-| Blind stock-take with variance, recount and approval | §5 |
-| Expiry returns, supplier credit notes, write-offs | §6 |
-| Reorder intelligence and supplier price history | §8 |
-| The goods-receipt **screen** (the transition is done) | §2 |
+| Scope | `INVENTORY.md` | |
+|---|---|---|
+| Counter sale — walk-in, no prescription | §3, `PLAN.md` §18 Q3 | second slice |
+| Blind stock-take with variance, recount and approval | §5 | second slice |
+| Expiry returns, supplier credit notes, write-offs | §6 | third slice |
+| Reorder intelligence and supplier price history | §8 | third slice |
+| The goods-receipt **screen** (the transition was already done) | §2 | third slice |
 
-None of it is blocked. `app.dispense`, `app.receive_goods` and the base-unit
-model are in place, so each of these is a transition and a screen on top of
-foundations that already hold.
+The till and the cash day-close stay in M4 with the rest of billing, which is
+where `PLAN.md` §8 put them. The counter sale moves stock and records what it
+sold for; it does not pretend to be a till.
 
 ### Second slice — stock-take done, counter sale NOT
 
@@ -491,3 +491,100 @@ Three dev-stack faults *were* found and fixed on the way, all of which had made
 failures point somewhere other than their cause: an orphaned PostgREST serving a
 pre-migration schema cache, a proxy crash that took the whole stack down
 mid-run, and no readiness probe to make either loud.
+
+### Third slice — expiry, purchasing intelligence, and the receiving screen
+
+**M3 is complete.** Three things closed it, and the first one is where the money
+in `INVENTORY.md` actually is.
+
+#### Expiry, worked all the way through (§6)
+
+The section opens by pointing out that `PLAN.md` §12.3 defines `expiring_soon`
+and never says what anybody does about it. Working it through turned up
+something sharper than a missing workflow: **the date that decides whether stock
+can go back to the supplier is not the expiry date.**
+
+Distributors want stock returned some months *before* it expires so the claim
+can be processed while the drug is still good — three to six months, and it
+differs per supplier. So the deadline is `expiry - return_window_days`, and a
+list built on "90 days from expiry" is already three months too late for a
+supplier with a 180-day window. That is why §6 says the list is grouped by whose
+window closes first, *not merely by expiry date*, and it is the whole reason the
+section pays for itself.
+
+The seed now carries both cases on purpose. Shelcal expires in about seven
+months and is urgent — Kumar's door shuts in a few weeks. Zincovit expires in
+six and nothing can be done: the window closed months ago, quietly, and under
+the old design nobody would ever have been told.
+
+| | |
+|---|---|
+| `expiring_soon` | Ordered by the supplier deadline. A closed window only surfaces once the stock is genuinely near expiry, because "you missed this a year early" is noise |
+| `expired_stock` | Availability excludes expired batches by design (§3), which means that without this list they are on the shelf, on the books and on **no screen at all** |
+| `app.return_to_supplier` | Stock out through the ledger, credit opened in the same transaction. A return note without a credit is how a clinic forgets it is owed money |
+| `app.write_off_expired` | At cost, and it returns what it cost him — a write-off that does not name the loss teaches nobody anything |
+| `app.settle_credit` | Netted off a later invoice, partially where that is what happened, so unreturned credits stay visible instead of forgotten |
+
+Two refusals, both with a browser test: a return after the window shut (`CL016`,
+which names the date it shut), and a write-off of stock that has not expired
+(`CL017`). The second one matters more than it looks — six weeks of sellable
+Zincovit is worth more than the tidiness of writing it off, and "no recorded
+return window" is treated as *not knowing*, not as *any time*.
+
+#### Reordering that learns, and still never acts alone (§8)
+
+Consumption velocity from the ledger, **measured** supplier lead time, a buffer
+sized from that supplier's own inconsistency rather than a flat 1.5× for
+everyone, stockout history, and the last five purchase prices per drug per
+supplier on the line.
+
+Two things were worth getting right:
+
+- **A claim is never presented as a measurement.** `supplier_lead_time.source`
+  is `measured`, `claimed` or `assumed`, and below three real deliveries the
+  view says so and uses the supplier's own figure. The seed supplier claims two
+  days; the pgTAP fixture measures six.
+- **Rule 4 is enforced by shape, not by discipline.** `app.draft_purchase_orders`
+  creates drafts and nothing else, and a test asserts that exactly one function
+  in the `app` schema touches purchase orders at all. The moment these numbers
+  can reach a supplier unattended, one bad reorder level costs real money.
+
+`purchase_orders` and `po_lines` are created here because measured lead time is
+`sent_at → received_at` and there is nothing to measure without them. Everything
+past `draft` — approval, the WhatsApp send, the acknowledgement, receiving
+against a PO — is **M5** and is deliberately not built.
+
+#### The goods-receipt screen (§2, `TABLET.md` §7)
+
+The heaviest data entry in the build, and the one place a typo is expensive for
+years. Scan first; the OS keyboard appears for exactly one field, the batch
+number. Expiry is a month and a year tapped as buttons, because the strip prints
+`MAR 2027` and a date picker asks for a day nobody has.
+
+The detail worth keeping: **last year is on the year row.** A form that only
+offers valid years does not catch a mistyped expiry — it makes the pharmacist
+pick a plausible one instead, and a wrong date that looks right is exactly what
+`CL011` exists to stop. Let it be entered, and let the database refuse it by
+name and date. That refusal has a browser test too.
+
+Cost is entered as the rate printed on the invoice — per strip — and divided
+down in `lib/units`, which is the one module allowed to know what a strip is.
+Four decimal places, because ₹9.99 for a strip of 30 is ₹0.333 a tablet and
+rounding it to the paise puts a thousand tablets ₹3 short on the balance sheet.
+
+#### One more fault in the harness, and it is the same fault as before
+
+The readiness probe added in the first slice checked the API's RPC surface
+exactly once, immediately after PostgREST printed its startup banner. PostgREST
+starts listening *before* it has built the schema cache and answers `503` in
+between, so the probe was a race — and one that gets slower to win as the schema
+grows. Two migrations later it started losing, and reported "the schema cache is
+stale" about a cache that was a second away from being correct.
+
+It polls now, for up to fifteen seconds, and it checks the newer transitions
+too. Worth recording because it is the third time in this milestone that a
+diagnostic pointed confidently at the wrong thing: **a check that can be flaky
+is worse than no check**, because people learn to re-run it.
+
+**M3 totals:** 17 migrations, 222 pgTAP assertions, 12 unit tests, 23 Playwright
+tests across five specs, nothing skipped.

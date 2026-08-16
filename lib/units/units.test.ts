@@ -3,6 +3,7 @@ import {
   decompose,
   formatQty,
   lineAmountPaise,
+  packCostToBaseUnitCost,
   paiseToRupees,
   toBaseUnits,
   unitsInPack,
@@ -29,6 +30,22 @@ describe('pack conversion', () => {
   it('refuses a fractional or negative quantity', () => {
     expect(() => toBaseUnits(1.5, 'strip', STRIP_OF_15)).toThrow(RangeError);
     expect(() => toBaseUnits(-1, 'strip', STRIP_OF_15)).toThrow(RangeError);
+  });
+});
+
+describe('cost, from what the invoice actually says', () => {
+  it('turns a rate per strip into a cost per base unit', () => {
+    // "Rate 28.50" against a strip of 15 is ₹1.90 a tablet, which is what
+    // valuation and margin are both computed from.
+    expect(packCostToBaseUnitCost(2850, STRIP_OF_15, 'strip')).toBe(1.9);
+    expect(packCostToBaseUnitCost(28500, STRIP_OF_15, 'box')).toBe(1.9);
+  });
+
+  it('keeps four decimal places, because a rounded cost is a wrong valuation', () => {
+    // ₹9.99 for a strip of 30 is 0.333 a tablet. Rounded to the paise it would
+    // be 0.33, and a thousand tablets would be ₹3 short on the balance sheet.
+    expect(packCostToBaseUnitCost(999, { unitsPerStrip: 30, stripsPerBox: 5 }, 'strip'))
+      .toBe(0.333);
   });
 });
 

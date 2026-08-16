@@ -84,7 +84,10 @@ export default function CounterPage() {
           <RailButton tone="primary" onClick={() => router.push('/counter/sale')}>
             Counter sale
           </RailButton>
+          <RailButton onClick={() => router.push('/receiving')}>Receiving</RailButton>
           <RailButton onClick={() => router.push('/stock-take')}>Stock-take</RailButton>
+          <RailButton onClick={() => router.push('/expiry')}>Expiry</RailButton>
+          <RailButton onClick={() => router.push('/reorder')}>Reorder</RailButton>
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
           <RailButton

@@ -1,0 +1,494 @@
+'use client';
+
+/**
+ * Goods receipt. TABLET.md §7, INVENTORY.md §1 and §2.
+ *
+ * "The heaviest data-entry screen — scan first, keyboard second. Batch, expiry,
+ *  MRP, cost per line."
+ *
+ * Four decisions, each of them about the same thing — this screen is used with
+ * a box in one hand:
+ *
+ *   scan first          typing drug names off an invoice is the slowest and
+ *                       most error-prone act in the pharmacy (INVENTORY.md §2)
+ *   one numpad          the OS keyboard would cover the line being typed, so
+ *                       numbers go through the app's own pad and the keyboard
+ *                       appears for exactly one field: the batch number
+ *   expiry as buttons   a month and a year, tapped, because the strip prints
+ *                       "MAR 2027" and a date picker asks for a day nobody has
+ *   packs, not units    the invoice says "10 strips"; the conversion to base
+ *                       units happens once, inside app.receive_goods
+ *
+ * Cost is entered as the RATE ON THE INVOICE — per strip or per box — because
+ * that is the number printed in front of the person typing. It is divided down
+ * to a per-unit cost in lib/units, which is the one place packs are allowed to
+ * become base units.
+ */
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Numpad } from '@/components/Numpad';
+import { ScanField } from '@/components/ScanField';
+import { DrugSearch } from '@/components/DrugSearch';
+import { getDrug, type DrugRow } from '@/lib/db/drugs';
+import { lookupBarcode } from '@/lib/db/barcodes';
+import { activeSuppliers, type SupplierRow } from '@/lib/db/suppliers';
+import { learnBarcode, receiveGoods } from '@/lib/transitions/inventory';
+import { packCostToBaseUnitCost, paiseToRupees, unitsInPack } from '@/lib/units';
+
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+type Field = 'qty' | 'free' | 'mrp' | 'cost';
+
+interface DraftLine {
+  drug: DrugRow;
+  batchNo: string;
+  /** 1–12 and a four-digit year: exactly what is printed on the strip. */
+  month: number;
+  year: number;
+  qtyPacks: number;
+  freePacks: number;
+  mrpPaise: number;
+  /** The rate on the invoice, for one strip. */
+  ratePaise: number;
+  unitsPerStrip: number;
+  stripsPerBox: number;
+}
+
+export default function ReceivingPage() {
+  const router = useRouter();
+  const now = new Date();
+
+  const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
+  const [supplier, setSupplier] = useState<SupplierRow | null>(null);
+  const [invoiceNo, setInvoiceNo] = useState('');
+  const [awaitingInvoice, setAwaitingInvoice] = useState(false);
+  const [lines, setLines] = useState<DraftLine[]>([]);
+
+  const [drug, setDrug] = useState<DrugRow | null>(null);
+  const [batchNo, setBatchNo] = useState('');
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear() + 1);
+  const [field, setField] = useState<Field>('qty');
+  const [values, setValues] = useState<Record<Field, string>>({
+    qty: '',
+    free: '',
+    mrp: '',
+    cost: '',
+  });
+
+  const [searching, setSearching] = useState(false);
+  const [unknownCode, setUnknownCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [posted, setPosted] = useState(false);
+
+  useEffect(() => {
+    void activeSuppliers()
+      .then(setSuppliers)
+      .catch((cause: Error) => setError(cause.message));
+  }, []);
+
+  const resetLine = useCallback(() => {
+    setDrug(null);
+    setBatchNo('');
+    setField('qty');
+    setValues({ qty: '', free: '', mrp: '', cost: '' });
+  }, []);
+
+  const onCode = async (code: string) => {
+    setError(null);
+    try {
+      const mapping = await lookupBarcode(code);
+      if (!mapping) {
+        // The first scan of an unknown code asks which drug it is, once, and
+        // remembers. On this screen the box is already in the pharmacist's
+        // hand, which makes it the cheapest place in the build to answer.
+        setUnknownCode(code);
+        setSearching(true);
+        return;
+      }
+      const found = await getDrug(mapping.drug_id);
+      if (found) {
+        setDrug(found);
+        setNotice(`${found.name} scanned`);
+      }
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  };
+
+  const pick = async (picked: DrugRow) => {
+    setSearching(false);
+    setDrug(picked);
+    setValues({ qty: '', free: '', mrp: '', cost: '' });
+
+    if (unknownCode) {
+      try {
+        await learnBarcode(unknownCode, picked.id);
+        setNotice(`${picked.name} learned — that code will be recognised next time.`);
+      } catch (cause) {
+        setError((cause as Error).message);
+      } finally {
+        setUnknownCode(null);
+      }
+    }
+  };
+
+  const pack = {
+    unitsPerStrip: drug?.default_units_per_strip ?? 1,
+    stripsPerBox: drug?.default_strips_per_box ?? 1,
+  };
+
+  const addLine = () => {
+    if (!drug) return;
+    setLines((current) => [
+      ...current,
+      {
+        drug,
+        batchNo: batchNo.trim(),
+        month,
+        year,
+        qtyPacks: Number(values.qty || '0'),
+        freePacks: Number(values.free || '0'),
+        mrpPaise: Number(values.mrp || '0'),
+        ratePaise: Number(values.cost || '0'),
+        unitsPerStrip: pack.unitsPerStrip,
+        stripsPerBox: pack.stripsPerBox,
+      },
+    ]);
+    resetLine();
+  };
+
+  const post = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const receipt = await receiveGoods({
+        supplierId: supplier?.id,
+        invoiceNo: invoiceNo.trim() || undefined,
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        awaitingInvoice,
+        lines: lines.map((line) => ({
+          drugId: line.drug.id,
+          batchNo: line.batchNo,
+          // The first of the month; app.receive_goods normalises it to the last
+          // usable day, because a strip printed "MAR 2027" is good all March.
+          expiry: `${line.year}-${String(line.month).padStart(2, '0')}-01`,
+          unitsPerStrip: line.unitsPerStrip,
+          stripsPerBox: line.stripsPerBox,
+          mrp: line.mrpPaise / 100,
+          costPerBaseUnit: packCostToBaseUnitCost(
+            line.ratePaise,
+            { unitsPerStrip: line.unitsPerStrip, stripsPerBox: line.stripsPerBox },
+            'strip',
+          ),
+          qtyPacks: line.qtyPacks,
+          packBasis: 'strip',
+          freePacks: line.freePacks,
+        })),
+      });
+
+      setPosted(true);
+      setNotice(
+        `Received. ${lines.length} batch${lines.length === 1 ? '' : 'es'} on the shelf, ₹${Number(
+          receipt.total,
+        ).toFixed(2)} at cost${
+          receipt.awaiting_invoice ? ' — flagged for the invoice to be attached.' : '.'
+        }`,
+      );
+      setLines([]);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (searching) {
+    return (
+      <DrugSearch
+        onClose={() => {
+          setSearching(false);
+          setUnknownCode(null);
+        }}
+        onPick={(picked) => void pick(picked)}
+      />
+    );
+  }
+
+  const lineValue = (line: DraftLine) =>
+    (line.ratePaise * line.qtyPacks) / 100;
+  const total = lines.reduce((sum, line) => sum + lineValue(line), 0);
+
+  const fieldButton = (key: Field, label: string, money: boolean) => (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={() => setField(key)}
+      className={`h-14 flex-1 rounded-xl border px-3 text-left ${
+        field === key ? 'border-ink bg-ink/5' : 'border-line'
+      }`}
+    >
+      <span className="block text-xs text-muted">{label}</span>
+      <span className="tabular block text-lg">
+        {money
+          ? `₹${paiseToRupees(Number(values[key] || '0'))}`
+          : values[key] || '0'}
+      </span>
+    </button>
+  );
+
+  return (
+    <ThreePane
+      context={
+        <div>
+          <h2 className="text-sm uppercase tracking-wide text-muted">Goods receipt</h2>
+
+          <p className="mt-3 text-sm text-muted">Supplier</p>
+          <div className="mt-1 flex flex-col gap-2" role="group" aria-label="Supplier">
+            {suppliers.map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                aria-pressed={supplier?.id === row.id}
+                onClick={() => setSupplier(row)}
+                className={`h-14 rounded-xl border px-3 text-left ${
+                  supplier?.id === row.id ? 'border-ink bg-ink/5' : 'border-line'
+                }`}
+              >
+                {row.name}
+              </button>
+            ))}
+          </div>
+
+          <label className="mt-4 block text-sm text-muted" htmlFor="invoice">
+            Invoice number
+          </label>
+          <input
+            id="invoice"
+            value={invoiceNo}
+            onChange={(event) => setInvoiceNo(event.target.value)}
+            className="mt-1 h-14 w-full rounded-xl border border-line px-3 text-lg"
+          />
+
+          {/* INVENTORY.md §3: stock on the shelf with the paperwork still in the
+              van is a daily occurrence. It posts as a real receipt and joins a
+              work queue, which is the alternative to a negative shelf. */}
+          <button
+            type="button"
+            aria-pressed={awaitingInvoice}
+            onClick={() => setAwaitingInvoice((current) => !current)}
+            className={`mt-3 h-14 w-full rounded-xl border px-3 text-left ${
+              awaitingInvoice ? 'border-ink bg-ink/5' : 'border-line'
+            }`}
+          >
+            Invoice to follow
+          </button>
+
+          <p className="tabular mt-6 text-lg">₹{total.toFixed(2)}</p>
+          <p className="text-sm text-muted">
+            {lines.length} line{lines.length === 1 ? '' : 's'} at cost
+          </p>
+        </div>
+      }
+      rail={
+        <>
+          <ScanField label="Scan the box" onCode={(code) => void onCode(code)} />
+          <RailButton onClick={() => setSearching(true)}>Search</RailButton>
+          <RailButton
+            tone="primary"
+            disabled={busy || lines.length === 0}
+            onClick={() => void post()}
+          >
+            {busy ? 'Posting…' : 'Post receipt'}
+          </RailButton>
+          <div className="flex-1" />
+          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
+        </>
+      }
+    >
+      <h1 className="text-2xl font-semibold">Goods receipt</h1>
+
+      {error ? (
+        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+      ) : null}
+      {notice ? (
+        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+          {notice}
+        </p>
+      ) : null}
+      {posted && lines.length === 0 ? (
+        <p className="mt-4 text-muted">Scan the next box to start another receipt.</p>
+      ) : null}
+
+      {lines.length > 0 ? (
+        <ul className="mt-4 max-w-3xl">
+          {lines.map((line, index) => (
+            <li
+              key={`${line.drug.id}-${line.batchNo}-${index}`}
+              className="flex items-center gap-4 border-b border-line py-3"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-lg">{line.drug.name}</span>
+                <span className="tabular block text-sm text-muted">
+                  {line.batchNo} · exp {MONTHS[line.month - 1]} {line.year} ·{' '}
+                  {line.qtyPacks} strip{line.qtyPacks === 1 ? '' : 's'}
+                  {line.freePacks > 0 ? ` + ${line.freePacks} free` : ''} ·{' '}
+                  {line.qtyPacks * line.unitsPerStrip +
+                    line.freePacks * line.unitsPerStrip}{' '}
+                  {line.drug.base_unit === 'tablet' ? 'tablets' : line.drug.base_unit}
+                </span>
+              </span>
+              <span className="tabular shrink-0 text-lg">
+                ₹{lineValue(line).toFixed(2)}
+              </span>
+              <button
+                type="button"
+                aria-label={`Remove ${line.drug.name}`}
+                onClick={() => setLines((c) => c.filter((_, i) => i !== index))}
+                className="h-11 w-11 shrink-0 rounded-lg border border-line text-muted active:bg-line"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {!drug ? (
+        <p className="mt-6 text-muted">
+          Scan a box, or search for it. Everything else on this screen is about
+          that one box: its batch, its expiry, its MRP and what it cost.
+        </p>
+      ) : (
+        <div className="mt-6 max-w-3xl rounded-xl border border-line bg-white p-4">
+          <p className="text-lg">
+            {drug.name} <span className="text-sm text-muted">{drug.strength}</span>
+          </p>
+          <p className="text-sm text-muted">
+            {pack.unitsPerStrip} to a strip, {pack.stripsPerBox} strips to a box —
+            the drug&rsquo;s default. What arrived is what gets recorded.
+          </p>
+
+          <label className="mt-4 block text-sm text-muted" htmlFor="batch">
+            Batch number
+          </label>
+          <input
+            id="batch"
+            value={batchNo}
+            onChange={(event) => setBatchNo(event.target.value.toUpperCase())}
+            className="tabular mt-1 h-14 w-64 rounded-xl border border-line px-3 text-lg"
+          />
+
+          <p className="mt-4 text-sm text-muted">Expiry, as printed on the strip</p>
+          <div className="mt-1 flex flex-wrap gap-2" role="group" aria-label="Expiry month">
+            {MONTHS.map((label, index) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={month === index + 1}
+                onClick={() => setMonth(index + 1)}
+                className={`h-11 w-16 rounded-lg border text-sm ${
+                  month === index + 1 ? 'border-ink bg-ink text-white' : 'border-line'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {/* Last year is on this row on purpose. The typo this screen exists
+              to catch is a mistyped expiry year, and a form that only offers
+              valid years does not catch it — it makes the pharmacist pick a
+              plausible one instead, and the wrong date is then indistinguishable
+              from a right one. Let it be entered; app.receive_goods refuses it
+              by name and date (INVENTORY.md §3). */}
+          <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Expiry year">
+            {[-1, 0, 1, 2, 3, 4].map((offset) => {
+              const value = now.getFullYear() + offset;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={year === value}
+                  onClick={() => setYear(value)}
+                  className={`tabular h-11 w-20 rounded-lg border text-sm ${
+                    year === value ? 'border-ink bg-ink text-white' : 'border-line'
+                  }`}
+                >
+                  {value}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex gap-3">
+            {fieldButton('qty', 'Strips', false)}
+            {fieldButton('free', 'Free strips', false)}
+            {fieldButton('mrp', 'MRP per strip', true)}
+            {fieldButton('cost', 'Rate per strip', true)}
+          </div>
+
+          <p className="mt-2 text-sm text-muted">
+            {Number(values.qty || '0') * pack.unitsPerStrip +
+              Number(values.free || '0') * pack.unitsPerStrip}{' '}
+            base units in · ₹
+            {packCostToBaseUnitCost(Number(values.cost || '0'), pack, 'strip').toFixed(4)}{' '}
+            each
+            {Number(values.free || '0') > 0
+              ? ' before the free strips dilute it'
+              : ''}
+          </p>
+
+          <div className="mt-4 w-64">
+            <Numpad
+              onDigit={(digit) =>
+                setValues((current) => ({
+                  ...current,
+                  [field]: (current[field] + digit).slice(0, 7),
+                }))
+              }
+              onBackspace={() =>
+                setValues((current) => ({
+                  ...current,
+                  [field]: current[field].slice(0, -1),
+                }))
+              }
+            />
+          </div>
+
+          <div className="mt-4 flex gap-3">
+            <button
+              type="button"
+              disabled={
+                batchNo.trim() === '' ||
+                Number(values.qty || '0') + Number(values.free || '0') <= 0 ||
+                values.cost === ''
+              }
+              onClick={addLine}
+              className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+            >
+              Add to receipt
+            </button>
+            <button
+              type="button"
+              onClick={resetLine}
+              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+            >
+              Cancel
+            </button>
+          </div>
+
+          <p className="mt-3 text-sm text-muted">
+            One strip is {unitsInPack(pack, 'strip')} and one box is{' '}
+            {unitsInPack(pack, 'box')}. The ledger only ever stores the base units.
+          </p>
+        </div>
+      )}
+    </ThreePane>
+  );
+}

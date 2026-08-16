@@ -87,17 +87,30 @@ ENV
 # The OpenAPI surface is the cache, in the API's own words. Calling each
 # function would not do: PostgREST matches on the exact argument set, so an
 # argument-less probe 404s against a function that is present and fine.
-surface="$(curl -s \
-  -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${ANON_KEY}" \
-  -H 'Accept-Profile: app' \
-  'http://127.0.0.1:54321/rest/v1/')"
-
+#
+# Polled rather than asked once. PostgREST prints its banner and starts
+# listening BEFORE the schema cache is built, and answers 503 in between — so a
+# single-shot probe is a race that gets slower to win as the schema grows, and
+# loses as "the cache is stale" when the cache was merely a second away.
 missing=""
-for fn in dispense unlock book_appointment sign_prescription \
-          raise_counter_query answer_counter_query withdraw_counter_query; do
-  if ! grep -q "\"/rpc/${fn}\"" <<<"${surface}"; then
-    missing="${missing} ${fn}"
-  fi
+for _ in $(seq 1 30); do
+  surface="$(curl -s \
+    -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${ANON_KEY}" \
+    -H 'Accept-Profile: app' \
+    'http://127.0.0.1:54321/rest/v1/')"
+
+  missing=""
+  for fn in dispense unlock book_appointment sign_prescription \
+            raise_counter_query answer_counter_query withdraw_counter_query \
+            receive_goods start_stock_take return_to_supplier \
+            write_off_expired draft_purchase_orders; do
+    if ! grep -q "\"/rpc/${fn}\"" <<<"${surface}"; then
+      missing="${missing} ${fn}"
+    fi
+  done
+
+  [ -z "${missing}" ] && break
+  sleep 0.5
 done
 
 if [ -n "${missing}" ]; then

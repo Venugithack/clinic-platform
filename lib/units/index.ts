@@ -138,6 +138,24 @@ export function lineAmountPaise(
   return Math.min(Math.round(exact), cap);
 }
 
+/**
+ * What one base unit cost, from what the invoice actually says.
+ *
+ * A supplier invoice is priced per pack — "rate 28.50" against a strip — and
+ * `stock_batches.cost_per_base_unit` is per tablet. This is that division, and
+ * it lives here because this module is the edge where packs stop existing
+ * (INVENTORY.md §1). Four decimal places, because that is the precision the
+ * column keeps and valuation is a sum over thousands of units.
+ */
+export function packCostToBaseUnitCost(
+  packCostPaise: number,
+  pack: PackConfig,
+  basis: PackBasis,
+): number {
+  const perPack = unitsInPack(pack, basis);
+  return Math.round((packCostPaise / 100 / perPack) * 10_000) / 10_000;
+}
+
 /** Per-base-unit price, for display only. Never used to compute a line total. */
 export function unitPricePaise(
   mrpPaise: number,

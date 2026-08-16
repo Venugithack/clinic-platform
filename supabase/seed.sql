@@ -91,9 +91,18 @@ from (values
   ('Telma 40',      'TM2504S',  380, 15, 10, 148.00,  8.4000,  450, '50990000-0000-0000-0000-000000000002'),
   ('Alprax 0.25',   'AX2503H',  320, 15, 10,  38.00,  2.2000,   90, '50990000-0000-0000-0000-000000000002'),
   ('Ascoril LS',    'AS2502L',  270,100,  1, 128.00,  1.0500,  500, '50990000-0000-0000-0000-000000000001'),
-  -- Inside the 90-day expiring window, and its supplier's return window is
-  -- closing first — the grouping that INVENTORY.md §6 sorts by.
-  ('Zincovit',      'ZV2411E',   45, 15, 10,  98.00,  5.4000,  150, '50990000-0000-0000-0000-000000000001')
+  -- Inside the 90-day expiring window, and Kumar's 180-day return window shut
+  -- months ago: still perfectly good stock, no longer sendable back. This is
+  -- the case INVENTORY.md §6 calls pure loss, and the reason the list is built
+  -- on the return deadline rather than on the expiry date.
+  ('Zincovit',      'ZV2411E',   45, 15, 10,  98.00,  5.4000,  150, '50990000-0000-0000-0000-000000000001'),
+  -- The other side of the same rule: expiry is a long way off, but Kumar wants
+  -- it back 180 days before that, so the door closes within weeks.
+  ('Shelcal 500',   'SC2506T',  200, 15, 10, 112.00,  6.2000,  300, '50990000-0000-0000-0000-000000000001'),
+  -- Already expired: excluded from availability, invisible to every screen that
+  -- asks what is on the shelf, and still physically in the cupboard. It appears
+  -- in expired_stock and nowhere else, waiting to be written off at cost.
+  ('Betadine 15g',  'BD2312V',  -60,  1,  1, 148.00, 92.0000,   12, '50990000-0000-0000-0000-000000000001')
 ) as v(drug_name, batch_no, days, ups, spb, mrp, cost, qty, supplier)
 join drugs d on d.name = v.drug_name;
 
