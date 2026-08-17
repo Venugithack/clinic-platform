@@ -5,8 +5,10 @@
 **Status: M0–M6, M8, M9 and M11 built, 17 Aug 2026** — foundations, clinic
 core, the live link, inventory, billing with the till, supplier purchasing,
 presence, the legal registers, hardening, and the whole of the go-live
-tooling: drug master, settings, staff and devices, corrections, and opening
-stock. See §5–§18. **Every line of `PLAN.md` §16 that is code is now built.** **M7 (patient WhatsApp) is deferred at the client's request** — the
+tooling: drug master, settings, staff and devices, corrections, opening stock,
+and standing the system up from an empty database. See §5–§19. **Every line of
+`PLAN.md` §16 that is code is now built, and the build has been stood up from
+nothing in a browser.** **M7 (patient WhatsApp) is deferred at the client's request** — the
 doctor has asked to leave patient messaging to a later phase, and it is the one
 milestone that could not start on the developer's side anyway. `PLAN.md` §20 is
 still unsigned; §0 below lists what must be true before the clinic runs on
@@ -1458,3 +1460,89 @@ left is §1.3 — LAN HTTPS, the root CA on both tablets, PWA install, the
 printer's Android print service plugin, one real prescription printed and one
 real bill on each paper size — and M10, the parallel run. Both happen in the
 clinic.
+
+---
+
+## 19. M11f status — first run, built 17 Aug 2026
+
+M11c gave `app.add_staff` a bootstrap: on a database with no staff, the first
+person created is an admin. That was half the problem, and the wrong half to
+solve alone.
+
+The other half was a **deadlock**, and it appeared only on a database that had
+never been seeded — which is to say, on the real one, on go-live morning:
+
+```
+a screen        needs a staff session
+a session       needs a PIN unlock
+an unlock       needs a registered device
+registering one needs an admin session
+                ...which needs a registered device
+```
+
+Nothing could create the first tablet. Development never met it because
+`seed.sql` inserts two devices; production applies migrations only. So the one
+thing M11 existed to remove — a developer with `psql` on day one — survived, in
+the single INSERT that starts everything.
+
+`app.first_run` closes it: one transition, allowed only while `staff` **and**
+`devices` are both empty, creating the clinic, the first admin and the first
+tablet together. The guard is the data rather than a flag somebody could clear,
+so it can run at most once in the life of a clinic.
+
+Two conditions, not one, and the second is the security-relevant one: a
+database with staff but no devices is a clinic that **revoked** its tablets,
+and letting setup run there would mint a fresh admin past every PIN in the
+building.
+
+It also hands back a session, not just a device token — because the PIN chosen
+four seconds ago should not be asked for again, and because of what the drill
+found next.
+
+### The drill, and the two bugs it found
+
+`e2e/first-run/` is the only suite in this repository that runs against an
+**empty** database, which is the whole point of it: every other spec starts
+from the seed, and the seed is what hid the deadlock for four milestones.
+`scripts/first-run-drill.sh` owns it — reset to migrations only, run that file
+alone, put the seed back — and it is wired into `pnpm test` between the pgTAP
+stage and the E2E one.
+
+It is a drill in the same sense as `db-restore-drill.sh`. Standing the system
+up from nothing happens exactly once, in a clinic, with somebody waiting, which
+is the worst possible moment to discover it was never tried.
+
+It found two things the pgTAP could not.
+
+**The lock screen could show nobody.** It listed staff by reading the `staff`
+table, whose RLS requires `app.current_staff_id()` to already resolve — and
+that read happens *before* anybody has signed in. In development it worked by
+accident: the browser's key is minted with the seeded doctor's id as its
+subject, so the fallback found him. On a database where that id does not exist
+— a real one — the list comes back empty **with no error**, and the screen
+draws "Who is this?" above nothing. Nobody can sign in, ever. A pre-sign-in
+read has to be readable pre-sign-in: `lock_screen_staff` is two columns, the
+two the screen draws, and whoever is holding the tablet is about to be shown
+those names anyway.
+
+**`clinic_setup_state`, for the same reason.** The screen has to tell "a clinic
+that has not been told about this tablet" apart from "a database nobody has set
+up", and it cannot ask the staff list — that comes back empty on a fresh
+database and empty on a live one seen from an unregistered tablet, the same
+answer for opposite reasons. One computed boolean. A read that *fails* returns
+`undefined`, never `true`: not knowing must never be mistaken for "nobody has
+set this up", or a network blip on a working tablet would offer a stranger a
+form that mints an administrator.
+
+### And a flake that was a real test defect
+
+The full suite failed once on M2's equivalence test, and it was not dirty
+state: `proposals.allInnerTexts()` does not retry, so reading it before the
+equivalents landed returned an empty array and failed an assertion that has
+nothing to do with equivalence. About one run in three under load. Same family
+as the "0 matches" bug M11a's gate had — a non-retrying read racing the data
+it is about to judge.
+
+**M11f totals:** 30 migrations, 490 pgTAP assertions, 21 unit tests, 59
+Playwright tests across seventeen specs, plus the two-test first-run drill that
+runs against an empty database.

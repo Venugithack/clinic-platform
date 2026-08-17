@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Numpad } from '@/components/Numpad';
+import { firstRun } from '@/lib/transitions/admin';
 import {
   currentSession,
   deviceToken,
   registerDeviceLocally,
   unlock,
+  writeStoredSession,
   type StaffSession,
 } from '@/lib/auth';
 
@@ -39,10 +41,34 @@ export default function LockScreen() {
   const [registered, setRegistered] = useState(true);
   const [code, setCode] = useState('');
 
+  // Whether this database has ever been set up. `undefined` means we have not
+  // been able to ask — which is not the same as "empty", and the difference
+  // decides whether a stranger is offered the setup form.
+  const [virgin, setVirgin] = useState<boolean | undefined>(undefined);
+  const [clinicName, setClinicName] = useState('');
+  const [myName, setMyName] = useState('');
+  const [tabletName, setTabletName] = useState('');
+
   useEffect(() => {
     setSession(currentSession());
     setRegistered(deviceToken() !== null);
   }, []);
+
+  // Which of two situations an unregistered tablet is in: a clinic that exists
+  // and has not been told about this device, or a database nobody has set up.
+  //
+  // It cannot be answered from the staff list. That list is behind RLS which
+  // needs a resolved staff member, so it comes back empty on a fresh database
+  // AND on a live one seen from a tablet nobody has signed in on — the same
+  // answer for opposite reasons. `clinic_setup_state` is one boolean that
+  // means what it says.
+  useEffect(() => {
+    if (registered) return;
+    void (async () => {
+      const { needsSetup } = await import('@/lib/db/settings');
+      setVirgin(await needsSetup());
+    })();
+  }, [registered]);
 
   useEffect(() => {
     if (!registered) return;
@@ -74,6 +100,130 @@ export default function LockScreen() {
       })
       .finally(() => setBusy(false));
   }, [pin, selected, busy]);
+
+  const setUpTheClinic = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const started = await firstRun({
+        clinicName,
+        staffName: myName,
+        pin,
+        deviceLabel: tabletName,
+      });
+      // The device token comes back exactly once. Writing it here is what turns
+      // this browser into a registered tablet.
+      registerDeviceLocally(started.device_token);
+      // And the session it also handed back signs him in on it, so the PIN he
+      // chose four seconds ago is not asked for again.
+      const opened: StaffSession = {
+        token: started.session_token,
+        staffId: started.staff_id,
+        staffName: started.staff_name,
+        role: 'admin',
+      };
+      writeStoredSession(opened);
+      setPin('');
+      setRegistered(true);
+      setVirgin(false);
+      setSession(opened);
+    } catch (cause) {
+      setError((cause as Error).message);
+      setPin('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A database nobody has set up yet, on a tablet nobody has registered.
+  //
+  // This is the state production starts in and development never sees, and
+  // until M11f there was no way out of it: registering a tablet needed an
+  // admin, and an admin needed a tablet to sign in on. It is offered only when
+  // the staff list came back and came back EMPTY — a failed read leaves
+  // `virgin` undefined and this screen unoffered, because a network blip on a
+  // working tablet must never show a stranger a form that mints an admin.
+  if (!registered && virgin === true) {
+    const ready =
+      clinicName.trim() !== '' && myName.trim() !== '' && pin.length === PIN_LENGTH;
+
+    return (
+      <Centered>
+        <h1 className="text-2xl font-semibold">Set this clinic up</h1>
+        <p className="mt-3 max-w-md text-center text-muted">
+          There is nothing in this system yet. This creates the clinic, makes
+          you its administrator and registers this tablet — once, and then
+          never again.
+        </p>
+
+        <div className="mt-8 w-full max-w-md space-y-4">
+          <label className="block">
+            <span className="block text-sm text-muted">Clinic name</span>
+            <input
+              value={clinicName}
+              onChange={(event) => setClinicName(event.target.value)}
+              aria-label="Clinic name"
+              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-sm text-muted">Your name</span>
+            <input
+              value={myName}
+              onChange={(event) => setMyName(event.target.value)}
+              aria-label="Your name"
+              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-sm text-muted">
+              This tablet — &ldquo;cabin&rdquo;, &ldquo;counter&rdquo;
+            </span>
+            <input
+              value={tabletName}
+              onChange={(event) => setTabletName(event.target.value)}
+              aria-label="This tablet"
+              placeholder="Cabin tablet"
+              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+            />
+          </label>
+        </div>
+
+        <p className="mt-6 text-sm text-muted">Choose your 6-digit PIN</p>
+        <div className="mt-3 flex gap-3" aria-label="PIN entry" role="status">
+          {Array.from({ length: PIN_LENGTH }, (_, i) => (
+            <span
+              key={i}
+              className={`h-4 w-4 rounded-full border border-line ${
+                i < pin.length ? 'bg-ink' : 'bg-transparent'
+              }`}
+            />
+          ))}
+        </div>
+
+        <div className="mt-4 w-64">
+          <Numpad
+            disabled={busy}
+            onDigit={(d) => setPin((p) => (p.length < PIN_LENGTH ? p + d : p))}
+            onBackspace={() => setPin((p) => p.slice(0, -1))}
+          />
+        </div>
+
+        {error ? <p className="mt-4 text-danger">{error}</p> : null}
+
+        <button
+          type="button"
+          disabled={busy || !ready}
+          onClick={() => void setUpTheClinic()}
+          className="mt-6 h-14 w-full max-w-md rounded-xl border border-ink bg-ink text-lg font-medium text-white disabled:opacity-40"
+        >
+          Set up
+        </button>
+      </Centered>
+    );
+  }
 
   if (!registered) {
     return (

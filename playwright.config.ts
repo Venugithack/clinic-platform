@@ -10,6 +10,14 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  /**
+   * `e2e/first-run/` is excluded on purpose.
+   *
+   * It is the one suite that needs an EMPTY database, and every other spec
+   * needs the seed. `scripts/first-run-drill.sh` runs it on its own, between
+   * the reset and the seed, and puts the seed back afterwards.
+   */
+  testIgnore: process.env.E2E_FIRST_RUN ? [] : ['first-run/**'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

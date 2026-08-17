@@ -46,3 +46,26 @@ export async function clinicRow(): Promise<ClinicRow | null> {
   if (error) throw new Error(error.message);
   return (data as unknown as ClinicRow | null) ?? null;
 }
+
+/**
+ * Whether this database has ever been set up.
+ *
+ * Asked by the lock screen before anybody can sign in, which is why it is a
+ * view of its own rather than a count of staff: the staff list is behind RLS
+ * that requires a resolved staff member, so it comes back empty on a fresh
+ * database and empty on a live one seen from an unregistered tablet, and a
+ * screen cannot tell those two apart.
+ *
+ * A read that fails returns `undefined`, not `true`. Not knowing must never be
+ * mistaken for "nobody has set this up", or a network blip on a working tablet
+ * would offer a stranger the form that mints an administrator.
+ */
+export async function needsSetup(): Promise<boolean | undefined> {
+  const { data, error } = await db()
+    .from('clinic_setup_state')
+    .select('needs_setup')
+    .maybeSingle();
+
+  if (error || data === null) return undefined;
+  return (data as { needs_setup: boolean }).needs_setup;
+}

@@ -112,3 +112,43 @@ export async function revokeDevice(deviceId: string): Promise<number> {
   if (error) throw toTransitionError(error);
   return Number(data);
 }
+
+/**
+ * First run, on a database that has nothing in it.
+ *
+ * The deadlock this exists for: a staff session needs an unlock, an unlock
+ * needs a registered device, and registering a device needs an admin session.
+ * On a seeded development database nobody ever notices; on the real one,
+ * nothing could create the first tablet.
+ *
+ * Allowed only while `staff` and `devices` are both empty, so it can run at
+ * most once in the life of a clinic. The device token comes back exactly once
+ * and the caller writes it to this tablet.
+ */
+export interface FirstRun {
+  clinic_name: string;
+  staff_id: string;
+  staff_name: string;
+  device_label: string;
+  /** Shown once, written straight to this tablet. */
+  device_token: string;
+  /** Signs the new admin in on the tablet he is holding, like `unlock` does. */
+  session_token: string;
+}
+
+export async function firstRun(input: {
+  clinicName: string;
+  staffName: string;
+  pin: string;
+  deviceLabel?: string;
+}): Promise<FirstRun> {
+  const { data, error } = await appSchema().rpc('first_run', {
+    p_clinic_name: input.clinicName,
+    p_staff_name: input.staffName,
+    p_pin: input.pin,
+    p_device_label: input.deviceLabel ?? null,
+  });
+
+  if (error) throw toTransitionError(error);
+  return data as FirstRun;
+}

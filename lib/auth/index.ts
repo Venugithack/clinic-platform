@@ -25,6 +25,13 @@ import {
 
 export type StaffSession = StoredSession;
 
+/**
+ * Re-exported because first run is the one path that receives a session
+ * without calling `unlock` — `app.first_run` mints the device AND the session
+ * in one transaction, and the lock screen writes both.
+ */
+export { writeStoredSession };
+
 const DEVICE_TOKEN_KEY = 'clinic.deviceToken';
 
 /**

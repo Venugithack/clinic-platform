@@ -7,7 +7,6 @@ import { db } from './index';
 export interface StaffMember {
   id: string;
   name: string;
-  role: 'doctor' | 'counter' | 'admin';
 }
 
 /**
@@ -17,11 +16,15 @@ export interface StaffMember {
  * client-writable at all — the only path to it is app.set_staff_pin().
  */
 export async function listActiveStaff(): Promise<StaffMember[]> {
+  // `lock_screen_staff`, not `staff`: this read happens BEFORE anybody has
+  // signed in, and the staff table's RLS requires a staff member to already be
+  // resolved. Reading the table here worked only because the development key
+  // carries a seeded doctor's id — on a database without that row the list came
+  // back empty with no error, and the lock screen offered nobody to sign in as
+  // (M11f).
   const { data, error } = await db()
-    .from('staff')
-    .select('id, name, role')
-    .eq('active', true)
-    .order('name');
+    .from('lock_screen_staff')
+    .select('id, name');
 
   if (error) throw new Error(error.message);
 

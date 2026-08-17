@@ -15,13 +15,14 @@
     "test:unit": "vitest run",
     "test:db": "./scripts/db-test.sh",
     "test:e2e": "./scripts/dev-stack.sh && playwright test",
-    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:db && pnpm test:e2e",
+    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:db && pnpm test:first-run && pnpm test:e2e",
     "db:start": "./scripts/db-start.sh",
     "db:stop": "./scripts/db-stop.sh",
     "db:reset": "./scripts/db-reset.sh",
     "db:migrate": "./scripts/db-migrate.sh",
     "db:backup": "./scripts/db-backup.sh",
-    "db:restore-drill": "./scripts/db-restore-drill.sh"
+    "db:restore-drill": "./scripts/db-restore-drill.sh",
+    "test:first-run": "./scripts/first-run-drill.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

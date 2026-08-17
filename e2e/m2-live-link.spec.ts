@@ -162,8 +162,15 @@ test('the counter cannot propose a drug that is not an equivalent', async ({ bro
   // point: matching salts is a lookup, and anything looser is a clinical
   // judgement that belongs to the doctor (INVENTORY.md §7, rule 8).
   const proposals = counterPage.getByRole('button', { name: /in stock|OUT/ });
+
+  // Waited for, not read straight away. `allInnerTexts()` does not retry, so
+  // reading it before the equivalents land returns an empty array and the
+  // "Dolo is offered" assertion fails for a reason that has nothing to do with
+  // equivalence. It flaked about one run in three under a loaded suite before
+  // this line existed (M11f).
+  await expect(proposals.filter({ hasText: 'Dolo 650' })).toBeVisible();
+
   const labels = await proposals.allInnerTexts();
-  expect(labels.join(' ')).toContain('Dolo 650');
   expect(labels.join(' ')).not.toContain('Cetzine');
   expect(labels.join(' ')).not.toContain('Pan 40');
 
