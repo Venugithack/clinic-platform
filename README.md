@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M3 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
-and `BUILD.md` §5–8. Seven documents describe the rest:
+**M0–M4 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
+and `BUILD.md` §5–9. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -27,12 +27,15 @@ consult, a signed prescription and a printable A4 sheet. **M2** — the
 doctor↔counter live link, the feature the clinic actually bought. **M3** —
 inventory, the centrepiece: goods receipt, barcodes, FEFO dispensing with
 scan-to-verify, the counter sale, the blind stock-take, expiry returns and
-supplier credits, and reordering that learns from measured lead times.
+supplier credits, and reordering that learns from measured lead times. **M4** —
+billing: gapless invoice numbers, A4 and 80mm bills, the day-book, and a cash
+till that is counted rather than assumed.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
   (clinic)/         queue · register walk-in · consult · Rx print · counter
                     receiving · stock-take · expiry · reorder
+                    billing · bill print (A4 + 80mm) · day-book
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -46,8 +49,8 @@ lib/
   units/            base-unit conversion and costing (INVENTORY.md §1, §4)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       17 forward-only migrations — the schema
-  tests/            222 pgTAP assertions
+  migrations/       19 forward-only migrations — the schema
+  tests/            257 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -78,6 +81,11 @@ the build. It currently runs at ~150ms.
 different expiries, MRPs and strip sizes, FEFO taking the earlier one, and a
 barcode scan stopping a pack that is not on the prescription.
 
+**The M4 gate** is `e2e/m4-gate.spec.ts`: a bill for a consultation plus four
+medicines, printed at both paper sizes with batch numbers intact; the day's
+total reconciled against the sum of its bills; and a drawer counted ten rupees
+short, recorded as ten rupees short.
+
 **The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
 stock back *months before* it expires — 3 to 6, and it differs per supplier — so
 the date that decides whether a batch can go back is `expiry −
@@ -93,8 +101,10 @@ success paths worked, which is why it survived three milestones. Codes are now
 `CL0xx`; see `BUILD.md` §8.
 
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
-tablets, PWA install, the printer's Android print service plugin, and one real
-sheet printed. All of it happens in the clinic; `scripts/lan-https.sh` is the
+tablets, PWA install, the printer's Android print service plugin, one real
+prescription printed, and one real bill on each paper size. The **80mm roll
+printer has not been bought yet** (§18 Q9), so that layout has never met a
+thermal printer. All of it happens in the clinic; `scripts/lan-https.sh` is the
 runbook and carries the checklist.
 
 Build continues after `PLAN.md` §20 is signed off.

@@ -9,12 +9,16 @@
 -- both atomically in M3; until it exists, the seed does the same thing by hand
 -- so that stock_cache_drift stays empty from the first row.
 
-insert into clinic (name, address, phone, timezone, open_hours) values (
+-- follow_up_free_days is deliberately left null: "a follow-up within a week is
+-- free" is a very common policy and it is the doctor's to set, not one to
+-- assume on his behalf. Null charges every visit.
+insert into clinic (name, address, phone, timezone, open_hours, consult_fee) values (
   'Seed Clinic',
   '—',
   '+91 00000 00000',
   'Asia/Kolkata',
-  '{"mon":["09:30-13:00","17:00-20:30"],"sun":[]}'::jsonb
+  '{"mon":["09:30-13:00","17:00-20:30"],"sun":[]}'::jsonb,
+  300
 );
 
 insert into staff (id, name, role, reg_no, auth_user_id) values

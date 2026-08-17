@@ -25,6 +25,9 @@ export type TransitionErrorCode =
   | 'RETURN_WINDOW_CLOSED'
   | 'NOT_EXPIRED'
   | 'CREDIT_EXCEEDED'
+  | 'TILL_ALREADY_OPEN'
+  | 'NO_TILL_OPEN'
+  | 'PAYMENT_MISMATCH'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -46,6 +49,9 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   CL016: 'RETURN_WINDOW_CLOSED',
   CL017: 'NOT_EXPIRED',
   CL018: 'CREDIT_EXCEEDED',
+  CL019: 'TILL_ALREADY_OPEN',
+  CL020: 'NO_TILL_OPEN',
+  CL021: 'PAYMENT_MISMATCH',
 };
 
 export class TransitionError extends Error {

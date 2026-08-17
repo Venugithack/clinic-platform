@@ -2,8 +2,9 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: not started.** `PLAN.md` §20 is unsigned, and §0 below lists what must
-be true before day 1. Everything here is executable the moment it is.
+**Status: M0–M4 built, 16 Aug 2026** — foundations, clinic core, the live link,
+inventory, and billing with the till. See §5–§9. `PLAN.md` §20 is still
+unsigned; §0 below lists what must be true before the clinic runs on this.
 
 Local-first, per `HOSTING.md` §1a: Supabase in Docker, Next on the LAN, both
 tablets on the clinic Wi-Fi. No hosting account, no Meta account, no spend until
@@ -170,7 +171,7 @@ before the next starts.
 | **M1** | Clinic core | 4 | Doctor registers a walk-in, consults, signs an Rx, and it prints on the clinic's actual printer at A4 |
 | **M2** | **Doctor ↔ counter live link** | 4 | Rx signed on tablet A is on tablet B in under a second, in the two real rooms, over the clinic Wi-Fi. Counter raises "out of stock", doctor answers without leaving the consult screen |
 | **M3** | Inventory | 6 + 12 | Two batches, different expiries, different MRPs, different strip sizes — dispensing takes the earlier, charges the right MRP, and the ledger reconciles. An expired batch is refused. A barcode scan at dispense stops the wrong box |
-| **M4** | Billing, counter sale, till | 4 | A bill prints for a consult plus 4 medicines across 2 batches; the day's total matches the sum of its bills; the till reconciles against counted cash |
+| **M4** | Billing, counter sale, till | 4 | A bill prints for a consult plus 4 medicines across 2 batches; the day's total matches the sum of its bills; the till reconciles against counted cash — **proved in `e2e/m4-gate.spec.ts`, §9** |
 
 **M2 is the demo.** It is the feature the doctor bought and the first moment the
 build justifies itself in the room. Show it the day it works.
@@ -588,3 +589,76 @@ is worse than no check**, because people learn to re-run it.
 
 **M3 totals:** 17 migrations, 222 pgTAP assertions, 12 unit tests, 23 Playwright
 tests across five specs, nothing skipped.
+
+---
+
+## 9. M4 status — billing, the day-book and the till, built 16 Aug 2026
+
+**Built and green.** The gate, verbatim from §2: *"A bill prints correctly for a
+consult plus 4 medicines across 2 batches; the day's total matches the sum of
+its bills; the till reconciles against counted cash."* All three run in
+`e2e/m4-gate.spec.ts`, through the screens.
+
+| | |
+|---|---|
+| Migrations | `20260816230100_billing.sql`, `20260816230200_till_and_daybook.sql` |
+| Transitions | `raise_bill` · `take_payment` · `void_bill` · `open_till` · `record_cash` · `close_till` |
+| Screens | `/billing` · `/bill/[id]/print` (A4 and 80mm) · `/day-book` |
+| Tests | 35 new pgTAP assertions, 3 new Playwright tests |
+
+### Four decisions worth defending
+
+**The bill number is gapless, and a sequence is the wrong tool.** A tax invoice
+series has to be unbroken, and a Postgres sequence consumes its value on a
+transaction that then rolls back — leaving a hole nobody can explain to an
+inspector. So the counter is a row taken `for update` inside the same
+transaction; a rollback hands the number back. It serialises billing, which at
+sixty bills a day is nothing.
+
+**Rounding goes down, never up.** Bills round to the rupee. Rounding *up* can
+push a line past the MRP printed on the strip, and selling above MRP is illegal
+— so the paise are dropped. It costs the clinic under fifty paise a bill and
+removes a category of problem. The setting can switch rounding off; it cannot
+make it round up.
+
+**A cancelled bill keeps its number.** Deleting one puts a hole in the series,
+which is the single thing the series exists to prevent. Cancellation is a status
+with a reason and a person. A *paid* bill can only be cancelled by the doctor,
+because that is a refund and the cash has to come back out of a drawer somebody
+is counting — which the transition also insists on.
+
+**The till stores the count and the expectation, and never reconciles one to
+the other.** A drawer that is never counted cannot tell a mistake from a theft,
+and a system that quietly adjusts the count to match itself destroys the only
+signal there is. Petty cash in and out is recorded with a mandatory reason, for
+the same reason: an unexplained payout is indistinguishable from a shortfall.
+
+### Two bugs, and what they have in common
+
+**A transition returns a row, not a graph.** `app.raise_bill` returns `bills`,
+so the object handed back has no `lines` — but the screen rendered
+`bill.lines.map(...)` and took itself down with "This page couldn't load". The
+fix was one line; the durable fix was typing the transition wrapper as `BillRow`
+so the mistake cannot be made again, and re-reading the bill through
+`lib/db/billing.getBill` when the lines are actually wanted.
+
+**A consult fee that silently wasn't charged.** `raise_bill` derives the fee
+from clinic policy only when there is an encounter to derive it against — which
+is right, since a free follow-up is measured from the *last* visit. The billing
+screen was passing no encounter at all, so ticking "add the consultation"
+produced a bill for the medicines alone. Nothing errored. The gate caught it
+because the gate asserts an amount.
+
+Both were invisible to pgTAP and obvious in a browser, which is the same lesson
+as the `PT` prefix in §8 arriving from a different direction: **the database
+being right is not the same as the clinic being billed correctly.**
+
+### Still outstanding, and it is hardware
+
+`PLAN.md` §18 Q9 settled the A4 printer. The **80mm roll printer has not been
+bought**, so the roll layout is built and verified in the browser and has never
+met a thermal printer. It goes on the `BUILD.md` §1.3 tablet-setup checklist
+alongside the A4 test.
+
+**M4 totals:** 19 migrations, 257 pgTAP assertions, 12 unit tests, 26 Playwright
+tests across six specs, nothing skipped.
