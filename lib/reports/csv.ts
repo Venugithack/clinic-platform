@@ -67,3 +67,100 @@ export function downloadCsv(filename: string, csv: string): void {
   link.remove();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Reading a CSV somebody typed.
+ *
+ * Written by hand rather than pulled in, because the file this parses is the
+ * doctor's drug master — five hundred rows of a spreadsheet exported by a
+ * person who has never heard of RFC 4180 — and the failure modes are all in the
+ * quoting. A dependency would handle those too; it would also be a dependency
+ * in a build that has three.
+ *
+ * What it handles, because real exports contain all of it: quoted fields,
+ * commas and newlines inside quotes, doubled quotes as an escape, CRLF, a
+ * trailing newline, and blank lines in the middle.
+ */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  let index = 0;
+
+  // Excel writes a BOM. Left in place it becomes an invisible first character
+  // of the first header, and that column silently fails to match.
+  const input = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
+  const endField = () => {
+    row.push(field);
+    field = '';
+  };
+  const endRow = () => {
+    endField();
+    if (row.some((cell) => cell.trim() !== '')) rows.push(row);
+    row = [];
+  };
+
+  while (index < input.length) {
+    const char = input[index] as string;
+
+    if (quoted) {
+      if (char === '"') {
+        if (input[index + 1] === '"') {
+          field += '"';
+          index += 2;
+          continue;
+        }
+        quoted = false;
+        index += 1;
+        continue;
+      }
+      field += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = true;
+      index += 1;
+    } else if (char === ',') {
+      endField();
+      index += 1;
+    } else if (char === '\r') {
+      index += 1;
+    } else if (char === '\n') {
+      endRow();
+      index += 1;
+    } else {
+      field += char;
+      index += 1;
+    }
+  }
+
+  if (field !== '' || row.length > 0) endRow();
+
+  return rows;
+}
+
+/**
+ * Rows keyed by header, with the header normalised.
+ *
+ * "Units per strip", "units_per_strip" and "UNITS PER STRIP" are the same
+ * column, because three different people will have typed this file.
+ */
+export function parseCsvObjects(text: string): Array<Record<string, string>> {
+  const rows = parseCsv(text);
+  const header = rows.shift();
+  if (!header) return [];
+
+  const keys = header.map((cell) =>
+    cell.trim().toLowerCase().replace(/[\s-]+/g, '_'),
+  );
+
+  return rows.map((cells) =>
+    Object.fromEntries(
+      keys.map((key, index) => [key, (cells[index] ?? '').trim()]),
+    ),
+  );
+}

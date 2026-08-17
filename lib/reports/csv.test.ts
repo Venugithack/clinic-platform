@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { csvCell, toCsv } from './csv';
+import { csvCell, parseCsv, parseCsvObjects, toCsv } from './csv';
 
 describe('csv cells', () => {
   it('quotes what would otherwise shift every column', () => {
@@ -48,5 +48,45 @@ describe('csv files', () => {
     // file that was only ever asked for a drug and a date.
     const rows = [{ a: 1, b: 2, secret: 'phone' }];
     expect(toCsv(rows, [{ key: 'b', label: 'B' }])).toBe('B\r\n2');
+  });
+});
+
+describe('reading a csv somebody typed', () => {
+  it('handles the quoting a real export contains', () => {
+    const csv =
+      'Name,Salt,Address\r\n' +
+      '"Combiflam, 400/325mg",Ibuprofen,"12 Nehru Street\nKadapa"\r\n' +
+      'Dolo 650,Paracetamol,\r\n';
+
+    expect(parseCsv(csv)).toEqual([
+      ['Name', 'Salt', 'Address'],
+      ['Combiflam, 400/325mg', 'Ibuprofen', '12 Nehru Street\nKadapa'],
+      ['Dolo 650', 'Paracetamol', ''],
+    ]);
+  });
+
+  it('survives a doubled quote, a BOM and a blank line', () => {
+    const csv = '﻿Name\n"Kumar ""Bhai"" Distributors"\n\nReddy Pharma\n';
+    expect(parseCsv(csv)).toEqual([
+      ['Name'],
+      ['Kumar "Bhai" Distributors'],
+      ['Reddy Pharma'],
+    ]);
+  });
+
+  it('normalises headers, because three people typed this file', () => {
+    const csv = 'Drug Name,UNITS PER STRIP,salt_composition\nDolo 650,15,Paracetamol\n';
+    expect(parseCsvObjects(csv)).toEqual([
+      { drug_name: 'Dolo 650', units_per_strip: '15', salt_composition: 'Paracetamol' },
+    ]);
+  });
+
+  it('round-trips what it writes', () => {
+    const rows = [{ name: 'Combiflam, 400/325mg', qty: '15' }];
+    const csv = toCsv(rows, [
+      { key: 'name', label: 'Name' },
+      { key: 'qty', label: 'Qty' },
+    ]);
+    expect(parseCsvObjects(csv)).toEqual([{ name: 'Combiflam, 400/325mg', qty: '15' }]);
   });
 });

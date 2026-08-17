@@ -42,3 +42,13 @@ echo "pgTAP: all green"
 # no staff, no drugs and no explanation.
 "$(dirname "${BASH_SOURCE[0]}")/db-seed.sh" >/dev/null
 echo "seed restored"
+
+# And leave the API usable, which is a separate problem with a worse symptom.
+#
+# The reset above drops and rebuilds the schema underneath a running PostgREST.
+# It reconnects by itself — but if it reconnects while the rebuild is still in
+# progress it caches whatever existed at that instant, and nothing tells it to
+# look again. The failure that produces is a transition returning 404 from a
+# screen, against a database where the function demonstrably exists. That cost
+# an hour once; one NOTIFY closes it.
+psql_run -q -c "notify pgrst, 'reload schema'" >/dev/null 2>&1 || true

@@ -2,12 +2,14 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6, M8 and M9 built, 16 Aug 2026** — foundations, clinic core,
-the live link, inventory, billing with the till, supplier purchasing, presence,
-the legal registers, and hardening. See §5–§13. **M7 (patient WhatsApp) is the only one left
-that cannot start on the developer's side** — it needs Meta verification and the
-§18.2 session. `PLAN.md` §20 is still
-unsigned; §0 below lists what must be true before the clinic runs on this.
+**Status: M0–M6, M8, M9 and M11a built, 17 Aug 2026** — foundations, clinic
+core, the live link, inventory, billing with the till, supplier purchasing,
+presence, the legal registers, hardening, and the drug master import. See
+§5–§14. **M7 (patient WhatsApp) is deferred at the client's request** — the
+doctor has asked to leave patient messaging to a later phase, and it is the one
+milestone that could not start on the developer's side anyway. `PLAN.md` §20 is
+still unsigned; §0 below lists what must be true before the clinic runs on
+this.
 
 Local-first, per `HOSTING.md` §1a: Supabase in Docker, Next on the LAN, both
 tablets on the clinic Wi-Fi. No hosting account, no Meta account, no spend until
@@ -1000,3 +1002,108 @@ proved in pgTAP where the timetable can be moved rather than waited for.
 **M9 totals:** 24 migrations, 360 pgTAP assertions, 17 unit tests, 38 Playwright
 tests across ten specs, nothing skipped. Five of §16's six Playwright paths are
 covered; the sixth is WhatsApp booking, which waits on M7.
+
+---
+
+## 14. M11a status — the drug master import, built 17 Aug 2026
+
+`PLAN.md` §16's go-live checklist opens with one line:
+
+> Load drug master, suppliers, opening stock (clinic closed, one day).
+
+Until this slice that line meant *a developer with `psql`*. Which turns the
+doctor's one to two weeks of typing (§3 — the longest pole in the entire
+schedule) into a spreadsheet he emails somebody and then waits on, twice,
+because the first file is never clean.
+
+It is now a screen: `/import`, doctor and admin only.
+
+### The rule the whole thing is shaped around
+
+**All or nothing.** A file with one unreadable row imports nothing.
+
+The tempting alternative — take the good rows, list the bad ones — is worse
+than it sounds, and the reason is not tidiness. A drug missing from the master
+is indistinguishable, at every other screen in this build, from a drug the
+clinic does not stock. So the failure does not surface in the import screen
+where somebody could act on it. It surfaces at the counter, mid-sale, as a
+prescription that cannot be dispensed with the patient standing there. The
+whole file goes in together or the whole file waits.
+
+Two rules follow it, and both exist because of how the file actually arrives:
+
+- **Dry run first.** The screen always previews before it commits: how many rows
+  are new, how many update something that exists, and *every* row it cannot
+  read — with its row number and a sentence, not the first failure. One error
+  per attempt is how a person with five hundred rows gives up.
+- **Idempotent on name + strength.** He will run it twice. Everybody does,
+  usually after fixing three rows, in a file that still contains all the others.
+  The second run updates; it does not duplicate. A duplicated drug master is a
+  week of cleanup, and it is only ever noticed at the counter.
+
+And one thing it deliberately does **not** do: delete. A drug that disappears
+from the file is left alone. A row missing from a spreadsheet is far more often
+a mistake than a decision, and `active = false` is a deliberate act somebody
+takes on a screen.
+
+### Two details that are load-bearing and look like polish
+
+**An empty cell means "leave it".** The update path is `coalesce(file, column)`
+throughout, so re-importing a trimmed-down file does not wipe the reorder levels
+somebody set on a screen last week. In the transport, an empty CSV cell is
+*dropped* rather than sent as `""` — because the database reads absence as
+"keep" and an empty string as a value. That distinction is one line in
+`toImportRow` and it is the difference between a safe second run and a
+destructive one.
+
+**Header matching is forgiving, but not eager.** "Drug Name", "UNITS PER STRIP"
+and `salt_composition` all land where they should, because three different
+people will have typed this file and one of them was a chemist's billing
+software. What does *not* get matched is as considered as what does: "pack size"
+is `10 TAB`, not a strength; "category" in a price list is a therapeutic class,
+not a drug schedule; "company" is the manufacturer, which is not who the clinic
+buys from. A column this build cannot read is ignored, and the preview table
+shows the blank. A column it reads *wrongly* is silent damage in a master
+nobody re-checks.
+
+Suppliers arrive in the same file, by name, because that is the shape of the
+doctor's spreadsheet. A name nobody has seen becomes a supplier with nothing
+else filled in — the WhatsApp number and the return window are decisions, not
+import data.
+
+### The harness bug this found, which was not in this milestone
+
+`scripts/db-test.sh` drops and rebuilds the schema underneath a running
+PostgREST. It reconnects by itself — but if it reconnects *while the rebuild is
+still in progress*, it caches whatever existed at that instant and nothing ever
+tells it to look again. The symptom is a transition returning 404 to a screen,
+against a database where the function demonstrably exists, and it would have hit
+whichever milestone next added a transition. The script now sends
+`notify pgrst, 'reload schema'` after restoring the seed.
+
+### The gate
+
+`e2e/m11-import.spec.ts`, four tests, and every assertion about what did or did
+not land is made **at the counter's drug search** rather than in the import
+screen's own summary — because that is where a bad import actually hurts.
+
+The test helper waits for the search's own HTTP response before reading the
+match count, which is not fussiness: "0 matches" is also what the screen says
+while the query is still in flight, so reading it too early makes every
+"nothing was written" assertion in the file pass for the wrong reason.
+
+`supabase/tests/A6_import.sql` carries the other 19 assertions, including the
+one worth stating out loud: after a refused import of a file whose *first* row
+is perfectly good, `drugs` is still empty.
+
+**M11a totals:** 25 migrations, 379 pgTAP assertions, 21 unit tests, 42
+Playwright tests across eleven specs, nothing skipped.
+
+### What M11 still owes
+
+| Owed | What it is |
+|---|---|
+| **Opening stock import** | This slice loads drugs and suppliers. Opening stock is batches — batch number, expiry, cost, MRP, pack config — and it goes through goods receipt, so it is a different file and a different transition |
+| **Settings screen** | `clinic` has no INSERT/UPDATE grant and no transition. Consult fee, opening hours, licence numbers and GSTIN are still SQL-only |
+| **Staff and device admin** | `app.set_staff_pin` and the admin-only device policy exist with no screen in front of them |
+| **Patient edit, bill void** | M8 flags a missing H1 address with no way to fix it; `app.void_bill` is tested and no screen calls it |

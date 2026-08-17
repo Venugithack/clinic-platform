@@ -102,6 +102,11 @@ export default function QueuePage() {
           </RailButton>
           <RailButton onClick={() => router.push('/presence')}>Presence</RailButton>
           <RailButton onClick={() => router.push('/reports')}>Reports</RailButton>
+          {/* Doctor and admin only — it is where the drug master comes from,
+              and the counter has no business rewriting what a strip is. */}
+          {session?.role === 'doctor' || session?.role === 'admin' ? (
+            <RailButton onClick={() => router.push('/import')}>Import</RailButton>
+          ) : null}
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
           <RailButton
