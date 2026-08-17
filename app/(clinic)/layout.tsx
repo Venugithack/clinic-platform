@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { currentSession, touch, type StaffSession } from '@/lib/auth';
+import { presencePing } from '@/lib/transitions/presence';
 import { CounterQueries } from '@/components/CounterQueries';
 
 export default function ClinicLayout({
@@ -41,6 +42,19 @@ export default function ClinicLayout({
     window.addEventListener('pointerdown', throttled);
     return () => window.removeEventListener('pointerdown', throttled);
   }, [session, router]);
+
+  // The heartbeat (PLAN.md §13.2). Every 30 seconds while a session is live;
+  // five minutes of silence and the public page stops claiming he is here. A
+  // failed ping is deliberately not surfaced — the consequence of missing one
+  // is an older "as of" on that page, which is the honest reading anyway.
+  useEffect(() => {
+    if (!session) return;
+
+    const ping = () => void presencePing().catch(() => {});
+    ping();
+    const timer = setInterval(ping, 30_000);
+    return () => clearInterval(timer);
+  }, [session]);
 
   if (session === undefined) return null;
   if (session === null) return null;

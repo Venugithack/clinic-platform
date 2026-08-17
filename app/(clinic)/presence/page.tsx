@@ -1,0 +1,345 @@
+'use client';
+
+/**
+ * The doctor's presence control. PLAN.md §13.2.
+ *
+ * Four buttons, big, in his window: In clinic · With a patient · Back by HH:MM ·
+ * Done for the day. One tap on the way out, which is the whole ask.
+ *
+ * The panel underneath is the part that earns trust. It shows **what a patient
+ * is being told right now**, which is not always what he last said — a tablet
+ * that has not pinged for six minutes reads `away` however firmly he tapped "in
+ * clinic" at nine. Showing both, side by side, is how he learns to believe the
+ * page rather than argue with it.
+ */
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Numpad } from '@/components/Numpad';
+import { clinicNow, presenceDetail, type ClinicNow, type PresenceDetail } from '@/lib/db/presence';
+import {
+  closeClinicToday,
+  reopenClinicToday,
+  setPresence,
+  type PresenceStatus,
+} from '@/lib/transitions/presence';
+import { currentSession } from '@/lib/auth';
+
+const WORDING: Record<string, string> = {
+  in_clinic: 'in the clinic',
+  in_consult: 'with a patient',
+  break: 'stepped out',
+  away: 'not in the clinic',
+  closed: 'the clinic is closed',
+};
+
+function asOf(at: string | null): string {
+  if (!at) return 'never';
+  const minutes = Math.floor((Date.now() - new Date(at).getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes === 1) return '1 minute ago';
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.floor(minutes / 60);
+  return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+}
+
+export default function PresencePage() {
+  const router = useRouter();
+  const [now, setNow] = useState<ClinicNow | null>(null);
+  const [rows, setRows] = useState<PresenceDetail[]>([]);
+  const [backBy, setBackBy] = useState<string | null>(null);
+  const [digits, setDigits] = useState('');
+  const [closing, setClosing] = useState(false);
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const session = currentSession();
+  const isDoctor = session?.role === 'doctor' || session?.role === 'admin';
+
+  const refresh = useCallback(() => {
+    void (async () => {
+      try {
+        setNow(await clinicNow());
+        setRows(await presenceDetail());
+        setError(null);
+      } catch (cause) {
+        setError((cause as Error).message);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    // The reading ages while he looks at it, so it is re-read rather than left
+    // to go quietly stale on screen.
+    const timer = setInterval(refresh, 30_000);
+    return () => clearInterval(timer);
+  }, [refresh]);
+
+  const set = async (status: PresenceStatus, until?: Date) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setPresence(status, until);
+      setNotice(`Patients now see: ${WORDING[status]}.`);
+      setBackBy(null);
+      setDigits('');
+      refresh();
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const backAt = () => {
+    // HHMM, tapped. A time picker on a tablet is four taps and a scroll.
+    const hh = Number(digits.slice(0, 2));
+    const mm = Number(digits.slice(2, 4));
+    const until = new Date();
+    until.setHours(hh, mm, 0, 0);
+    if (until.getTime() < Date.now()) until.setDate(until.getDate() + 1);
+    void set('break', until);
+  };
+
+  const mine = rows.find((row) => row.staff_id === session?.staffId);
+
+  return (
+    <ThreePane
+      context={
+        <div>
+          <h2 className="text-sm uppercase tracking-wide text-muted">
+            What patients see
+          </h2>
+
+          {now ? (
+            <>
+              <p className="mt-2 text-2xl">
+                {now.doctor_name} is {WORDING[now.status] ?? now.status}
+              </p>
+              {/* Never "available". A stale reading must not read as a promise. */}
+              <p className="tabular mt-1 text-sm text-muted">
+                as of {asOf(now.as_of)}
+              </p>
+              {now.break_until && now.status === 'break' ? (
+                <p className="mt-1 text-sm text-muted">
+                  back by{' '}
+                  {new Date(now.break_until).toLocaleTimeString('en-IN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </p>
+              ) : null}
+              {!now.clinic_open ? (
+                <p className="mt-3 rounded-lg bg-ink/5 p-3 text-sm">
+                  The clinic is closed right now, so the page says closed
+                  whatever this tablet is doing.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-2 text-muted">Loading…</p>
+          )}
+
+          {mine ? (
+            <p className="mt-6 text-sm text-muted">
+              You last said: {WORDING[mine.declared_status]} ·{' '}
+              {mine.device_label ?? 'unknown device'}
+              {mine.is_clinic_device === false ? ' (not a clinic device)' : ''}
+            </p>
+          ) : null}
+        </div>
+      }
+      rail={
+        <>
+          {isDoctor ? (
+            <>
+              <RailButton tone="primary" disabled={busy} onClick={() => void set('in_clinic')}>
+                In clinic
+              </RailButton>
+              <RailButton disabled={busy} onClick={() => void set('in_consult')}>
+                With a patient
+              </RailButton>
+              <RailButton
+                disabled={busy}
+                onClick={() => {
+                  setBackBy('open');
+                  setDigits('');
+                }}
+              >
+                Back by…
+              </RailButton>
+              <RailButton disabled={busy} onClick={() => void set('away')}>
+                Done for the day
+              </RailButton>
+            </>
+          ) : (
+            <p className="text-sm text-muted">
+              The doctor sets his own status. This screen shows what patients are
+              being told.
+            </p>
+          )}
+
+          <RailButton onClick={refresh}>Refresh</RailButton>
+          <div className="flex-1" />
+          <RailButton onClick={() => router.push(isDoctor ? '/queue' : '/counter')}>
+            Back
+          </RailButton>
+        </>
+      }
+    >
+      <h1 className="text-2xl font-semibold">Presence</h1>
+
+      {error ? (
+        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+      ) : null}
+      {notice ? (
+        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+          {notice}
+        </p>
+      ) : null}
+
+      {backBy ? (
+        <div className="mt-4 max-w-md rounded-xl border border-line bg-white p-4">
+          <p className="text-lg">Back by</p>
+          <p className="tabular mt-2 text-4xl font-medium">
+            {digits.padEnd(4, '–').replace(/(.{2})(.{2})/, '$1:$2')}
+          </p>
+          <div className="mt-4 w-64">
+            <Numpad
+              onDigit={(digit) => setDigits((c) => (c + digit).slice(0, 4))}
+              onBackspace={() => setDigits((c) => c.slice(0, -1))}
+            />
+          </div>
+          <div className="mt-4 flex gap-3">
+            <button
+              type="button"
+              disabled={busy || digits.length < 4}
+              onClick={backAt}
+              className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+            >
+              Tell patients
+            </button>
+            <button
+              type="button"
+              onClick={() => setBackBy(null)}
+              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* The unexpected closure — the one thing §13.3 says is worth a push. */}
+      {isDoctor ? (
+        <>
+          <h2 className="mt-8 text-lg font-medium">The whole day</h2>
+          {now && !now.clinic_open ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void reopenClinicToday()
+                  .then(() => {
+                    setNotice('Open again.');
+                    refresh();
+                  })
+                  .catch((cause: Error) => setError(cause.message))
+                  .finally(() => setBusy(false));
+              }}
+              className="mt-2 h-14 rounded-xl border border-ink px-6 font-medium active:bg-line"
+            >
+              Open the clinic again
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setClosing(true)}
+              className="mt-2 h-14 rounded-xl border border-danger px-6 font-medium text-danger active:bg-line"
+            >
+              Close the clinic today
+            </button>
+          )}
+
+          {closing ? (
+            <div className="mt-4 max-w-xl rounded-xl border border-danger bg-white p-4">
+              <label className="block text-sm text-muted" htmlFor="reason">
+                Why? Patients will be told this.
+              </label>
+              <input
+                id="reason"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                className="mt-1 h-14 w-full rounded-xl border border-line px-3 text-lg"
+              />
+              <button
+                type="button"
+                disabled={busy || reason.trim() === ''}
+                onClick={() => {
+                  setBusy(true);
+                  void closeClinicToday(reason)
+                    .then((affected) => {
+                      setNotice(
+                        affected === 0
+                          ? 'Closed. Nobody had an appointment today.'
+                          : `Closed. ${affected} patient${
+                              affected === 1 ? '' : 's'
+                            } already had an appointment today — they are the ones worth a message.`,
+                      );
+                      setClosing(false);
+                      setReason('');
+                      refresh();
+                    })
+                    .catch((cause: Error) => setError(cause.message))
+                    .finally(() => setBusy(false));
+                }}
+                className="mt-3 h-14 w-full rounded-xl border border-danger bg-danger font-medium text-white disabled:opacity-40"
+              >
+                Close today
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      <h2 className="mt-8 text-lg font-medium">Everyone</h2>
+      <table className="mt-2 w-full max-w-3xl">
+        <thead>
+          <tr className="border-b border-line text-left text-sm text-muted">
+            <th className="py-2">Who</th>
+            <th>Said</th>
+            <th>Patients are told</th>
+            <th>Last heard</th>
+            <th>Device</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.staff_id} className="border-b border-line">
+              <td className="py-3">{row.staff_name}</td>
+              <td className="text-muted">{WORDING[row.declared_status]}</td>
+              <td
+                className={
+                  row.declared_status !== row.effective_status ? 'text-danger' : ''
+                }
+              >
+                {WORDING[row.effective_status]}
+              </td>
+              <td className="tabular text-sm text-muted">
+                {asOf(row.last_heartbeat_at)}
+              </td>
+              <td className="text-sm text-muted">
+                {row.device_label ?? '—'}
+                {row.is_clinic_device === false ? ' · not in the clinic' : ''}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </ThreePane>
+  );
+}

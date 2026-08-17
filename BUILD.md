@@ -2,8 +2,9 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M5 built, 16 Aug 2026** — foundations, clinic core, the live link,
-inventory, billing with the till, and supplier purchasing. See §5–§10. `PLAN.md` §20 is still
+**Status: M0–M6 built, 16 Aug 2026** — foundations, clinic core, the live link,
+inventory, billing with the till, supplier purchasing, and presence. See
+§5–§11. `PLAN.md` §20 is still
 unsigned; §0 below lists what must be true before the clinic runs on this.
 
 Local-first, per `HOSTING.md` §1a: Supabase in Docker, Next on the LAN, both
@@ -748,3 +749,79 @@ missing is only the nudge, and until then the reorder list is where he looks.
 
 **M5 totals:** 20 migrations, 289 pgTAP assertions, 12 unit tests, 30 Playwright
 tests across seven specs, nothing skipped.
+
+---
+
+## 11. M6 status — presence and the public status page, built 16 Aug 2026
+
+**Built and green.** The gate: *"Doctor logs in → status live in 30s. Laptop
+shut → 'away' within 5 min. Closing time → 'closed' regardless of session."*
+
+### Presence is computed, never stored
+
+`PLAN.md` §13.1 lists four ways "logged in = he is there" lies, and all four are
+daily or weekly: he forgets to log out and goes home, he logs in from home to
+check something, the laptop sleeps, he steps out for lunch. Each one ends with a
+patient being told he is in the clinic when he is not — the failure that gets
+the app blamed.
+
+So the answer is derived on read, in this order:
+
+1. **Is the clinic open at all**, by its own hours and closures? If not, the
+   answer is `closed` no matter who is signed in or how recently.
+2. **Has the device pinged in the last five minutes?** If not, `away`.
+3. Only then, what he last said he was doing.
+
+Two things fall out of computing rather than storing, and both are the point. A
+laptop that sleeps at 19:58 reads `away` at 20:03 **with nothing scheduled**;
+and closing time cannot be missed by a cron that failed to fire, because there
+is no cron. The nightly job this feature would otherwise need does not exist,
+which on a free tier is worth as much as the correctness.
+
+| | |
+|---|---|
+| Migration | `20260816250100_presence.sql` |
+| Transitions | `presence_ping` · `set_presence` · `close_clinic_today` · `reopen_clinic_today` |
+| Screens | `/presence` (his control), `/now` (public, phone-first) |
+| Tests | 27 new pgTAP assertions, 3 new Playwright tests |
+
+### Three decisions
+
+**A heartbeat may wake `away` up; it may never overwrite something he said.**
+"Back by 14:30" surviving until 14:30 is the entire value of having tapped it,
+and a tablet left on the desk pinging every thirty seconds must not undo it.
+`presence.source` carries `auto` or `manual` and the ping respects it.
+
+**Only a clinic device may say he is in the clinic.** His laptop at home signs
+in perfectly well, sees everything he needs, and is refused `in_clinic` with
+`CL023`. The rule is expressed as the absence of a device row rather than as a
+check somebody has to remember to write: `app.current_device_id()` resolves from
+the PIN session, so a JWT-only caller has no device and therefore no clinic
+device. The seed now registers a third device — `Home laptop`, not a clinic
+device — so this path is exercised in development and in the browser.
+
+**The wording is the feature.** `/now` never says "available". Every reading is
+a sentence plus the time it was true: *"Dr Seed is in the clinic — as of 2
+minutes ago."* When the heartbeat is old the page says the clinic is open but it
+has not heard from his tablet, and to call before travelling. The Playwright
+test asserts the absence of the word "available", because that is the assertion
+pgTAP cannot make and the one that protects rule 6.
+
+### The public surface, stated plainly
+
+`clinic_now` is **the only object in this build `anon` may select**. It carries
+the clinic's name, the doctor's name, a status, an `as_of` and whether the
+clinic is open — all of which are already on the door. A pgTAP test signs in as
+`anon` and confirms that `presence` and `patients` both still refuse it, so the
+public page is not one join away from anything about a person.
+
+### What is deliberately still push, and still waiting
+
+§13.3 allows exactly one outbound message: `clinic_closed`, to patients who have
+an appointment today. `app.close_clinic_today` returns how many that is and the
+screen names the number, because that is the actionable half. **The sending is
+Cloud API and waits for M7** — as does §10.4's 8am order digest. Both are
+business-initiated messages, and both are blocked on the same paperwork.
+
+**M6 totals:** 21 migrations, 316 pgTAP assertions, 12 unit tests, 33 Playwright
+tests across eight specs, nothing skipped.

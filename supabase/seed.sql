@@ -17,7 +17,17 @@ insert into clinic (name, address, phone, timezone, open_hours, consult_fee) val
   '—',
   '+91 00000 00000',
   'Asia/Kolkata',
-  '{"mon":["09:30-13:00","17:00-20:30"],"sun":[]}'::jsonb,
+  -- Every day the clinic is open needs a key: a day with no hours recorded
+  -- reads as closed, which is the safe direction for a page patients drive to
+  -- a clinic on (PLAN.md §13). Sunday is present and empty on purpose — it
+  -- says "we thought about Sunday", which is not the same as forgetting it.
+  '{"mon":["09:30-13:00","17:00-20:30"],
+    "tue":["09:30-13:00","17:00-20:30"],
+    "wed":["09:30-13:00","17:00-20:30"],
+    "thu":["09:30-13:00","17:00-20:30"],
+    "fri":["09:30-13:00","17:00-20:30"],
+    "sat":["09:30-13:00"],
+    "sun":[]}'::jsonb,
   300
 );
 
@@ -36,10 +46,15 @@ insert into staff (id, name, role, reg_no, auth_user_id) values
 -- on purpose — this database holds no real patient.
 update staff set pin_hash = crypt('481920', gen_salt('bf', 12)), pin_set_at = now();
 
-insert into devices (label, device_token, idle_timeout_seconds, registered_by) values
+insert into devices (label, device_token, idle_timeout_seconds, is_clinic_device, registered_by) values
   -- 10 minutes in the cabin, 3 at the counter (TABLET.md §5).
-  ('Cabin tablet',   'seed-device-cabin',   600, '5eed0000-0000-0000-0000-000000000003'),
-  ('Counter tablet', 'seed-device-counter', 180, '5eed0000-0000-0000-0000-000000000003');
+  ('Cabin tablet',   'seed-device-cabin',   600, true,  '5eed0000-0000-0000-0000-000000000003'),
+  ('Counter tablet', 'seed-device-counter', 180, true,  '5eed0000-0000-0000-0000-000000000003'),
+  -- His laptop at home. It signs in perfectly well and can see the clinic; what
+  -- it cannot do is claim he is standing in it (PLAN.md §13.2). "Logs in from
+  -- home to check something" is a weekly event and one of the four ways a
+  -- presence built on sessions tells patients a lie.
+  ('Home laptop',    'seed-device-home',    600, false, '5eed0000-0000-0000-0000-000000000003');
 
 -- Reddy has no WhatsApp number on purpose. Half a real drug master arrives that
 -- way, and an order that cannot be sent is a refusal the build should meet in

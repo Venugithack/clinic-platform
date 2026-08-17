@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M5 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
-and `BUILD.md` §5–10. Seven documents describe the rest:
+**M0–M6 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
+and `BUILD.md` §5–11. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -31,13 +31,15 @@ supplier credits, and reordering that learns from measured lead times. **M4** �
 billing: gapless invoice numbers, A4 and 80mm bills, the day-book, and a cash
 till that is counted rather than assumed. **M5** — purchasing: one order per
 supplier, approved and sent by the doctor as a WhatsApp deep link, the reply
-recorded, and goods received against the order.
+recorded, and goods received against the order. **M6** — presence: a heartbeat,
+a hard close, and a public status page that never says "available".
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
   (clinic)/         queue · register walk-in · consult · Rx print · counter
                     receiving · stock-take · expiry · reorder
                     billing · bill print (A4 + 80mm) · day-book · orders
+                    presence
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -53,8 +55,8 @@ lib/
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       20 forward-only migrations — the schema
-  tests/            289 pgTAP assertions
+  migrations/       21 forward-only migrations — the schema
+  tests/            316 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -95,6 +97,12 @@ than a delivery — because a deep link is sent from the doctor's own phone and
 this app cannot see what happened next. That single design decision removes Meta
 business verification, a second number, template approval and opt-in machinery
 from the supplier channel entirely (`WHATSAPP.md` §0).
+
+**The M6 gate** is split on purpose: `A2_presence.sql` moves the clock to prove
+a sleeping laptop reads "away" and that closing time beats a live session, and
+`e2e/m6-presence.spec.ts` asserts the thing a database cannot — that the public
+page never says "available". Presence is computed on read, so no scheduled job
+exists to fail.
 
 **The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
 stock back *months before* it expires — 3 to 6, and it differs per supplier — so

@@ -81,8 +81,11 @@ test.describe('tablet layout rules', () => {
 
 test.describe('public surfaces', () => {
   test('the status page and the patient portal render', async ({ page }) => {
+    // Built for real in M6. It answers with no session, no device token and
+    // nothing in storage — a patient's phone, on a link off a card.
     await page.goto('/now');
-    await expect(page.getByRole('heading', { name: 'Clinic status' })).toBeVisible();
+    await expect(page.getByTestId('status')).toBeVisible();
+    await expect(page.getByTestId('as-of')).toBeVisible();
 
     await page.goto('/p');
     await expect(page.getByRole('heading', { name: 'Your visit' })).toBeVisible();
