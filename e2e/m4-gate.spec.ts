@@ -174,6 +174,11 @@ test('the day total matches its bills, and the till reconciles against a count',
   // What the drawer should hold: float, plus the cash it took, less the payout.
   // Read it rather than recompute it — then count ten rupees less than that, so
   // the assertion is about the variance and not about the arithmetic.
+  //
+  // Re-loaded first, deliberately: the payout above triggers a refresh whose
+  // fetches land after its confirmation appears, so reading the table straight
+  // away can catch the figure from before the payout.
+  await page.goto('/day-book');
   const expectedCell = page
     .locator('table')
     .first()

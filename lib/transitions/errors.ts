@@ -28,6 +28,7 @@ export type TransitionErrorCode =
   | 'TILL_ALREADY_OPEN'
   | 'NO_TILL_OPEN'
   | 'PAYMENT_MISMATCH'
+  | 'NO_WHATSAPP_NUMBER'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -52,6 +53,7 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   CL019: 'TILL_ALREADY_OPEN',
   CL020: 'NO_TILL_OPEN',
   CL021: 'PAYMENT_MISMATCH',
+  CL022: 'NO_WHATSAPP_NUMBER',
 };
 
 export class TransitionError extends Error {

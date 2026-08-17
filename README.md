@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M4 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
-and `BUILD.md` §5–9. Seven documents describe the rest:
+**M0–M5 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
+and `BUILD.md` §5–10. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -29,13 +29,15 @@ inventory, the centrepiece: goods receipt, barcodes, FEFO dispensing with
 scan-to-verify, the counter sale, the blind stock-take, expiry returns and
 supplier credits, and reordering that learns from measured lead times. **M4** —
 billing: gapless invoice numbers, A4 and 80mm bills, the day-book, and a cash
-till that is counted rather than assumed.
+till that is counted rather than assumed. **M5** — purchasing: one order per
+supplier, approved and sent by the doctor as a WhatsApp deep link, the reply
+recorded, and goods received against the order.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
   (clinic)/         queue · register walk-in · consult · Rx print · counter
                     receiving · stock-take · expiry · reorder
-                    billing · bill print (A4 + 80mm) · day-book
+                    billing · bill print (A4 + 80mm) · day-book · orders
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -47,10 +49,12 @@ lib/
                     LISTEN/NOTIFY — the HOSTING.md §7 swap, exercised on
                     every test run rather than asserted
   units/            base-unit conversion and costing (INVENTORY.md §1, §4)
+  whatsapp/         deep links — four lines, and the reason M5 needs no Meta
+                    account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       19 forward-only migrations — the schema
-  tests/            257 pgTAP assertions
+  migrations/       20 forward-only migrations — the schema
+  tests/            289 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -85,6 +89,12 @@ barcode scan stopping a pack that is not on the prescription.
 medicines, printed at both paper sizes with batch numbers intact; the day's
 total reconciled against the sum of its bills; and a drawer counted ten rupees
 short, recorded as ten rupees short.
+
+**The M5 gate** is `e2e/m5-gate.spec.ts`, and it asserts a `wa.me` link rather
+than a delivery — because a deep link is sent from the doctor's own phone and
+this app cannot see what happened next. That single design decision removes Meta
+business verification, a second number, template approval and opt-in machinery
+from the supplier channel entirely (`WHATSAPP.md` §0).
 
 **The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
 stock back *months before* it expires — 3 to 6, and it differs per supplier — so

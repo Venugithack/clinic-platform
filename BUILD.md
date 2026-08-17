@@ -2,8 +2,8 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M4 built, 16 Aug 2026** — foundations, clinic core, the live link,
-inventory, and billing with the till. See §5–§9. `PLAN.md` §20 is still
+**Status: M0–M5 built, 16 Aug 2026** — foundations, clinic core, the live link,
+inventory, billing with the till, and supplier purchasing. See §5–§10. `PLAN.md` §20 is still
 unsigned; §0 below lists what must be true before the clinic runs on this.
 
 Local-first, per `HOSTING.md` §1a: Supabase in Docker, Next on the LAN, both
@@ -662,3 +662,89 @@ alongside the A4 test.
 
 **M4 totals:** 19 migrations, 257 pgTAP assertions, 12 unit tests, 26 Playwright
 tests across six specs, nothing skipped.
+
+---
+
+## 10. M5 status — purchasing and the supplier send, built 16 Aug 2026
+
+**Built and green.** The gate from `PLAN.md` §8: *"Low stock drafts one PO per
+supplier; approve sends a template message; supplier's reply is captured; goods
+received against the PO create batches."* All four run in `e2e/m5-gate.spec.ts`.
+
+One word of that sentence changed, and it is the whole design.
+
+### It is a deep link, not a template
+
+`WHATSAPP.md` §0 settled this and M5 is where it pays. Meta's rules key on **who
+initiates** a conversation, not on how many messages there are. A Cloud API send
+— even one a day, even approved by a human first — is a business-initiated
+message, and it drags in business verification, a dedicated number,
+display-name approval, pre-approved templates, opt-in machinery and a published
+privacy policy. Opening `wa.me` on the doctor's own phone is a person typing to
+a contact and needs **none of it**, at ₹0, with commercial use explicitly
+permitted.
+
+What the clinic loses is nothing it was paying for. Knowing *what* to order and
+*when*, drafting one order per supplier, tracking the reply, tying goods to the
+order — all intact. Only the send button moved, out of this app and into his
+WhatsApp.
+
+### The two honesty problems that follow, and how they are answered
+
+**The app can never know the message was sent.** So `wa_messages.status` stops
+at `handed_off`. Not `sent`, not `delivered` — claiming an event nobody observed
+is exactly what rule 6 forbids, and the same rule that made presence render "as
+of" makes this stop short. The purchase order *does* move to `sent`, because
+that is the doctor asserting he sent it, which is a different and honest claim.
+
+**There is no inbound webhook.** So the supplier's reply is typed in by whoever
+read it. Worse than an API; much better than an order nobody is tracking, and it
+is what small clinics already do.
+
+Rule 5 — *every send is a row before a send* — is why the message is recorded
+inside the transition before the client is handed anything to open. If the
+tablet dies between the two, the record over-states rather than misses, which is
+the correct direction to fail in.
+
+| | |
+|---|---|
+| Migration | `20260816240100_purchasing.sql` |
+| Transitions | `set_po_lines` · `send_purchase_order` · `record_supplier_reply` · `cancel_purchase_order` · `receive_against_po` |
+| Screens | `/orders`, and `/receiving?po=…` prefilling from the order |
+| Tests | 32 new pgTAP assertions, 4 new Playwright tests |
+
+### Details worth keeping
+
+- **The number is assigned at the send, not at the draft.** A draft is internal
+  and often abandoned; numbering it burns references on orders that never
+  existed. Once it has gone to a supplier it keeps that number for good.
+- **Re-sending is a first-class act** — suppliers lose messages — but it must
+  not move `sent_at`, because `supplier_lead_time` measures sent → received and
+  a chase three days later would make the supplier look faster than they were.
+- **`receive_against_po` composes `app.receive_goods`** rather than duplicating
+  it. Packs become base units in exactly one place, and a goods receipt with no
+  purchase order at all stays valid, because that is how half the stock is
+  actually bought (§12.5).
+- **The seed now leaves Reddy Pharma without a WhatsApp number**, so the `CL022`
+  refusal is met in development rather than on the first day somebody needs
+  stock.
+
+### Two races found, and only one was a test's fault
+
+The expiry screen cleared the pharmacist's selection every time its three
+fetches landed, so a batch tapped while the screen was still loading silently
+un-selected itself — indistinguishable, on a tablet, from a button that does not
+work. The selection is now pruned to what still exists rather than reset. The
+second was the M4 gate reading a table before a refresh had landed, which is the
+test's problem and was fixed there.
+
+### Not built, and deliberately
+
+§10.4's step 2 — *"8am: one WhatsApp digest to him, 3 orders ready for
+approval"* — is a **business-initiated message to the doctor**, so it is the one
+piece of this milestone that does need the Cloud API and the paperwork. It waits
+for M7. Low-stock detection, drafting and approval all work without it; what is
+missing is only the nudge, and until then the reorder list is where he looks.
+
+**M5 totals:** 20 migrations, 289 pgTAP assertions, 12 unit tests, 30 Playwright
+tests across seven specs, nothing skipped.

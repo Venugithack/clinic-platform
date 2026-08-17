@@ -41,9 +41,12 @@ insert into devices (label, device_token, idle_timeout_seconds, registered_by) v
   ('Cabin tablet',   'seed-device-cabin',   600, '5eed0000-0000-0000-0000-000000000003'),
   ('Counter tablet', 'seed-device-counter', 180, '5eed0000-0000-0000-0000-000000000003');
 
+-- Reddy has no WhatsApp number on purpose. Half a real drug master arrives that
+-- way, and an order that cannot be sent is a refusal the build should meet in
+-- development rather than on the first day somebody needs stock (CL022).
 insert into suppliers (id, name, contact_name, whatsapp_number, lead_time_days, return_window_days) values
   ('50990000-0000-0000-0000-000000000001', 'Kumar Distributors', 'Kumar', '+919000000001', 2, 180),
-  ('50990000-0000-0000-0000-000000000002', 'Reddy Pharma',       'Reddy', '+919000000002', 4,  90);
+  ('50990000-0000-0000-0000-000000000002', 'Reddy Pharma',       'Reddy', null,            4,  90);
 
 -- Salt and strength are mandatory and structured — substitution is a lookup on
 -- (salt, strength, form), never a clinical inference (INVENTORY.md §7).

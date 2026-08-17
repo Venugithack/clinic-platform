@@ -81,3 +81,39 @@ export async function learnBarcode(
 
   if (error) throw toTransitionError(error);
 }
+
+/**
+ * The same receipt, tied to the order it came from (PLAN.md §12.5).
+ *
+ * Composes app.receive_goods rather than duplicating it, so packs still become
+ * base units in exactly one place — and a receipt with no purchase order stays
+ * perfectly valid, because that is how a small clinic buys half its stock.
+ */
+export async function receiveAgainstPo(
+  poId: string,
+  input: GoodsReceiptInput,
+): Promise<GoodsReceipt> {
+  const { data, error } = await appSchema().rpc('receive_against_po', {
+    p_po_id: poId,
+    p_lines: input.lines.map((line) => ({
+      drug_id: line.drugId,
+      batch_no: line.batchNo,
+      expiry: line.expiry,
+      units_per_strip: line.unitsPerStrip ?? null,
+      strips_per_box: line.stripsPerBox ?? null,
+      mrp: line.mrp,
+      mrp_basis: line.mrpBasis ?? null,
+      cost_per_base_unit: line.costPerBaseUnit,
+      qty_packs: line.qtyPacks,
+      pack_basis: line.packBasis ?? 'strip',
+      free_packs: line.freePacks ?? 0,
+    })),
+    p_invoice_no: input.invoiceNo ?? null,
+    p_invoice_date: input.invoiceDate ?? null,
+    p_awaiting_invoice: input.awaitingInvoice ?? false,
+    p_note: input.note ?? null,
+  });
+
+  if (error) throw toTransitionError(error);
+  return data as GoodsReceipt;
+}

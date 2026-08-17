@@ -24,8 +24,8 @@
  * to a per-unit cost in lib/units, which is the one place packs are allowed to
  * become base units.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Numpad } from '@/components/Numpad';
 import { ScanField } from '@/components/ScanField';
@@ -33,7 +33,13 @@ import { DrugSearch } from '@/components/DrugSearch';
 import { getDrug, type DrugRow } from '@/lib/db/drugs';
 import { lookupBarcode } from '@/lib/db/barcodes';
 import { activeSuppliers, type SupplierRow } from '@/lib/db/suppliers';
-import { learnBarcode, receiveGoods } from '@/lib/transitions/inventory';
+import { openOrders, orderLines, type OpenOrder, type OrderLine } from '@/lib/db/purchasing';
+import {
+  learnBarcode,
+  receiveAgainstPo,
+  receiveGoods,
+  type GoodsReceiptInput,
+} from '@/lib/transitions/inventory';
 import { packCostToBaseUnitCost, paiseToRupees, unitsInPack } from '@/lib/units';
 
 const MONTHS = [
@@ -58,9 +64,22 @@ interface DraftLine {
   stripsPerBox: number;
 }
 
+/**
+ * Suspense, because useSearchParams needs it: the `?po=` that arrives from the
+ * orders screen is what turns this into "receive against that order".
+ */
 export default function ReceivingPage() {
+  return (
+    <Suspense fallback={null}>
+      <Receiving />
+    </Suspense>
+  );
+}
+
+function Receiving() {
   const router = useRouter();
   const now = new Date();
+  const poId = useSearchParams().get('po');
 
   const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
   const [supplier, setSupplier] = useState<SupplierRow | null>(null);
@@ -80,6 +99,8 @@ export default function ReceivingPage() {
     cost: '',
   });
 
+  const [po, setPo] = useState<OpenOrder | null>(null);
+  const [poLines, setPoLines] = useState<OrderLine[]>([]);
   const [searching, setSearching] = useState(false);
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +113,47 @@ export default function ReceivingPage() {
       .then(setSuppliers)
       .catch((cause: Error) => setError(cause.message));
   }, []);
+
+  // Receiving against an order prefills everything the order already knows: the
+  // supplier, the drugs, and how much of each is still outstanding. Typing that
+  // twice is how a receipt ends up disagreeing with the order it answers.
+  useEffect(() => {
+    if (!poId) return;
+    void (async () => {
+      try {
+        const found = (await openOrders()).find((row) => row.po_id === poId) ?? null;
+        setPo(found);
+        setPoLines(await orderLines(poId));
+        if (found) {
+          setSuppliers((current) => {
+            const match = current.find((row) => row.id === found.supplier_id);
+            if (match) setSupplier(match);
+            return current;
+          });
+        }
+      } catch (cause) {
+        setError((cause as Error).message);
+      }
+    })();
+  }, [poId]);
+
+  const fromOrder = async (line: OrderLine) => {
+    const found = await getDrug(line.drug_id);
+    if (!found) return;
+    const ups = line.default_units_per_strip ?? 1;
+    setDrug(found);
+    setField('qty');
+    setValues({
+      qty: ups > 0 ? String(Math.ceil(line.outstanding_qty_base / ups)) : '',
+      free: '',
+      mrp: '',
+      // The expected cost from the order, in paise per strip — a starting point
+      // the invoice can correct, not a number anybody has to accept.
+      cost: line.expected_cost_per_base_unit
+        ? String(Math.round(Number(line.expected_cost_per_base_unit) * ups * 100))
+        : '',
+    });
+  };
 
   const resetLine = useCallback(() => {
     setDrug(null);
@@ -168,7 +230,7 @@ export default function ReceivingPage() {
     setBusy(true);
     setError(null);
     try {
-      const receipt = await receiveGoods({
+      const input: GoodsReceiptInput = {
         supplierId: supplier?.id,
         invoiceNo: invoiceNo.trim() || undefined,
         invoiceDate: new Date().toISOString().slice(0, 10),
@@ -191,7 +253,11 @@ export default function ReceivingPage() {
           packBasis: 'strip',
           freePacks: line.freePacks,
         })),
-      });
+      };
+
+      const receipt = poId
+        ? await receiveAgainstPo(poId, input)
+        : await receiveGoods(input);
 
       setPosted(true);
       setNotice(
@@ -248,6 +314,15 @@ export default function ReceivingPage() {
       context={
         <div>
           <h2 className="text-sm uppercase tracking-wide text-muted">Goods receipt</h2>
+
+          {po ? (
+            <p className="mt-2 rounded-lg bg-ink/5 p-3 text-sm">
+              Against {po.po_no ?? 'a draft order'} · {po.supplier_name}
+              <span className="tabular block text-muted">
+                {po.outstanding_qty_base} units still outstanding
+              </span>
+            </p>
+          ) : null}
 
           <p className="mt-3 text-sm text-muted">Supplier</p>
           <div className="mt-1 flex flex-col gap-2" role="group" aria-label="Supplier">
@@ -358,6 +433,44 @@ export default function ReceivingPage() {
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* What the order is still waiting for. Tapping a line starts it with the
+          quantity and the expected rate already filled in — the invoice
+          corrects both, and nothing here is binding. */}
+      {po && !drug ? (
+        <>
+          <h2 className="mt-6 text-lg font-medium">Still outstanding on this order</h2>
+          <ul className="mt-2 max-w-3xl">
+            {poLines
+              .filter((line) => line.outstanding_qty_base > 0)
+              .map((line) => (
+                <li key={line.po_line_id}>
+                  <button
+                    type="button"
+                    onClick={() => void fromOrder(line)}
+                    className="flex h-16 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-lg">
+                      {line.drug_name}{' '}
+                      <span className="text-sm text-muted">{line.strength}</span>
+                    </span>
+                    <span className="tabular shrink-0 text-sm text-muted">
+                      {line.received_qty_base} of {line.ordered_qty_base} in
+                    </span>
+                    <span className="tabular w-20 shrink-0 text-right text-danger">
+                      {line.outstanding_qty_base}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            {poLines.every((line) => line.outstanding_qty_base === 0) ? (
+              <li className="py-3 text-muted">
+                Everything ordered has arrived.
+              </li>
+            ) : null}
+          </ul>
+        </>
       ) : null}
 
       {!drug ? (

@@ -67,10 +67,26 @@ export default function ExpiryPage() {
   const refresh = useCallback(() => {
     void (async () => {
       try {
-        setExpiring(await expiringSoon());
-        setExpired(await expiredStock());
+        const soon = await expiringSoon();
+        const gone = await expiredStock();
+        setExpiring(soon);
+        setExpired(gone);
         setCredits(await openCredits());
-        setSelected({});
+
+        // Prune the selection rather than clearing it. Three fetches land after
+        // the screen is already usable, and a blanket reset silently discards a
+        // tap made while they were in flight — which on a tablet looks exactly
+        // like the button not working. Batches that have gone (returned, written
+        // off) drop out; everything else the pharmacist chose survives.
+        const alive = new Set([
+          ...soon.map((row) => row.batch_id),
+          ...gone.map((row) => row.batch_id),
+        ]);
+        setSelected((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([batchId]) => alive.has(batchId)),
+          ),
+        );
         setError(null);
       } catch (cause) {
         setError((cause as Error).message);

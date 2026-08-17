@@ -220,12 +220,19 @@ select is(
   'and everything this created is a draft'
 );
 
+-- Updated in M5, which added the send. The claim being guarded was never "no
+-- function may touch a purchase order" — it is that the function turning
+-- SUGGESTIONS into orders has no path to sending one. Sending is a separate
+-- transition and it demands the doctor; app.send_purchase_order's own refusal
+-- is asserted in A1_purchasing.sql.
 select is(
   (select count(*)::int from pg_proc p
    join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'app' and p.prosrc like '%purchase_orders%'),
-  1,
-  'exactly one transition touches purchase orders at all, and it only ever creates drafts — M5 adds sending, and it will need a human (rule 4)'
+   where n.nspname = 'app'
+     and p.proname = 'draft_purchase_orders'
+     and p.prosrc like '%''sent''%'),
+  0,
+  'nothing in the drafting path can send an order — that is a second, deliberate act by a person (rule 4)'
 );
 
 select results_eq(
