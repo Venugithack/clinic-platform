@@ -2,11 +2,11 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6, M8, M9 and M11a–d built, 17 Aug 2026** — foundations, clinic
+**Status: M0–M6, M8, M9 and M11 built, 17 Aug 2026** — foundations, clinic
 core, the live link, inventory, billing with the till, supplier purchasing,
-presence, the legal registers, hardening, and the go-live tooling: the drug
-master import, settings, staff and device administration, and the two
-correction screens M4 and M8 implied. See §5–§17. **M7 (patient WhatsApp) is deferred at the client's request** — the
+presence, the legal registers, hardening, and the whole of the go-live
+tooling: drug master, settings, staff and devices, corrections, and opening
+stock. See §5–§18. **Every line of `PLAN.md` §16 that is code is now built.** **M7 (patient WhatsApp) is deferred at the client's request** — the
 doctor has asked to leave patient messaging to a later phase, and it is the one
 milestone that could not start on the developer's side anyway. `PLAN.md` §20 is
 still unsigned; §0 below lists what must be true before the clinic runs on
@@ -1348,3 +1348,113 @@ Playwright tests across sixteen specs.
 Everything else on the go-live checklist that is code is now built. What
 remains is `BUILD.md` §1.3 (LAN HTTPS, the tablets, the printers) and M10 — the
 parallel run — and both of those happen in the clinic.
+
+---
+
+## 18. M11e status — opening stock, built 17 Aug 2026
+
+The last line of go-live tooling, and the one that decides whether every stock
+number in the system is right or quietly wrong from the first morning: the
+shelf already holds four hundred batches nobody entered, each with a batch
+number, an expiry, a cost and an MRP.
+
+`/import` now has two tabs, numbered, because the order is not a preference —
+opening stock names drugs, so a stock file loaded first is a file where every
+row is an error.
+
+### It goes through `app.receive_goods`, not around it
+
+Opening stock is a delivery that happened before the system existed, and
+everything the goods receipt already does is what opening stock needs:
+pack-to-base-unit conversion at the one boundary, the past-expiry refusal, the
+ledger row that makes `qty_base_on_hand` a cache rather than a claim (rule 3),
+and a GRN the purchase register can show.
+
+A second path writing `stock_batches` directly would have been shorter and it
+would have been a second place for the ledger to drift — and drift in the
+**opening balance** is drift nobody ever finds, because there is nothing to
+reconcile it against.
+
+One goods receipt per supplier, per invoice. Per supplier is not bookkeeping
+tidiness: `stock_batches.supplier_id` comes from the receipt, and a batch that
+does not know who supplied it can never be returned to them (INVENTORY.md §6).
+
+### The one refusal that matters
+
+**A batch already on the shelf is refused, by name.** `receive_goods` *adds* to
+an existing batch, which is exactly right for a real delivery and catastrophic
+here: load the opening file twice and the shelf silently doubles. Nothing else
+in the system would look unusual, and the first person to notice would be doing
+a stock-take three months later, unable to explain it.
+
+Opening stock is by definition stock the system does not have yet, so that is
+what the transition checks — including the same batch appearing twice inside
+one file, which is the same mistake made faster.
+
+### The file says what its numbers mean
+
+A quantity is in strips, boxes or loose units, and so is a cost, and **the two
+can differ on the same row** — a distributor quotes a rate per strip and counts
+in boxes. Getting it wrong is a 10× or 150× error in either the shelf or its
+valuation, so each is declared per row, defaulting to `strip`.
+
+The client-side mapping refuses to be clever about it: `strips`, `Strips of
+15`, `tab`, `pcs` all resolve, and **anything it cannot place is passed through
+untouched so the database refuses it by name.** Quietly defaulting an
+unrecognised unit to `strip` would turn a typo into a 15× error in the shelf,
+which is the single most expensive thing that module could do.
+
+### The number the preview exists for
+
+Not the row count. **The whole shelf, at cost.** A doctor who knows his stock
+is worth about four lakh spots a misdeclared cost basis at forty lakh
+instantly — faster than any per-row check could tell him, and it is the only
+check that catches a file where every row is individually plausible.
+
+It shows what will be *stored*, not what the invoice adds up to. A box at ₹170
+over 150 tablets is ₹1.1333 a tablet at the four decimal places the batch
+keeps, so the preview says ₹1,029.99 where the invoice says ₹1,030.00. A
+preview that disagreed with the stock valuation screen five minutes later would
+read as a bug; one paisa is not the error this figure exists to catch.
+
+### The defect this milestone found, which was not in this milestone
+
+The full suite failed once on `m4-gate`, in a run of everything rather than
+that file alone: *"cash cannot be taken into a drawer nobody has opened"*,
+asserting a refusal that was not on screen.
+
+The refusal was real. It had been **erased**. Every screen's `refresh()`
+cleared the error on completion, and raising a bill fires a refresh — so a
+refusal raised while that refresh was still in flight vanished the moment it
+landed, leaving a screen that had simply not done what was asked. Under load
+the window was wide enough to fail a test; at a counter it is wide enough to
+make somebody tap Cash twice.
+
+**A read landing is not evidence that the last write succeeded.** The rule now
+is that a read clears the error when it *starts*, never when it finishes. That
+is fourteen screens, and the worst of them was the counter, which refreshes on
+every realtime event — a refusal the pharmacist was reading could be erased by
+a prescription arriving at the other tablet.
+
+`e2e/m4-gate.spec.ts` holds it now, by delaying the refresh's first read and
+asserting the refusal survives it. Reverting the fix fails that test, which is
+the only way to know a regression test is one.
+
+**M11e totals:** 29 migrations, 472 pgTAP assertions, 21 unit tests, 59
+Playwright tests across seventeen specs.
+
+### M11 is finished
+
+| | |
+|---|---|
+| M11a | drug master and supplier import |
+| M11b | clinic settings |
+| M11c | staff and device administration |
+| M11d | patient corrections and bill cancellation |
+| M11e | opening stock |
+
+Everything on `PLAN.md` §16's go-live checklist that is code is built. What is
+left is §1.3 — LAN HTTPS, the root CA on both tablets, PWA install, the
+printer's Android print service plugin, one real prescription printed and one
+real bill on each paper size — and M10, the parallel run. Both happen in the
+clinic.

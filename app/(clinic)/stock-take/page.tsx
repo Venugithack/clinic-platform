@@ -50,6 +50,10 @@ export default function StockTakePage() {
   const canApprove = session?.role === 'doctor' || session?.role === 'admin';
 
   const refresh = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       try {
         const open = await currentStockTake();
@@ -62,7 +66,6 @@ export default function StockTakePage() {
           setCounted([]);
           setRows([]);
         }
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       }

@@ -30,11 +30,12 @@ export default function QueuePage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
+    // Cleared before the read, never after it. A read landing is not evidence
+    // that the last WRITE succeeded, and clearing on completion erased a
+    // refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void todaysQueue()
-      .then((rows) => {
-        setQueue(rows);
-        setError(null);
-      })
+      .then(setQueue)
       .catch((cause: Error) => setError(cause.message));
   }, []);
 

@@ -143,7 +143,7 @@ select is(
    where n.nspname = 'app' and not p.prosecdef
      and p.proname not in ('touch_updated_at', 'refuse_mutation', 'changed_fields',
                            'units_in_pack', 'month_end', 'financial_year',
-                           'notify_change', 'clinic_day')),
+                           'notify_change', 'clinic_day', 'parse_expiry')),
   0,
   'every transition runs as definer; the exceptions are pure helpers that touch no table'
 );

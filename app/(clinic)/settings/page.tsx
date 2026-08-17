@@ -117,12 +117,15 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       try {
         const row = await clinicRow();
         setExists(row !== null);
         setForm(row ? toForm(row) : EMPTY);
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       }

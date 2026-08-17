@@ -67,13 +67,16 @@ export default function BillingPage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       try {
         setSettings(await clinicSettings());
         setTill(await readOpenTill());
         setUnbilled(await unbilledDispenses());
         setBills(await billsToday());
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       }

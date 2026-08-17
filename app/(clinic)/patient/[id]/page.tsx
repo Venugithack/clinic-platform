@@ -55,6 +55,10 @@ export default function PatientPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       try {
         const row = await getPatient(id);
@@ -70,7 +74,6 @@ export default function PatientPage() {
         setAddress(row.address ?? '');
         setAllergies(row.allergies ?? '');
         setVisits(await recentVisits(id));
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       }

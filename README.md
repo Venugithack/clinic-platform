@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M6, M8, M9 and M11a–d are built** (17 Aug 2026) — see
-[What is built](#what-is-built) below, and `BUILD.md` §5–17. Seven documents describe the rest:
+**M0–M6, M8, M9 and M11 are built** (17 Aug 2026) — see
+[What is built](#what-is-built) below, and `BUILD.md` §5–18. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -43,7 +43,9 @@ the licence numbers, the GSTIN and the opening hours, out of psql and onto a
 screen. **M11c** — people and tablets: the new pharmacist who starts on Monday,
 and the tablet left in an auto-rickshaw. **M11d** — the two corrections M4 and
 M8 implied and never built: filling in the address the H1 register is missing,
-and cancelling a bill made out to the wrong patient. **M7** (patient WhatsApp and the
+and cancelling a bill made out to the wrong patient. **M11e** — opening stock:
+four hundred batches onto the shelf through goods receipt, valued before they
+are committed. **M7** (patient WhatsApp and the
 patient portal) is deferred at the client's request.
 
 ```
@@ -71,8 +73,8 @@ lib/
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       28 forward-only migrations — the schema
-  tests/            440 pgTAP assertions
+  migrations/       29 forward-only migrations — the schema
+  tests/            472 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -126,6 +128,21 @@ the six columns the rule names — and its first code unit asserted to be a BOM,
 because Excel on Windows reads UTF-8 without one as Latin-1 and turns every
 Indian name into mojibake. M8 adds **no transitions at all**: every column it
 needed was already in the ledger.
+
+**The M11e refusal** is the one that looks like an inconvenience and is not: a
+batch already on the shelf is rejected by name, because `receive_goods` *adds*
+to an existing batch — right for a real delivery, catastrophic for an opening
+balance. Load the file twice without it and the shelf silently doubles, with
+nothing else in the system looking unusual, and the first person to notice is
+doing a stock-take three months later.
+
+**The bug M11e found while running the suite** was in code two milestones old:
+every screen's `refresh()` cleared the error banner *on completion*, so a
+refusal raised while a background read was in flight was erased the moment it
+landed. A read landing is not evidence that the last write succeeded. Errors
+are now cleared when a read starts, never when it finishes — across fourteen
+screens, the worst of them the counter, which refreshes on every realtime
+event.
 
 **The M11d lesson** is smaller and worth stating: a flag nobody can act on is a
 flag nobody reads, and a transition no screen calls is a feature the clinic
@@ -183,11 +200,9 @@ printer has not been bought yet** (§18 Q9), so that layout has never met a
 thermal printer. All of it happens in the clinic; `scripts/lan-https.sh` is the
 runbook and carries the checklist.
 
-**Still to build:** the opening-stock import. M11a loads drugs and suppliers;
-stock is batches — batch number, expiry, cost, MRP, pack config — and it
-belongs behind goods receipt rather than a second copy of the ledger write.
-Everything else on the go-live checklist that is code is built (`BUILD.md`
-§14–17).
+**Everything on the go-live checklist that is code is built** (`BUILD.md`
+§14–18). What remains is the clinic itself: §1.3 above, and M10's parallel
+run.
 
 Build continues after `PLAN.md` §20 is signed off.
 

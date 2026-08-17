@@ -159,6 +159,10 @@ export default function ReportsPage() {
   const columns = register?.columns ?? TRACE_COLUMNS;
 
   const load = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       setBusy(true);
       try {
@@ -167,7 +171,6 @@ export default function ReportsPage() {
         } else {
           setRows(await REGISTERS[tab].load(range.from, range.to));
         }
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       } finally {

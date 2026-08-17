@@ -35,11 +35,15 @@ export default function CounterPage() {
   const [asOf, setAsOf] = useState<Date | null>(null);
 
   const refresh = useCallback(() => {
+    // Cleared before the read, never after it — and this screen is the reason
+    // the rule matters most: it refreshes on every realtime event, so a
+    // refusal the pharmacist is reading can be erased by a prescription
+    // arriving at the next tablet (M11e).
+    setError(null);
     void pharmacyQueue()
       .then((rows) => {
         setQueue(rows);
         setAsOf(new Date());
-        setError(null);
       })
       .catch((cause: Error) => setError(cause.message));
   }, []);

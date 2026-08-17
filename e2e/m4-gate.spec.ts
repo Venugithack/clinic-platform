@@ -75,6 +75,45 @@ test('cash cannot be taken into a drawer nobody has opened', async ({ page }) =>
   await expect(page.getByText(/settled — ₹44\.00 by card/)).toBeVisible();
 });
 
+/**
+ * Found by M11e, in a run of the whole suite rather than this file alone: the
+ * refusal above is real, and it could be erased before anybody read it.
+ *
+ * Raising a bill fires a background refresh. That refresh used to clear the
+ * error on completion — so a refusal raised while it was still in flight
+ * vanished the moment it landed, leaving a screen that had simply not done
+ * what the pharmacist asked. Under load the window was wide enough to fail the
+ * test; at a counter it is wide enough to make somebody tap Cash twice.
+ *
+ * The rule now is that a read clears the error when it STARTS, never when it
+ * finishes: a read landing says nothing about whether the last write worked.
+ */
+test('a refusal is not erased by a refresh landing behind it', async ({ page }) => {
+  await signIn(page, 'seed-device-counter', 'Counter');
+  await sell(page, [['Cetzine', '1 strip']]);
+  await page.goto('/billing');
+
+  // Hold the refresh open. Its first read is the clinic settings, and the rest
+  // of it is sequential behind that one.
+  await page.route('**/rest/v1/clinic?*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+
+  await page.getByRole('button', { name: /Counter sale/ }).first().click();
+  await page.getByRole('button', { name: 'Raise bill' }).click();
+  await page.getByRole('button', { name: 'Cash', exact: true }).click();
+
+  const refusal = page.getByText(/no till is open/i);
+  await expect(refusal).toBeVisible();
+
+  // The held read lands a second and a half in, and the three behind it follow.
+  // A fixed wait is the right tool here: the assertion is that something does
+  // NOT happen, and there is no event to wait for when it works.
+  await page.waitForTimeout(3000);
+  await expect(refusal).toBeVisible();
+});
+
 test('a bill for a consult and medicines across two batches, and it prints', async ({
   page,
 }) => {

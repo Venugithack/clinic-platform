@@ -76,6 +76,10 @@ export default function CounterPrescriptionPage() {
   );
 
   const refresh = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       try {
         const [queueEntry, rx, qs] = await Promise.all([
@@ -108,7 +112,6 @@ export default function CounterPrescriptionPage() {
           }
           setAllocation(plan);
         }
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       }

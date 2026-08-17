@@ -65,6 +65,10 @@ export default function OrdersPage() {
 
   const refresh = useCallback(
     (keep?: string) => {
+      // Cleared before the read, never after it. A read landing is not evidence
+      // that the last WRITE succeeded, and clearing on completion erased a
+      // refusal somebody was in the middle of reading (M11e).
+      setError(null);
       void (async () => {
         try {
           const rows = await openOrders();
@@ -78,7 +82,6 @@ export default function OrdersPage() {
             setLines([]);
             setMessages([]);
           }
-          setError(null);
         } catch (cause) {
           setError((cause as Error).message);
         }

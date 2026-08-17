@@ -85,11 +85,14 @@ export default function AdminPage() {
   const [issued, setIssued] = useState<RegisteredDevice | null>(null);
 
   const refresh = useCallback(() => {
+    // Cleared before the reads, never after them. A read landing is not
+    // evidence that the last WRITE succeeded, and clearing on completion
+    // erased a refusal somebody was in the middle of reading (M11e).
+    setError(null);
     void (async () => {
       try {
         setStaff(await allStaff());
         setDevices(await allDevices());
-        setError(null);
       } catch (cause) {
         setError((cause as Error).message);
       }
