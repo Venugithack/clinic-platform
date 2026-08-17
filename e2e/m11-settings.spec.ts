@@ -20,6 +20,17 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
+/**
+ * A reload on this screen is not "the page is there" — the form is empty until
+ * the clinic row comes back, and an assertion made before that reads an empty
+ * box as a wiped field. Waiting for a value the seed guarantees turns a flaky
+ * timing failure into a proper wait.
+ */
+async function reloaded(page: Page) {
+  await page.reload();
+  await expect(page.getByLabel('Clinic name')).toHaveValue('Seed Clinic');
+}
+
 async function signIn(page: Page, device: string, staffName: string) {
   await page.addInitScript(
     ([key, token]) => window.localStorage.setItem(key, token),
@@ -54,7 +65,7 @@ test('the details that print on a bill are typed once and kept', async ({ page }
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByTestId('settings-saved')).toBeVisible();
 
-  await page.reload();
+  await reloaded(page);
   await expect(page.getByLabel('Phone')).toHaveValue('+91 90000 12345');
   await expect(page.getByLabel('Drug licence number')).toHaveValue('AP/KDP/20B/1234');
   await expect(page.getByLabel('Doctor registration number')).toHaveValue('APMC-44321');
@@ -73,7 +84,7 @@ test('a GSTIN that is one character short is refused before it reaches a bill', 
   await expect(page.getByText(/does not look like a GSTIN/)).toBeVisible();
 
   // And the refusal did not take the rest of the form with it.
-  await page.reload();
+  await reloaded(page);
   await expect(page.getByLabel('GSTIN')).toHaveValue('37ABCDE1234F1Z5');
 });
 
@@ -113,7 +124,7 @@ test('the hours the doctor keeps reach the public page', async ({ page }) => {
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByTestId('settings-saved')).toBeVisible();
 
-  await page.reload();
+  await reloaded(page);
   await expect(page.getByLabel('Sunday')).toHaveValue('');
   await expect(page.getByLabel('Monday')).toHaveValue('00:00-23:59');
 

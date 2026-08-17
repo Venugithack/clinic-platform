@@ -108,6 +108,9 @@ export default function QueuePage() {
             <>
               <RailButton onClick={() => router.push('/import')}>Import</RailButton>
               <RailButton onClick={() => router.push('/settings')}>Settings</RailButton>
+              {session.role === 'admin' ? (
+                <RailButton onClick={() => router.push('/admin')}>People</RailButton>
+              ) : null}
             </>
           ) : null}
           <RailButton onClick={refresh}>Refresh</RailButton>

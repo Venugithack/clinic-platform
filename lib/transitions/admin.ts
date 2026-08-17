@@ -1,0 +1,114 @@
+/**
+ * Staff and devices. PLAN.md §16, TABLET.md §5.
+ *
+ * Both were `psql` until M11c: "the new pharmacist starts on Monday" and "the
+ * counter tablet was left in an auto-rickshaw".
+ */
+import { appSchema } from '@/lib/db';
+import type { StaffRole } from '@/lib/db/admin';
+import { toTransitionError } from './errors';
+
+export type { StaffRole } from '@/lib/db/admin';
+
+export interface NewStaff {
+  name: string;
+  role: StaffRole;
+  /** Exactly six digits. It is not optional — see the transition's comment. */
+  pin: string;
+  phone?: string;
+  regNo?: string;
+}
+
+export interface StaffRow {
+  id: string;
+  name: string;
+  role: StaffRole;
+  phone: string | null;
+  reg_no: string | null;
+  active: boolean;
+  pin_set_at: string | null;
+}
+
+export async function addStaff(input: NewStaff): Promise<StaffRow> {
+  const { data, error } = await appSchema().rpc('add_staff', {
+    p_name: input.name,
+    p_role: input.role,
+    p_pin: input.pin,
+    p_phone: input.phone ?? null,
+    p_reg_no: input.regNo ?? null,
+  });
+
+  if (error) throw toTransitionError(error);
+  return data as StaffRow;
+}
+
+export async function updateStaff(
+  staffId: string,
+  changes: {
+    name?: string;
+    role?: StaffRole;
+    phone?: string;
+    regNo?: string;
+    active?: boolean;
+  },
+): Promise<StaffRow> {
+  const { data, error } = await appSchema().rpc('update_staff', {
+    p_staff_id: staffId,
+    p_name: changes.name ?? null,
+    p_role: changes.role ?? null,
+    p_phone: changes.phone ?? null,
+    p_reg_no: changes.regNo ?? null,
+    p_active: changes.active ?? null,
+  });
+
+  if (error) throw toTransitionError(error);
+  return data as StaffRow;
+}
+
+export async function setStaffPin(staffId: string, pin: string): Promise<void> {
+  const { error } = await appSchema().rpc('set_staff_pin', {
+    p_staff_id: staffId,
+    p_pin: pin,
+  });
+
+  if (error) throw toTransitionError(error);
+}
+
+export interface RegisteredDevice {
+  id: string;
+  label: string;
+  /**
+   * Shown once and never again.
+   *
+   * There is no read path back to it in this build's UI, deliberately: the
+   * admin carries it to the new tablet and types it in, and a token that is
+   * displayable forever is a token that is photographed once.
+   */
+  device_token: string;
+  idle_timeout_seconds: number;
+}
+
+export async function registerDevice(
+  label: string,
+  isClinicDevice = true,
+  idleTimeoutSeconds?: number,
+): Promise<RegisteredDevice> {
+  const { data, error } = await appSchema().rpc('register_device', {
+    p_label: label,
+    p_is_clinic_device: isClinicDevice,
+    p_idle_timeout_seconds: idleTimeoutSeconds ?? null,
+  });
+
+  if (error) throw toTransitionError(error);
+  return data as RegisteredDevice;
+}
+
+/** Returns how many live sessions were ended along with the registration. */
+export async function revokeDevice(deviceId: string): Promise<number> {
+  const { data, error } = await appSchema().rpc('revoke_device', {
+    p_device_id: deviceId,
+  });
+
+  if (error) throw toTransitionError(error);
+  return Number(data);
+}

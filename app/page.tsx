@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Numpad } from '@/components/Numpad';
-import { currentSession, deviceToken, unlock, type StaffSession } from '@/lib/auth';
+import {
+  currentSession,
+  deviceToken,
+  registerDeviceLocally,
+  unlock,
+  type StaffSession,
+} from '@/lib/auth';
 
 /**
  * The lock screen. TABLET.md §5.
@@ -31,6 +37,7 @@ export default function LockScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [registered, setRegistered] = useState(true);
+  const [code, setCode] = useState('');
 
   useEffect(() => {
     setSession(currentSession());
@@ -76,6 +83,35 @@ export default function LockScreen() {
           Ask the administrator to register it before signing in. A PIN alone is
           useless on an unregistered device.
         </p>
+
+        {/* The other half of the admin screen's "register a tablet". The code
+            is shown there once and typed here once, and after that this screen
+            is never seen again on this device. It is not verified on the way
+            in: a wrong code fails at the first unlock, saying exactly that. */}
+        <label className="mt-8 w-full max-w-md">
+          <span className="block text-sm text-muted">
+            Registration code, from the administrator
+          </span>
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value.trim())}
+            aria-label="Registration code"
+            spellCheck={false}
+            className="tabular mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 font-mono"
+          />
+        </label>
+
+        <button
+          type="button"
+          disabled={code.length < 16}
+          onClick={() => {
+            registerDeviceLocally(code);
+            setRegistered(true);
+          }}
+          className="mt-4 h-14 w-full max-w-md rounded-xl border border-ink bg-ink text-lg font-medium text-white disabled:opacity-40"
+        >
+          Register this tablet
+        </button>
       </Centered>
     );
   }

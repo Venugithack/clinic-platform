@@ -26,8 +26,13 @@ select * from no_plan();
 --                                           ones that DO — signing an Rx — are
 --                                           still transitions.
 --   drugs, suppliers                        master data. Same argument.
---   devices                                 registration, and the RLS policy
---                                           below narrows it to an admin.
+--
+-- `devices` was on this list until M11c. Registration was a plain INSERT and
+-- the admin-only policy made that defensible — but a device token invented by
+-- the browser is only as good as the browser's random source, and revoking a
+-- tablet has to end its live sessions in the same transaction as it sets
+-- `revoked_at`. Both are arguments for a transition, so devices went behind
+-- `app.register_device` and `app.revoke_device` and this list got shorter.
 --
 -- `appointments` is NOT on the list, and that surprised the author of this file
 -- when the review was first run. Booking one allocates a token under an
@@ -47,8 +52,8 @@ select set_eq(
        and table_schema = 'public'
        and privilege_type in ('INSERT', 'UPDATE', 'DELETE') $$,
   $$ values ('patients'), ('encounters'), ('prescriptions'),
-            ('vitals'), ('drugs'), ('suppliers'), ('devices') $$,
-  'exactly seven tables are directly writable, and every other state change in the build goes through a transition (rule 2)'
+            ('vitals'), ('drugs'), ('suppliers') $$,
+  'exactly six tables are directly writable, and every other state change in the build goes through a transition (rule 2)'
 );
 
 select is(
@@ -101,19 +106,28 @@ select set_eq(
 );
 
 -- ---------------------------------------------------------------------------
--- 4. Device registration is an admin act.
+-- 4. Device registration and staff administration are admin acts.
 --
--- `devices` is writable above, which is only safe because the policy narrows
--- it. A device row is what lets a PIN unlock the app at all, so a counter
+-- A device row is what lets a PIN unlock the app at all, so a counter
 -- assistant able to register one is a counter assistant able to take the
--- clinic home.
+-- clinic home. Since M11c neither table takes a direct write; the guard is in
+-- the transition, and A8_admin.sql drives it.
 -- ---------------------------------------------------------------------------
 select is(
   (select count(*)::int from pg_policy
-   where polrelid = 'devices'::regclass
-     and pg_get_expr(polwithcheck, polrelid) like '%admin%'),
-  2,
-  'a device can only be registered or changed by an admin, and the policy says so rather than a screen'
+   where polrelid in ('devices'::regclass, 'staff'::regclass)
+     and polcmd <> 'r'),
+  0,
+  'no write policy survives on devices or staff, because there is no write grant left for one to narrow'
+);
+
+select is(
+  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'app'
+     and p.proname in ('add_staff', 'update_staff', 'register_device', 'revoke_device')
+     and p.prosecdef),
+  4,
+  'and the four transitions that replaced those grants all run as definer'
 );
 
 -- ---------------------------------------------------------------------------

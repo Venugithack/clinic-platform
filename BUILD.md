@@ -2,10 +2,10 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6, M8, M9, M11a and M11b built, 17 Aug 2026** — foundations,
-clinic core, the live link, inventory, billing with the till, supplier
-purchasing, presence, the legal registers, hardening, the drug master import
-and the settings screen. See §5–§15. **M7 (patient WhatsApp) is deferred at the client's request** — the
+**Status: M0–M6, M8, M9 and M11a–c built, 17 Aug 2026** — foundations, clinic
+core, the live link, inventory, billing with the till, supplier purchasing,
+presence, the legal registers, hardening, the drug master import, the settings
+screen, and staff and device administration. See §5–§16. **M7 (patient WhatsApp) is deferred at the client's request** — the
 doctor has asked to leave patient messaging to a later phase, and it is the one
 milestone that could not start on the developer's side anyway. `PLAN.md` §20 is
 still unsigned; §0 below lists what must be true before the clinic runs on
@@ -1182,3 +1182,85 @@ naive local time before giving it a zone.
 
 **M11b totals:** 26 migrations, 401 pgTAP assertions, 21 unit tests, 47
 Playwright tests across thirteen specs.
+
+---
+
+## 16. M11c status — staff and device admin, built 17 Aug 2026
+
+`app.set_staff_pin` and an admin-only device policy have existed since M0 with
+nothing in front of them. So the two most ordinary events in a clinic's year —
+*the new pharmacist starts on Monday* and *the counter tablet was left in an
+auto-rickshaw* — were a developer with `psql`.
+
+`/admin`, admin only. Four transitions: `add_staff`, `update_staff`,
+`register_device`, `revoke_device`. CL027.
+
+### The last admin cannot switch themselves off
+
+A single-doctor clinic has one or two admins. Deactivate or demote the last one
+and nobody can ever register a tablet, add staff or reset a PIN again — the
+system needs a developer to get back in, which is precisely what M11 exists to
+remove. `app.update_staff` counts admins over the state the change would
+**leave**, not the state it started from, so demoting and deactivating are
+caught by the same arithmetic and neither needs its own special case.
+
+The refusal says what to do about it: *"this is the only administrator left —
+make somebody else an admin first."*
+
+### Revoking a tablet ends the session on it
+
+`revoked_at` alone stops the **next** unlock. It does nothing about the tablet
+that is currently unlocked and in somebody else's bag — which, on a tablet
+somebody is actively using, is never. So `revoke_device` ends the live sessions
+in the same transaction as it sets `revoked_at`. Ended, not deleted: who was
+signed in on that tablet, and until when, is exactly the question somebody asks
+after a device goes missing.
+
+The E2E proves the whole loop in a browser: register a tablet, bring a fresh
+browser context up from the code it showed once, sign in, revoke from the other
+tablet, and watch the same credential stop working. What that last step
+displays is **"Incorrect PIN."** — not "this tablet was revoked" — because the
+lock screen refuses a wrong PIN, an unknown person and a revoked device
+identically (TABLET.md §5). Somebody holding a stolen tablet learns nothing
+from it.
+
+And you cannot revoke the tablet in your hands. If it is genuinely the one that
+is lost, it is not the one you are holding.
+
+### Three smaller decisions
+
+**A new staff member gets a PIN in the same step.** Somebody created without
+one appears on the lock screen and cannot pass it, which reads as a broken
+tablet rather than as half-finished setup.
+
+**`add_staff` creates the first admin on an empty database, and then never
+again.** Same argument as `update_clinic` creating the clinic: day one of
+go-live is a real state and nobody should need psql to leave it. The bootstrap
+window closes the instant the first staff row exists and cannot reopen — a
+database with staff in it takes that path exactly once, ever.
+
+**The registration code is shown once.** It is generated in the database rather
+than the browser (24 bytes from pgcrypto beats whatever random source the page
+had), returned exactly once, and there is no read path back to it anywhere in
+this build — `lib/db/admin.ts` does not select the column. A code that can be
+re-displayed forever is a code that gets photographed.
+
+### `devices` lost its exemption
+
+The M9 permissions review blessed exactly one table as directly writable
+without a transition behind it: `devices`, narrowed by an admin-only RLS
+policy. That was fair while registration was a plain INSERT. It stopped being
+fair the moment the token needed generating server-side and revocation needed
+to do two things atomically — so devices went behind transitions and
+`A5_permissions.sql` went from seven writable tables to six.
+
+Two dead policies came off `staff` at the same time. It never had a write grant
+at all, so `staff_admin_write` and `staff_admin_update` had been narrowing a
+permission nobody held since M0 — and a policy that cannot fire is a policy
+somebody eventually reads as proof that the table is writable.
+
+That is the review working exactly as designed: it is deliberately annoying to
+update, and this update made the matrix stricter.
+
+**M11c totals:** 27 migrations, 426 pgTAP assertions, 21 unit tests, 52
+Playwright tests across fourteen specs.
