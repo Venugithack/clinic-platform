@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { currentSession, touch, type StaffSession } from '@/lib/auth';
 import { presencePing } from '@/lib/transitions/presence';
 import { CounterQueries } from '@/components/CounterQueries';
+import { WriteQueue } from '@/components/WriteQueue';
 
 export default function ClinicLayout({
   children,
@@ -64,6 +65,10 @@ export default function ClinicLayout({
       {/* The counter's questions ride above every clinic screen, because the
           doctor is not reliably sitting on the consult screen when the
           pharmacist reaches the shelf (PLAN.md §11.1). */}
+      {/* Anything this tablet is holding because the network was not there.
+          Absent when there is nothing waiting — a permanent "0 waiting" badge
+          teaches people to stop reading it (PLAN.md §16). */}
+      <WriteQueue />
       <CounterQueries />
       <div className="min-h-0 flex-1">{children}</div>
     </div>

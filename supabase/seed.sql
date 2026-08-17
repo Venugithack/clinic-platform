@@ -17,17 +17,21 @@ insert into clinic (name, address, phone, timezone, open_hours, consult_fee) val
   '—',
   '+91 00000 00000',
   'Asia/Kolkata',
-  -- Every day the clinic is open needs a key: a day with no hours recorded
-  -- reads as closed, which is the safe direction for a page patients drive to
-  -- a clinic on (PLAN.md §13). Sunday is present and empty on purpose — it
-  -- says "we thought about Sunday", which is not the same as forgetting it.
-  '{"mon":["09:30-13:00","17:00-20:30"],
-    "tue":["09:30-13:00","17:00-20:30"],
-    "wed":["09:30-13:00","17:00-20:30"],
-    "thu":["09:30-13:00","17:00-20:30"],
-    "fri":["09:30-13:00","17:00-20:30"],
-    "sat":["09:30-13:00"],
-    "sun":[]}'::jsonb,
+  -- Open all day, every day — and deliberately NOT the realistic
+  -- 09:30-13:00 / 17:00-20:30 the clinic actually keeps.
+  --
+  -- Real hours make the whole E2E suite depend on the time of day it runs: the
+  -- presence tests passed all morning and failed at half past three, because
+  -- the status page correctly said the clinic was shut. A suite that is green
+  -- before lunch and red after it teaches people to re-run it, which is worse
+  -- than having no test. The hard close is proved instead in A2_presence.sql,
+  -- where the timetable can be moved rather than waited for.
+  --
+  -- The doctor's real hours arrive at go-live: they are settings, not constants
+  -- (PLAN.md §18 Q10).
+  '{"mon":["00:00-23:59"],"tue":["00:00-23:59"],"wed":["00:00-23:59"],
+    "thu":["00:00-23:59"],"fri":["00:00-23:59"],"sat":["00:00-23:59"],
+    "sun":["00:00-23:59"]}'::jsonb,
   300
 );
 

@@ -24,7 +24,7 @@ import { DrugSearch } from '@/components/DrugSearch';
 import { getDrug, stockBadge, type DrugRow } from '@/lib/db/drugs';
 import { lookupBarcode } from '@/lib/db/barcodes';
 import { fefoPreview } from '@/lib/db/pharmacy';
-import { dispense } from '@/lib/transitions/dispense';
+import { runOrQueue } from '@/lib/offline/queue';
 import { lineAmountPaise, paiseToRupees, rupeesToPaise } from '@/lib/units';
 
 interface BasketLine {
@@ -42,6 +42,7 @@ export default function CounterSalePage() {
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [soldAt, setSoldAt] = useState<string | null>(null);
+  const [queued, setQueued] = useState(false);
 
   useEffect(() => {
     if (!flash) return;
@@ -93,10 +94,18 @@ export default function CounterSalePage() {
     setBusy(true);
     setError(null);
     try {
-      await dispense({
-        isCounterSale: true,
-        lines: basket.map((line) => ({ drugId: line.drug.id, qtyBase: line.qtyBase })),
+      // Through the queue, because this is the screen a dropped connection
+      // actually interrupts. A refusal still throws and is shown; only a
+      // request that never reached the database is kept on the tablet.
+      const outcome = await runOrQueue('dispense', {
+        is_counter_sale: true,
+        lines: basket.map((line) => ({
+          drug_id: line.drug.id,
+          qty_base: line.qtyBase,
+        })),
       });
+
+      setQueued(outcome.queued);
       setSoldAt(new Date().toISOString());
     } catch (cause) {
       setError((cause as Error).message);
@@ -151,7 +160,7 @@ export default function CounterSalePage() {
             disabled={basket.length === 0 || busy || soldAt !== null}
             onClick={() => void complete()}
           >
-            {soldAt ? 'Sold' : busy ? 'Selling…' : 'Complete sale'}
+            {soldAt ? (queued ? 'Saved' : 'Sold') : busy ? 'Selling…' : 'Complete sale'}
           </RailButton>
 
           <div className="flex-1" />
@@ -167,9 +176,18 @@ export default function CounterSalePage() {
         </p>
       ) : null}
       {error ? <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p> : null}
-      {soldAt ? (
+      {soldAt && !queued ? (
         <p className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
           Sold. The ledger has been written and the stock is down.
+        </p>
+      ) : null}
+
+      {/* Never "sold". The tablet has it; the ledger does not, and saying
+          otherwise is a lie in the direction that costs money (rule 6). */}
+      {soldAt && queued ? (
+        <p className="mt-4 rounded-lg bg-ink/5 p-3">
+          Saved on this tablet. The network is not there, so the ledger has not
+          been written yet — it goes in on its own when the connection returns.
         </p>
       ) : null}
 

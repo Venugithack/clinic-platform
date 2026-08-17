@@ -2,9 +2,9 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6 and M8 built, 16 Aug 2026** — foundations, clinic core, the
-live link, inventory, billing with the till, supplier purchasing, presence, and
-the legal registers. See §5–§12. **M7 (patient WhatsApp) is the only one left
+**Status: M0–M6, M8 and M9 built, 16 Aug 2026** — foundations, clinic core,
+the live link, inventory, billing with the till, supplier purchasing, presence,
+the legal registers, and hardening. See §5–§13. **M7 (patient WhatsApp) is the only one left
 that cannot start on the developer's side** — it needs Meta verification and the
 §18.2 session. `PLAN.md` §20 is still
 unsigned; §0 below lists what must be true before the clinic runs on this.
@@ -899,3 +899,104 @@ rather than an intention.
 
 **M8 totals:** 22 migrations, 335 pgTAP assertions, 17 unit tests, 36 Playwright
 tests across nine specs, nothing skipped.
+
+---
+
+## 13. M9 status — hardening, built 16 Aug 2026
+
+**Built and green.** `PLAN.md` §16's regime, minus the parts that are not code.
+
+### The offline write queue, and the one bug that would have been unforgivable
+
+The clinic's Wi-Fi drops mid-sale. Router, concrete wall, a 4G backup that takes
+half a minute to take over (`HOSTING.md` §6). The counter cannot stop, so the
+write waits on the tablet — which creates the only genuinely dangerous bug in
+the whole build: **a queued dispense applied twice.** Stock leaves once and the
+ledger says twice; or the patient is billed twice. A retry that is not
+idempotent is worse than no retry, because it is silent and it is money.
+
+`app.replay` takes a key the tablet generated *before* its first attempt. If
+that key already has a result, the operation ran once and the stored result is
+handed back; otherwise it runs. The property that makes it airtight:
+
+> **the key row and the effect commit in the same transaction.**
+
+There is no window where stock has moved and the key is unrecorded, so nothing
+can be applied twice. And when the operation *raises* — insufficient stock,
+because somebody sold the last strip while the tablet was offline — the whole
+transaction rolls back including the key, so the queue can legitimately try
+again. **Failure stays retryable, success becomes permanent, from one property.**
+
+Dispatch is a hand-written `case` over three operations, not dynamic SQL over a
+function name from a client, because that would be a remote code path into the
+`app` schema.
+
+### The line the client draws
+
+> **If the database answered, it decided. If it never answered, we queue.**
+
+A Schedule H1 refusal is an answer. Queuing it would retry it every twenty
+seconds forever while telling the pharmacist it was "waiting for the network".
+So anything carrying a SQLSTATE is rethrown and never queued — and that is a
+Playwright test, not a comment.
+
+The counter is never told "sold" for a queued sale. It is told *"saved on this
+tablet, not yet in the ledger"*, and a strip above every screen counts what is
+waiting. Rule 6 applies to our own writes as much as to the doctor's presence.
+
+### The permissions review, written as a test
+
+§16 asks for a permissions review. A review done once is a PDF nobody reads
+again, so it is `A5_permissions.sql` instead: the whole grant matrix, asserted.
+It found two things on its first run.
+
+- **`appointments` is stricter than anybody remembered.** It is not directly
+  writable at all — booking allocates a token under an advisory lock, so it was
+  written as a transition in M1. A review's job is to find that the schema is
+  tighter than the memory of it, as well as looser.
+- **Twelve helper functions were executable by `PUBLIC`**, which is Postgres's
+  default for a new function and a decision nobody made. None is exploitable
+  today — they take no arguments and read the caller's own session — but
+  `app.current_device_id()` is `SECURITY DEFINER` over `staff_sessions`, and the
+  day somebody adds a parameter to it, that default grant turns a helper into a
+  session lookup for anybody. Now revoked and re-granted deliberately.
+
+### And the restore drill was quietly broken
+
+`HOSTING.md` §5 says an untested backup is not a backup. Running the drill
+during M9 produced a failure — eleven patients restored as four — and the
+restore had worked perfectly. The drill compared the newest archive on disk
+against the **live** database, which can only match in the seconds after a
+backup is taken. Any consult, any sale, any test run breaks it.
+
+**A drill that cries wolf is worse than no drill**, because the day it is right
+everybody assumes it is stale. It now takes its own fresh dump and compares
+against that; passing an archive explicitly asserts it loads and is not empty,
+which is the honest question to ask of an old file.
+
+### Two more things this milestone found
+
+`clinic_health` is one row where every column should be zero — stock drift,
+unbilled dispenses overnight, receipts still awaiting an invoice, a till left
+open, supplier credits nobody is chasing, expired stock on the shelf, H1 rows
+with no address. That is the nightly reconcile §16 asks for, and the alerting
+rule is "any column is non-zero" rather than a threshold per metric.
+
+The E2E suite was **time-of-day dependent** and nobody knew: the presence tests
+passed all morning and failed at half past three, because the seeded clinic
+hours are 09:30–13:00 and 17:00–20:30 and the status page correctly said the
+clinic was shut. The development seed is now open all day, and the hard close is
+proved in pgTAP where the timetable can be moved rather than waited for.
+
+### What M9 still owes, and none of it is code
+
+| Owed | Why it is not here |
+|---|---|
+| Sentry, uptime check on `/now` | Needs a deployed origin. `HOSTING.md` §1a defers hosting deliberately |
+| Staging with the real drug list and fake patients | Needs the drug master (`BUILD.md` §3) |
+| Load of real data | Same |
+| Two-week parallel run, change freeze | `PLAN.md` §16 — that is M10, and it happens in the clinic |
+
+**M9 totals:** 24 migrations, 360 pgTAP assertions, 17 unit tests, 38 Playwright
+tests across ten specs, nothing skipped. Five of §16's six Playwright paths are
+covered; the sixth is WhatsApp booking, which waits on M7.

@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M6 and M8 are built** (16 Aug 2026) — see [What is built](#what-is-built)
-below, and `BUILD.md` §5–12. Seven documents describe the rest:
+**M0–M6, M8 and M9 are built** (16 Aug 2026) — see
+[What is built](#what-is-built) below, and `BUILD.md` §5–13. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -34,7 +34,9 @@ supplier, approved and sent by the doctor as a WhatsApp deep link, the reply
 recorded, and goods received against the order. **M6** — presence: a heartbeat,
 a hard close, and a public status page that never says "available". **M8** —
 the legal registers: Schedule H1, purchases, expiry write-offs, sales, and a
-batch trace for recalls, each exporting as a CSV an inspector can open.
+batch trace for recalls, each exporting as a CSV an inspector can open. **M9** —
+hardening: an offline write queue that cannot apply a sale twice, the
+permissions review as a standing test, and a restore drill that stopped lying.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
@@ -54,12 +56,13 @@ lib/
                     every test run rather than asserted
   units/            base-unit conversion and costing (INVENTORY.md §1, §4)
   reports/          CSV that survives Excel — quoting, formula injection, BOM
+  offline/          the write queue: keeps what the network ate, never a refusal
   whatsapp/         deep links — four lines, and the reason M5 needs no Meta
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       22 forward-only migrations — the schema
-  tests/            335 pgTAP assertions
+  migrations/       24 forward-only migrations — the schema
+  tests/            360 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -113,6 +116,12 @@ the six columns the rule names — and its first code unit asserted to be a BOM,
 because Excel on Windows reads UTF-8 without one as Latin-1 and turns every
 Indian name into mojibake. M8 adds **no transitions at all**: every column it
 needed was already in the ledger.
+
+**The M9 property worth understanding** is in `20260816270100_replay.sql`: a
+queued write carries a key made before its first attempt, and the key row
+commits in the same transaction as the effect. So a sale can never be applied
+twice, and a sale that *failed* rolls its key back with it and stays retryable.
+One property, both guarantees.
 
 **The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
 stock back *months before* it expires — 3 to 6, and it differs per supplier — so
