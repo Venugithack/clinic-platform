@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M6, M8, M9 and M11a–c are built** (17 Aug 2026) — see
-[What is built](#what-is-built) below, and `BUILD.md` §5–16. Seven documents describe the rest:
+**M0–M6, M8, M9 and M11a–d are built** (17 Aug 2026) — see
+[What is built](#what-is-built) below, and `BUILD.md` §5–17. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -41,7 +41,9 @@ permissions review as a standing test, and a restore drill that stopped lying.
 will do, and load five hundred rows in one go. **M11b** — settings: the fee,
 the licence numbers, the GSTIN and the opening hours, out of psql and onto a
 screen. **M11c** — people and tablets: the new pharmacist who starts on Monday,
-and the tablet left in an auto-rickshaw. **M7** (patient WhatsApp and the
+and the tablet left in an auto-rickshaw. **M11d** — the two corrections M4 and
+M8 implied and never built: filling in the address the H1 register is missing,
+and cancelling a bill made out to the wrong patient. **M7** (patient WhatsApp and the
 patient portal) is deferred at the client's request.
 
 ```
@@ -50,6 +52,7 @@ app/                Next 16 · React 19 · TS strict · Tailwind 4
                     receiving · stock-take · expiry · reorder
                     billing · bill print (A4 + 80mm) · day-book · orders
                     presence · reports · import · settings · admin
+                    patient record
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -68,8 +71,8 @@ lib/
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       27 forward-only migrations — the schema
-  tests/            426 pgTAP assertions
+  migrations/       28 forward-only migrations — the schema
+  tests/            440 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -124,6 +127,11 @@ because Excel on Windows reads UTF-8 without one as Latin-1 and turns every
 Indian name into mojibake. M8 adds **no transitions at all**: every column it
 needed was already in the ledger.
 
+**The M11d lesson** is smaller and worth stating: a flag nobody can act on is a
+flag nobody reads, and a transition no screen calls is a feature the clinic
+does not have. M8's `address_missing` and M4's `app.void_bill` were both fully
+built, fully tested and unreachable.
+
 **The M11c property** is that revoking a tablet ends the session running on it
 in the same transaction. `revoked_at` alone stops the *next* unlock and does
 nothing about the tablet that is currently unlocked in somebody else's bag —
@@ -175,10 +183,11 @@ printer has not been bought yet** (§18 Q9), so that layout has never met a
 thermal printer. All of it happens in the clinic; `scripts/lan-https.sh` is the
 runbook and carries the checklist.
 
-**Still to build, and it is all go-live tooling:** opening-stock import (M11a
-loads drugs and suppliers; stock is batches, and it goes through goods
-receipt), and the two screens M8 implied — editing a patient's address, and
-voiding a bill. `BUILD.md` §14 lists them.
+**Still to build:** the opening-stock import. M11a loads drugs and suppliers;
+stock is batches — batch number, expiry, cost, MRP, pack config — and it
+belongs behind goods receipt rather than a second copy of the ledger write.
+Everything else on the go-live checklist that is code is built (`BUILD.md`
+§14–17).
 
 Build continues after `PLAN.md` §20 is signed off.
 

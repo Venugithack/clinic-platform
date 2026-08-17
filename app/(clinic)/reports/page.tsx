@@ -16,6 +16,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import {
   batchTrace,
@@ -341,6 +342,7 @@ export default function ReportsPage() {
                   {column.label}
                 </th>
               ))}
+              {tab === 'h1' ? <th className="py-2 print:hidden" /> : null}
             </tr>
           </thead>
           <tbody>
@@ -358,6 +360,24 @@ export default function ReportsPage() {
                       : String(row[column.key])}
                   </td>
                 ))}
+
+                {/* The other half of the flag. M8 marked these rows red and
+                    left the pharmacist nowhere to go; this is the way to the
+                    record that is missing the address (M11d). It is not
+                    exported — the CSV takes the named columns only. */}
+                {tab === 'h1' ? (
+                  <td className="py-2 print:hidden">
+                    {row.address_missing && row.patient_id ? (
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/patient/${String(row.patient_id)}` as Route)}
+                        className="h-11 rounded-lg border border-danger px-3 text-sm text-danger active:bg-line"
+                      >
+                        Add address
+                      </button>
+                    ) : null}
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>

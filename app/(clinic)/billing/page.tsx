@@ -34,6 +34,7 @@ import {
   openTill as startTill,
   raiseBill,
   takePayment,
+  voidBill,
 } from '@/lib/transitions/billing';
 import { paiseToRupees } from '@/lib/units';
 
@@ -55,6 +56,9 @@ export default function BillingPage() {
   const [withConsult, setWithConsult] = useState(false);
   const [discount, setDiscount] = useState('');
   const [raised, setRaised] = useState<Bill | null>(null);
+
+  const [voiding, setVoiding] = useState<Bill | null>(null);
+  const [voidReason, setVoidReason] = useState('');
 
   const [pad, setPad] = useState<'discount' | 'float' | 'count' | null>(null);
   const [cash, setCash] = useState('');
@@ -145,6 +149,35 @@ export default function BillingPage() {
       }
       setCash('');
       setPad(null);
+      refresh();
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Cancelling a bill.
+   *
+   * The screen does not decide who may do this or whether the drawer is open —
+   * `app.void_bill` refuses a paid bill from the counter (that is a refund) and
+   * refuses a cash refund with no till open (it has to come out of a drawer
+   * somebody is counting). Both refusals arrive as sentences, which is the only
+   * way the pharmacist learns the real reason rather than the screen's guess.
+   */
+  const doVoid = async () => {
+    if (!voiding) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const cancelled = await voidBill(voiding.id, voidReason.trim());
+      setVoiding(null);
+      setVoidReason('');
+      setNotice(
+        `${cancelled.bill_no} is cancelled. The medicines on it are billable again; the stock is not back on the shelf.`,
+      );
       refresh();
     } catch (cause) {
       setError((cause as Error).message);
@@ -446,17 +479,19 @@ export default function BillingPage() {
         </div>
       ) : null}
 
-      {/* The day's bills, for finding one again. */}
+      {/* The day's bills, for finding one again — and for cancelling one.
+          `app.void_bill` was written and tested in M4 and no screen called it
+          for two milestones, which is a feature the clinic did not have. */}
       <h2 className="mt-8 text-lg font-medium">Today&rsquo;s bills</h2>
       {bills.length === 0 ? <p className="mt-2 text-muted">None yet.</p> : null}
 
       <ul className="mt-2 max-w-3xl">
         {bills.map((bill) => (
-          <li key={bill.id}>
+          <li key={bill.id} className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => router.push(`/bill/${bill.id}/print` as Route)}
-              className="flex h-14 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line"
+              className="flex h-14 min-w-0 flex-1 items-center gap-4 border-b border-line px-3 text-left active:bg-line"
             >
               <span className="tabular w-32 shrink-0 text-sm text-muted">
                 {bill.bill_no}
@@ -479,9 +514,72 @@ export default function BillingPage() {
                 ₹{Number(bill.total).toFixed(2)}
               </span>
             </button>
+
+            {bill.status === 'cancelled' ? null : (
+              <button
+                type="button"
+                aria-label={`Cancel bill ${bill.bill_no}`}
+                onClick={() => {
+                  setVoiding(voiding?.id === bill.id ? null : bill);
+                  setVoidReason('');
+                }}
+                className="h-14 shrink-0 rounded-xl border border-danger bg-white px-4 text-sm text-danger active:bg-line"
+              >
+                Cancel
+              </button>
+            )}
           </li>
         ))}
       </ul>
+
+      {voiding ? (
+        <div className="mt-4 max-w-3xl rounded-xl border border-danger bg-white p-4">
+          <h3 className="text-lg font-medium">Cancel {voiding.bill_no}?</h3>
+
+          <p className="mt-1 text-sm text-muted">
+            {voiding.status === 'paid'
+              ? `₹${Number(voiding.total).toFixed(2)} has been paid${
+                  voiding.method === 'cash'
+                    ? ' in cash — cancelling it is a refund out of the open drawer, and only the doctor can do that'
+                    : ' — cancelling it is a refund'
+                }.`
+              : 'Nothing has been paid on it yet.'}{' '}
+            The medicines do <strong>not</strong> come back into stock: what left
+            the counter returns through the ledger or not at all.
+          </p>
+
+          <label className="mt-3 block">
+            <span className="block text-sm text-muted">
+              Why — it goes on the record
+            </span>
+            <input
+              value={voidReason}
+              onChange={(event) => setVoidReason(event.target.value)}
+              aria-label="Reason"
+              placeholder="billed to the wrong patient"
+              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+            />
+          </label>
+
+          <div className="mt-3 flex gap-3">
+            <button
+              type="button"
+              disabled={busy || voidReason.trim() === ''}
+              onClick={() => void doVoid()}
+              className="h-14 flex-1 rounded-xl border border-danger bg-danger font-medium text-white disabled:opacity-40"
+            >
+              Cancel this bill
+            </button>
+            <button
+              type="button"
+              onClick={() => setVoiding(null)}
+              className="h-14 flex-1 rounded-xl border border-line bg-white active:bg-line"
+            >
+              Leave it alone
+            </button>
+          </div>
+        </div>
+      ) : null}
     </ThreePane>
   );
 }

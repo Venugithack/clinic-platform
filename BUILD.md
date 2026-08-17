@@ -2,10 +2,11 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6, M8, M9 and M11a–c built, 17 Aug 2026** — foundations, clinic
+**Status: M0–M6, M8, M9 and M11a–d built, 17 Aug 2026** — foundations, clinic
 core, the live link, inventory, billing with the till, supplier purchasing,
-presence, the legal registers, hardening, the drug master import, the settings
-screen, and staff and device administration. See §5–§16. **M7 (patient WhatsApp) is deferred at the client's request** — the
+presence, the legal registers, hardening, and the go-live tooling: the drug
+master import, settings, staff and device administration, and the two
+correction screens M4 and M8 implied. See §5–§17. **M7 (patient WhatsApp) is deferred at the client's request** — the
 doctor has asked to leave patient messaging to a later phase, and it is the one
 milestone that could not start on the developer's side anyway. `PLAN.md` §20 is
 still unsigned; §0 below lists what must be true before the clinic runs on
@@ -1264,3 +1265,86 @@ update, and this update made the matrix stricter.
 
 **M11c totals:** 27 migrations, 426 pgTAP assertions, 21 unit tests, 52
 Playwright tests across fourteen specs.
+
+---
+
+## 17. M11d status — the two loose ends, built 17 Aug 2026
+
+Two things this build could describe and could not do.
+
+**M8 flagged a Schedule H1 row with no patient address** — the rule requires
+one, and a register with blanks in it is not one — and then offered nobody a
+way to fix it. The pharmacist reading that red row had to find a developer,
+which makes it a flag nobody acts on.
+
+**M4 wrote and tested `app.void_bill`** — including the part where cancelling a
+paid cash bill is a refund that has to come out of a drawer somebody is
+counting — and no screen ever called it, for two milestones. A transition with
+no caller is a feature the clinic does not have.
+
+Neither needed a new transition. What they needed was a way in, and one thing
+that was missing underneath.
+
+### Patient edits are now audited
+
+`patients` is one of the six tables this build writes to directly: ordinary
+CRUD under RLS, moving neither stock nor money. That is still the right call —
+registration is a walk-in screen with a consent tick, not a transition — but an
+**edit** is a different act from a creation. Somebody changing a recorded
+allergy, or the phone number reminders go to, or the address the H1 register
+prints, left no trace whatsoever.
+
+An `AFTER UPDATE` trigger closes that without moving the table behind a
+transition and without touching the registration screen. Two details make it
+usable rather than noisy:
+
+- it compares the rows **without `updated_at`**, so a save that changed nothing
+  writes nothing — otherwise every re-save of a form logs a change;
+- `app.write_audit` already stores changed fields only, so editing one field
+  logs one field. A log full of unchanged columns is a log nobody reads.
+
+The permissions review caught the new trigger function the moment it was
+written: Postgres grants EXECUTE to PUBLIC by default, and `A5_permissions.sql`
+§5 refuses that. (A trigger function does not need the grant to fire — the
+check is TRIGGER on the table, at creation.) That test has now found the same
+class of mistake twice.
+
+### The register learned who each row is about
+
+`h1_register` carried the patient's name and their missing address and not
+their id, so a screen could show the gap and could not offer to fix it. One
+column, appended at the end so the existing column order — and therefore the
+CSV an inspector gets — is untouched. The report's "Add address" button is
+`print:hidden` and outside the exported columns for the same reason.
+
+### Cancelling a bill
+
+The screen decides nothing. It collects a reason and calls the transition,
+which refuses a paid bill from the counter (that is a refund, and it is the
+doctor's call) and refuses a cash refund with no till open (it has to come out
+of a drawer somebody is counting). Both refusals arrive as sentences, which is
+how the pharmacist learns the real reason rather than the screen's guess.
+
+What the screen *does* say, before the button is pressed, is the thing that is
+otherwise discovered at the next stock-take: **the medicines do not come back
+into stock.** Cancelling a bill is a paperwork correction; what left the
+counter returns through the ledger or not at all.
+
+### The gate
+
+`e2e/m11-corrections.spec.ts`, two tests, both starting where the person
+actually is — looking at the flagged register row, and holding a bill made out
+to the wrong patient. `supabase/tests/A9_patient_and_void.sql`, 14 assertions.
+
+**M11d totals:** 28 migrations, 440 pgTAP assertions, 21 unit tests, 54
+Playwright tests across sixteen specs.
+
+### What M11 has left
+
+| Owed | What it is |
+|---|---|
+| **Opening stock import** | M11a loads drugs and suppliers. Opening stock is batches — batch number, expiry, cost, MRP, pack config — and it belongs behind goods receipt rather than a second copy of the ledger write |
+
+Everything else on the go-live checklist that is code is now built. What
+remains is `BUILD.md` §1.3 (LAN HTTPS, the tablets, the printers) and M10 — the
+parallel run — and both of those happen in the clinic.

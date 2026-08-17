@@ -91,6 +91,42 @@ export async function createPatient(input: NewPatient): Promise<Patient> {
   return data as Patient;
 }
 
+/**
+ * Correct a patient's record.
+ *
+ * Only the fields the caller passes are written, and every write leaves an
+ * audit row (`app.audit_patient_edit`, M11d): a recorded allergy or an address
+ * the H1 register prints can otherwise be changed with nobody's name on it.
+ *
+ * Consent is deliberately not editable here. Withdrawing it is its own act
+ * with its own timestamp (DPDP §15.1), not a field on a correction form.
+ */
+export async function updatePatient(
+  id: string,
+  changes: Partial<Omit<NewPatient, 'name'>> & { name?: string },
+): Promise<Patient> {
+  const patch: Record<string, unknown> = {};
+
+  // An empty box means "there is nothing here", which is a value — the address
+  // the register is complaining about is missing, not absent from the form.
+  if (changes.name !== undefined) patch.name = changes.name.trim();
+  if (changes.phone !== undefined) patch.phone = changes.phone.trim() || null;
+  if (changes.age !== undefined) patch.age = changes.age;
+  if (changes.sex !== undefined) patch.sex = changes.sex || null;
+  if (changes.address !== undefined) patch.address = changes.address.trim() || null;
+  if (changes.allergies !== undefined) patch.allergies = changes.allergies.trim() || null;
+
+  const { data, error } = await db()
+    .from('patients')
+    .update(patch)
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as Patient;
+}
+
 async function findByPhone(phone: string): Promise<Patient[]> {
   const { data } = await db().from('patients').select('*').eq('phone', phone.trim());
   return (data ?? []) as Patient[];

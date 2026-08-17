@@ -27,6 +27,11 @@ export interface H1Row extends Record<string, unknown> {
   prescriber_reg_no: string | null;
   dispensed_by: string | null;
   address_missing: boolean;
+  /**
+   * Added in M11d. The flag above was unactionable without it: the view knew
+   * the patient's name and the gap in their record, and not which record.
+   */
+  patient_id: string | null;
 }
 
 export async function h1Register(from: string, to: string): Promise<H1Row[]> {
