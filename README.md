@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M6 are built** (16 Aug 2026) — see [What is built](#what-is-built) below,
-and `BUILD.md` §5–11. Seven documents describe the rest:
+**M0–M6 and M8 are built** (16 Aug 2026) — see [What is built](#what-is-built)
+below, and `BUILD.md` §5–12. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -32,14 +32,16 @@ billing: gapless invoice numbers, A4 and 80mm bills, the day-book, and a cash
 till that is counted rather than assumed. **M5** — purchasing: one order per
 supplier, approved and sent by the doctor as a WhatsApp deep link, the reply
 recorded, and goods received against the order. **M6** — presence: a heartbeat,
-a hard close, and a public status page that never says "available".
+a hard close, and a public status page that never says "available". **M8** —
+the legal registers: Schedule H1, purchases, expiry write-offs, sales, and a
+batch trace for recalls, each exporting as a CSV an inspector can open.
 
 ```
 app/                Next 16 · React 19 · TS strict · Tailwind 4
   (clinic)/         queue · register walk-in · consult · Rx print · counter
                     receiving · stock-take · expiry · reorder
                     billing · bill print (A4 + 80mm) · day-book · orders
-                    presence
+                    presence · reports
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -51,12 +53,13 @@ lib/
                     LISTEN/NOTIFY — the HOSTING.md §7 swap, exercised on
                     every test run rather than asserted
   units/            base-unit conversion and costing (INVENTORY.md §1, §4)
+  reports/          CSV that survives Excel — quoting, formula injection, BOM
   whatsapp/         deep links — four lines, and the reason M5 needs no Meta
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       21 forward-only migrations — the schema
-  tests/            316 pgTAP assertions
+  migrations/       22 forward-only migrations — the schema
+  tests/            335 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -103,6 +106,13 @@ a sleeping laptop reads "away" and that closing time beats a live session, and
 `e2e/m6-presence.spec.ts` asserts the thing a database cannot — that the public
 page never says "available". Presence is computed on read, so no scheduled job
 exists to fail.
+
+**The M8 gate** is `e2e/m8-registers.spec.ts`, and the word it tests is
+*exports*: a Schedule H1 dispense, then a real CSV downloaded off a tablet with
+the six columns the rule names — and its first code unit asserted to be a BOM,
+because Excel on Windows reads UTF-8 without one as Latin-1 and turns every
+Indian name into mojibake. M8 adds **no transitions at all**: every column it
+needed was already in the ledger.
 
 **The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
 stock back *months before* it expires — 3 to 6, and it differs per supplier — so

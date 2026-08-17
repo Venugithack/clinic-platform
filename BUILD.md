@@ -2,9 +2,11 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6 built, 16 Aug 2026** — foundations, clinic core, the live link,
-inventory, billing with the till, supplier purchasing, and presence. See
-§5–§11. `PLAN.md` §20 is still
+**Status: M0–M6 and M8 built, 16 Aug 2026** — foundations, clinic core, the
+live link, inventory, billing with the till, supplier purchasing, presence, and
+the legal registers. See §5–§12. **M7 (patient WhatsApp) is the only one left
+that cannot start on the developer's side** — it needs Meta verification and the
+§18.2 session. `PLAN.md` §20 is still
 unsigned; §0 below lists what must be true before the clinic runs on this.
 
 Local-first, per `HOSTING.md` §1a: Supabase in Docker, Next on the LAN, both
@@ -825,3 +827,75 @@ business-initiated messages, and both are blocked on the same paperwork.
 
 **M6 totals:** 21 migrations, 316 pgTAP assertions, 12 unit tests, 33 Playwright
 tests across eight specs, nothing skipped.
+
+---
+
+## 12. M8 status — registers and reports, built 16 Aug 2026
+
+**Built and green.** The gate: *"H1 register exports for a date range in a form
+an inspector accepts."*
+
+### This milestone adds no transitions at all
+
+Worth saying out loud, because it is the test of everything before it. A
+register is a **reading of what already happened**. If one had needed a write to
+be correct, the thing it reports on was recorded wrong — and after seven
+milestones of putting every state change through a transition with its audit
+row, every column §15.2 asks for was already there. The work was arranging it.
+
+| Register | Reads |
+|---|---|
+| **Schedule H1** | date, patient name **and address**, drug, quantity, batch, prescriber and registration number, who dispensed it |
+| **Batch trace** | who was given a batch, and when — the recall query |
+| **Purchase register** | every invoice, its supplier and GSTIN, and what came in on it |
+| **Expiry write-offs** | the disposal record, as a destruction rather than a negative number |
+| **Sales register** | one row per bill, cancelled ones included — which is what makes it a register rather than a summary |
+
+### Three things that came out of building it
+
+**The H1 register is complete by construction, not by diligence.** Schedule H1
+cannot leave on a counter sale — `app.dispense` refuses it, and has since M0 —
+so every row has a prescription behind it and therefore a prescriber to name. A
+pgTAP assertion states it directly: no H1 row can lack a prescriber. That is a
+refusal written eight milestones ago paying for a legal document today.
+
+**The register found a hole in the registration form.** The rule requires the
+patient's *address* and the walk-in form never asked for one, so the register
+would have exported blanks. Now the form has the field — optional, because
+holding up a queue for an address nobody needs is worse — and **the register
+flags every row that ends up without one**, with a count in the context pane.
+The gap is visible on a Tuesday rather than during an inspection.
+
+**A recall is not a date range.** Every other register here is bounded by dates;
+the batch trace deliberately is not. A recall covers a batch for as long as it
+has been leaving the shelf, and a range is exactly how somebody misses the first
+three people who got it.
+
+### The CSV is the deliverable, so it is treated like one
+
+An inspector gets a file, and the file gets opened in Excel. Two details, both
+tested:
+
+- **Formula injection.** A cell beginning `=`, `+`, `-` or `@` is executed by
+  Excel and LibreOffice. Nothing here lets a patient type into a register, but a
+  supplier's name is free text and a batch number is whatever is printed on the
+  box. A leading apostrophe costs one character and closes it.
+- **A BOM.** Excel on Windows reads a UTF-8 file without one as Latin-1, which
+  turns every ₹ and every Indian name into mojibake. The Playwright test asserts
+  the downloaded file's first code unit is `U+FEFF`, because that is the sort of
+  thing that is discovered by a client and never by a developer.
+
+Printing is A4 **landscape** with the panes hidden and `thead` repeated on every
+page, since a register that runs to four pages needs its headings on all four.
+
+### The public surface is still exactly one view
+
+M6 opened `clinic_now` to `anon`. This milestone added the most sensitive object
+in the build — a list of named people, their addresses and the controlled drugs
+they were given — so `A3_registers.sql` signs in as `anon` and confirms it, the
+recall list and the day's takings are all still refused, and that the status
+page still answers. **One public view, and still one** is now an assertion
+rather than an intention.
+
+**M8 totals:** 22 migrations, 335 pgTAP assertions, 17 unit tests, 36 Playwright
+tests across nine specs, nothing skipped.

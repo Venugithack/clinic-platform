@@ -101,6 +101,7 @@ export default function QueuePage() {
             Register walk-in
           </RailButton>
           <RailButton onClick={() => router.push('/presence')}>Presence</RailButton>
+          <RailButton onClick={() => router.push('/reports')}>Reports</RailButton>
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
           <RailButton

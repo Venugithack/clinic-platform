@@ -1,0 +1,56 @@
+/*
+ * Printing a register.
+ *
+ * An inspector is handed paper, and the paper has to be the register — not a
+ * screenshot of an app with a navigation rail down the side. So the panes go,
+ * the table gets the full width, and the range being reported is printed at the
+ * top where somebody can check it against what they asked for.
+ */
+@media print {
+  [data-pane='context'],
+  [data-pane='rail'],
+  .no-print {
+    display: none !important;
+  }
+
+  [data-pane='work'] {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .report-print-head {
+    display: block !important;
+    margin-bottom: 6mm;
+  }
+
+  table {
+    width: 100%;
+    font-size: 9pt;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    border-bottom: 0.2mm solid #999;
+    padding: 1.5mm 2mm;
+    text-align: left;
+  }
+
+  /* A register that runs to four pages needs its headings on all four. */
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+}
+
+.report-print-head {
+  display: none;
+}

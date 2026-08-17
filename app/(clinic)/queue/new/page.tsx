@@ -27,6 +27,7 @@ export default function RegisterWalkInPage() {
   const [age, setAge] = useState('');
   const [sex, setSex] = useState<'M' | 'F' | 'O' | ''>('');
   const [allergies, setAllergies] = useState('');
+  const [address, setAddress] = useState('');
   const [consent, setConsent] = useState(false);
 
   const [active, setActive] = useState<NumericField>(null);
@@ -55,6 +56,7 @@ export default function RegisterWalkInPage() {
         phone: phone || undefined,
         age: age ? Number(age) : undefined,
         sex: sex || undefined,
+        address: address || undefined,
         allergies: allergies || undefined,
       }));
 
@@ -206,6 +208,23 @@ export default function RegisterWalkInPage() {
               </div>
             </div>
           </div>
+
+          {/* The Schedule H1 register legally requires the patient's address
+              (PLAN.md §15.2), and a register with blanks in it is not one. It
+              is optional here on purpose — holding up a queue for an address
+              nobody needs is worse — and the register flags every row that ends
+              up without one, so the gap is visible rather than discovered
+              during an inspection. */}
+          <Field label="Address">
+            <input
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+              onFocus={() => setActive(null)}
+              aria-label="Address"
+              placeholder="Needed on the H1 register"
+              className="h-14 w-full rounded-xl border border-line bg-white px-4 text-lg"
+            />
+          </Field>
 
           <Field label="Allergies">
             <input
