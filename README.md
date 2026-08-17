@@ -4,8 +4,8 @@ Custom build for a single-doctor clinic with an in-house pharmacy. Separate
 product from the hospital prototype in `../hospital al in one platform` — that
 one is a demo, this one has a paying client and a real drug shelf behind it.
 
-**M0–M6, M8, M9 and M11a are built** (17 Aug 2026) — see
-[What is built](#what-is-built) below, and `BUILD.md` §5–14. Seven documents describe the rest:
+**M0–M6, M8, M9, M11a and M11b are built** (17 Aug 2026) — see
+[What is built](#what-is-built) below, and `BUILD.md` §5–15. Seven documents describe the rest:
 
 | File | Audience | |
 |---|---|---|
@@ -38,7 +38,9 @@ batch trace for recalls, each exporting as a CSV an inspector can open. **M9** �
 hardening: an offline write queue that cannot apply a sale twice, the
 permissions review as a standing test, and a restore drill that stopped lying.
 **M11a** — the drug master import: paste or choose a CSV, see exactly what it
-will do, and load five hundred rows in one go. **M7** (patient WhatsApp and the
+will do, and load five hundred rows in one go. **M11b** — settings: the fee,
+the licence numbers, the GSTIN and the opening hours, out of psql and onto a
+screen. **M7** (patient WhatsApp and the
 patient portal) is deferred at the client's request.
 
 ```
@@ -46,7 +48,7 @@ app/                Next 16 · React 19 · TS strict · Tailwind 4
   (clinic)/         queue · register walk-in · consult · Rx print · counter
                     receiving · stock-take · expiry · reorder
                     billing · bill print (A4 + 80mm) · day-book · orders
-                    presence · reports · import
+                    presence · reports · import · settings
   p/  now/          patient portal and public status page, default-deny
 components/         three-pane shell, numpad, drug search, quantity pad,
                     the counter's questions
@@ -65,8 +67,8 @@ lib/
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       25 forward-only migrations — the schema
-  tests/            379 pgTAP assertions
+  migrations/       26 forward-only migrations — the schema
+  tests/            401 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill, LAN HTTPS
@@ -121,6 +123,13 @@ because Excel on Windows reads UTF-8 without one as Latin-1 and turns every
 Indian name into mojibake. M8 adds **no transitions at all**: every column it
 needed was already in the ledger.
 
+**The M11b trap** is that `app.clinic_is_open` treats a timetable it cannot
+parse as *closed* — the right default for a page patients drive to a clinic on,
+and the reason a typo in the opening hours is invisible. `{"mon": ["9:30-1:00
+pm"]}` raises nothing; it quietly means shut on Mondays, forever, on the one
+screen nobody in the clinic ever looks at. `app.update_clinic` refuses it by
+day and by window instead.
+
 **The M11a rule** is in `20260817090100_import.sql`, and it is the one that
 looks wrong until you follow it through: a file with a single unreadable row
 imports **nothing**, not even the four hundred rows above it. A drug missing
@@ -156,11 +165,10 @@ printer has not been bought yet** (§18 Q9), so that layout has never met a
 thermal printer. All of it happens in the clinic; `scripts/lan-https.sh` is the
 runbook and carries the checklist.
 
-**Still to build, and it is all go-live tooling:** opening-stock import (this
-one loads drugs and suppliers; stock is batches, and it goes through goods
-receipt), a settings screen (consult fee, hours, licence numbers and GSTIN are
-SQL-only today), staff and device admin, and the two screens M8 implied —
-editing a patient's address, and voiding a bill. `BUILD.md` §14 lists them.
+**Still to build, and it is all go-live tooling:** opening-stock import (M11a
+loads drugs and suppliers; stock is batches, and it goes through goods
+receipt), staff and device admin, and the two screens M8 implied — editing a
+patient's address, and voiding a bill. `BUILD.md` §14 lists them.
 
 Build continues after `PLAN.md` §20 is signed off.
 

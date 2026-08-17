@@ -105,7 +105,10 @@ export default function QueuePage() {
           {/* Doctor and admin only — it is where the drug master comes from,
               and the counter has no business rewriting what a strip is. */}
           {session?.role === 'doctor' || session?.role === 'admin' ? (
-            <RailButton onClick={() => router.push('/import')}>Import</RailButton>
+            <>
+              <RailButton onClick={() => router.push('/import')}>Import</RailButton>
+              <RailButton onClick={() => router.push('/settings')}>Settings</RailButton>
+            </>
           ) : null}
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />

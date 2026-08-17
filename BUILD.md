@@ -2,10 +2,10 @@
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 
-**Status: M0–M6, M8, M9 and M11a built, 17 Aug 2026** — foundations, clinic
-core, the live link, inventory, billing with the till, supplier purchasing,
-presence, the legal registers, hardening, and the drug master import. See
-§5–§14. **M7 (patient WhatsApp) is deferred at the client's request** — the
+**Status: M0–M6, M8, M9, M11a and M11b built, 17 Aug 2026** — foundations,
+clinic core, the live link, inventory, billing with the till, supplier
+purchasing, presence, the legal registers, hardening, the drug master import
+and the settings screen. See §5–§15. **M7 (patient WhatsApp) is deferred at the client's request** — the
 doctor has asked to leave patient messaging to a later phase, and it is the one
 milestone that could not start on the developer's side anyway. `PLAN.md` §20 is
 still unsigned; §0 below lists what must be true before the clinic runs on
@@ -1107,3 +1107,78 @@ Playwright tests across eleven specs, nothing skipped.
 | **Settings screen** | `clinic` has no INSERT/UPDATE grant and no transition. Consult fee, opening hours, licence numbers and GSTIN are still SQL-only |
 | **Staff and device admin** | `app.set_staff_pin` and the admin-only device policy exist with no screen in front of them |
 | **Patient edit, bill void** | M8 flags a missing H1 address with no way to fix it; `app.void_bill` is tested and no screen calls it |
+
+---
+
+## 15. M11b status — clinic settings, built 17 Aug 2026
+
+Everything in the `clinic` row is a setting the doctor is supposed to decide:
+his consultation fee, whether a follow-up inside N days is free, his opening
+hours, his registration number, the pharmacy's drug licence, the GSTIN, and
+whether bills round to the rupee. There was no INSERT or UPDATE grant on that
+table and no transition, so every one of them was a developer with `psql` — on
+a row that appears on every printed bill.
+
+`/settings`, doctor and admin only. `app.update_clinic`, CL026.
+
+### The timetable is the dangerous one
+
+`app.clinic_is_open` reads `open_hours` and treats a day it cannot parse as
+**closed**. That default is right — it is the safe direction for a page
+patients drive to a clinic on — and it is exactly what makes a typo invisible.
+`{"mon": ["9:30-1:00 pm"]}` raises nothing anywhere. It quietly means "shut on
+Mondays, forever", and the only screen that shows the consequence is the public
+one, which nobody in the clinic ever looks at.
+
+So the transition validates the timetable window by window and refuses in
+words, naming the day: *"9:30-1:00 pm on wed is not a time window — write it
+like 09:30-13:00"*. The screen deliberately does **no** repair of what was
+typed. A parser that silently drops what it does not understand converts a typo
+into a closed clinic, which is the failure this whole section exists to stop.
+
+The input is one text box per day rather than a grid of time pickers. It is how
+the doctor says it out loud — "mornings and evenings, half day Saturday" — and
+a picker costs four taps per boundary, fourteen boundaries in a week.
+
+### Null means "leave it", empty means "clear it"
+
+The second way a settings screen ruins a month: a form that sends only what
+changed, against a transition that reads an absent field as "clear it". Update
+the phone number, and the drug licence quietly disappears from every bill
+printed afterwards. Nobody notices until an inspector does.
+
+So the convention is explicit and tested both ways: a field the caller did not
+send keeps its value; a field sent as an empty string is set to null. The E2E
+changes exactly one field and then asserts the other three survived a reload,
+which is the assertion that would have caught it.
+
+### Two smaller decisions
+
+**The GSTIN is checked against its actual shape** — 15 characters, state code +
+PAN + entity + Z + checksum. It is printed on every bill, and a bill is a legal
+document that cannot be un-printed. Fourteen characters is a typo worth
+refusing.
+
+**It creates the clinic if there is none.** That is a real state, not an error:
+day one of go-live on an empty database. The name is the only thing that cannot
+be defaulted, so it is the only thing required. Nobody should need psql to
+leave "the clinic does not exist yet".
+
+Changes are audited with the before and the after, because "since when has the
+fee been ₹400?" is asked three months later.
+
+### The gate
+
+`e2e/m11-settings.spec.ts`, five tests; `supabase/tests/A7_settings.sql`, 22
+assertions.
+
+One of those pgTAP assertions was written wrong first and is worth keeping in
+mind: `date_trunc('week', current_date) at time zone 'Asia/Kolkata'` resolves
+`date_trunc` to the *timestamptz* overload, so `at time zone` runs the
+conversion backwards and Monday 10am becomes half past three. It passed the
+"closed" assertion and failed the "open" one — in a file whose subject is a
+timetable being read correctly. The fix is an explicit `::timestamp` on the
+naive local time before giving it a zone.
+
+**M11b totals:** 26 migrations, 401 pgTAP assertions, 21 unit tests, 47
+Playwright tests across thirteen specs.

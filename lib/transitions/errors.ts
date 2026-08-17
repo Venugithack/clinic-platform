@@ -30,6 +30,9 @@ export type TransitionErrorCode =
   | 'PAYMENT_MISMATCH'
   | 'NO_WHATSAPP_NUMBER'
   | 'NOT_A_CLINIC_DEVICE'
+  | 'NOT_REPLAYABLE'
+  | 'IMPORT_REFUSED'
+  | 'BAD_SETTING'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -56,6 +59,9 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   CL021: 'PAYMENT_MISMATCH',
   CL022: 'NO_WHATSAPP_NUMBER',
   CL023: 'NOT_A_CLINIC_DEVICE',
+  CL024: 'NOT_REPLAYABLE',
+  CL025: 'IMPORT_REFUSED',
+  CL026: 'BAD_SETTING',
 };
 
 export class TransitionError extends Error {
