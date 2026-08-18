@@ -194,6 +194,30 @@ export default function PatientPage() {
         </p>
       ) : null}
 
+      {/*
+        Nothing is editable until the record has arrived.
+
+        The fields used to render immediately, empty, while load() was still in
+        flight — and load() ends by calling setName/setAddress/… with whatever
+        came back. So anything typed in that window was silently overwritten the
+        moment the read landed, Save then wrote the values from the server, and
+        the screen said "Saved. The change is recorded against your name."
+
+        Losing what somebody typed is bad; telling them it was saved is worse,
+        and this is the screen the Schedule H1 register sends them to when a
+        legally required address is missing. On the clinic's 4G fallback the
+        window is wide enough to type a whole address into.
+
+        `patient === null` is the condition Save was ALREADY using — the screen
+        simply did not hold its inputs to the same rule. Gating here rather than
+        refusing to overwrite also keeps "Undo changes" working: that button
+        calls load() on purpose, and re-seeding the fields is exactly what it is
+        for.
+      */}
+      {patient === null ? (
+        <p className="mt-6 text-muted">Loading the record…</p>
+      ) : (
+      <>
       <div className="mt-6 grid max-w-3xl grid-cols-2 gap-5">
         <label className="block">
           <span className="block text-sm text-muted">Name</span>
@@ -274,6 +298,8 @@ export default function PatientPage() {
           className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
         />
       </label>
+      </>
+      )}
 
       <p className="mt-6 max-w-3xl text-sm text-muted">
         Nothing here can be deleted. This record is named on prescriptions, on
