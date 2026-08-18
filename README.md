@@ -210,11 +210,14 @@ success paths worked, which is why it survived three milestones. Codes are now
 `CL0xx`; see `BUILD.md` §8.
 
 **Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
-tablets, PWA install, the printer's Android print service plugin, one real
-prescription printed, and one real bill on each paper size. The **80mm roll
-printer has not been bought yet** (§18 Q9), so that layout has never met a
-thermal printer. All of it happens in the clinic; `scripts/lan-https.sh` is the
-runbook and carries the checklist.
+tablets, PWA install, HP Print Service Plugin on both tablets, one real
+prescription printed, and one real bill on each paper size. The A4 is an **HP
+Smart Tank 580**: Wi-Fi and Mopria-certified, with no Ethernet and 2.4 GHz-only
+Wi-Fi, so both tablets have to be on that band with AP isolation off — a
+dual-band router breaks mDNS discovery while every device still pings. The
+**80mm roll printer has not been bought yet** (§18 Q9), so that layout has
+never met a thermal printer. All of it happens in the clinic;
+`scripts/lan-https.sh` is the runbook and carries the checklist.
 
 **Everything on the go-live checklist that is code is built** (`BUILD.md`
 §14–18). What remains is the clinic itself: §1.3 above, and M10's parallel
@@ -237,7 +240,7 @@ Build continues after `PLAN.md` §20 is signed off.
 3. ~~§10.4 supplier send mode chosen~~ — **one-tap approval**, chosen 16 Aug 2026
 4. The §18.2 WhatsApp session with the doctor — six decisions, ~30 minutes, gates Meta verification
 5. Free-tier risks accepted in writing (`HOSTING.md` §9)
-6. ~~Check the model number of the clinic's A4 printer~~ — **settled 16 Aug 2026: it is Bluetooth *and* Wi-Fi, so nothing to buy.** Bluetooth alone would not have worked (`TABLET.md` §1)
+6. ~~Check the model number of the clinic's A4 printer~~ — **settled 17 Aug 2026: an HP Smart Tank 580.** Wi-Fi and Mopria-certified, so nothing to buy; Bluetooth alone would not have worked (`TABLET.md` §1). Two things for the tablet setup: it has **no Ethernet**, and its Wi-Fi is **2.4 GHz only**, so both tablets must sit on that band with AP isolation off or discovery fails while everything still pings
 7. Meta business verification started (day 1, and `WHATSAPP.md` §0 may show it is not needed at all)
 8. ~~**`BUILD.md` §0 — Q15, multi-tenant or not**~~ — **single-tenant, decided 16 Aug 2026.** The first migration is applied
 9. §20 signed

@@ -28,6 +28,7 @@ Not USB, and — corrected 16 Aug 2026 — **not Bluetooth either.**
 | | Requirement | If not |
 |---|---|---|
 | **Existing A4** | reachable over **Wi-Fi or the LAN** | a ~₹2,000 Wi-Fi print server, or it cannot be used from a tablet at all |
+| ↳ *settled:* | **HP Smart Tank 580** — Wi-Fi 2.4 GHz, Mopria, no Ethernet | nothing to buy; see below |
 | **Small printer, when he buys it** | **80 mm thermal, Wi-Fi or LAN** | a Bluetooth-only thermal needs a native companion app — days of work plus an app to maintain forever. Buy Wi-Fi |
 
 Print itself is plain HTML with `@page` rules — A4 for prescriptions and full
@@ -55,21 +56,55 @@ extra hazard: everybody assumes Bluetooth works, so nobody checks.
 and ignore the Bluetooth. Many mid-range A4 printers are both, which is why the
 model number — not the word "Bluetooth" — is the thing that settles this.
 
-#### Settled 16 Aug 2026
+#### Settled — and the model, 17 Aug 2026
 
-**The clinic's A4 is Bluetooth *and* Wi-Fi/Ethernet.** Nothing to buy, nothing
-to build: the tablets reach it over the clinic Wi-Fi and the Bluetooth radio is
-never used. Had it been Bluetooth-only, none of the above would have worked.
+**It is an HP Smart Tank 580 (1F3Y2A).** Nothing to buy and nothing to build:
+it is Wi-Fi, it is Mopria-certified, and HP publish an Android print service
+plugin for it. From HP's own spec sheet:
 
-One residual step remains, and it belongs in the M0 §1.3 tablet setup because
-that is when both tablets are already in hand:
+| | |
+|---|---|
+| Connectivity | 1 Hi-Speed USB 2.0 · 1 Wi-Fi 802.11b/g/n · 1 Wi-Fi Direct |
+| Mobile printing | HP Smart app · Apple AirPrint · **Mopria Print Service** · **HP Print Service Plugin (Android)** · Wi-Fi Direct |
+| Paper | A4 all-in-one (print, scan, copy) |
 
-> **Install the printer's Android print service plugin on both tablets.**
-> Android does not discover network printers by itself — it goes through
-> Mopria Print Service (if the printer is Mopria-certified) or the
-> manufacturer's own plugin: HP Print Service, Canon Print Service, Brother
-> Print Service, Epson Print Enabler. Without one, the print dialog finds
-> nothing and the printer looks broken when it is not.
+Three corrections to what was written on 16 Aug, and the second one is the
+operational one:
+
+**There is no Ethernet port.** The earlier note said "Wi-Fi/Ethernet". This
+model has Wi-Fi and USB, nothing else. It does not change the plan — the
+tablets were always going to reach it over Wi-Fi — but it removes the wired
+fallback. If the clinic Wi-Fi is down, the printer is unreachable, full stop,
+and there is no cable that fixes it.
+
+**Its Wi-Fi is 2.4 GHz only.** This is the one that actually bites, and it
+bites on a router that looks perfectly healthy. A dual-band router presenting
+one SSID will put the tablets on 5 GHz and the printer on 2.4 GHz; on most
+home routers those are bridged and printing works, but where the bands are
+isolated — or where "AP isolation" or a guest network is switched on — the
+tablet and the printer are on the same Wi-Fi and cannot see each other.
+Discovery is mDNS, and mDNS does not cross that boundary. The symptom is a
+print dialog that finds nothing, which reads as a broken printer.
+
+**Its Bluetooth is for setup, not printing.** HP's BLE radio is how the HP
+Smart app onboards the printer onto Wi-Fi. It is not a print transport, which
+is exactly what the section above says about Bluetooth in general — so the
+earlier phrasing, "Bluetooth *and* Wi-Fi", was right about the outcome and
+wrong about why.
+
+Two steps remain, both in the M0 §1.3 tablet setup because that is when both
+tablets are already in hand:
+
+> **1. Put the printer and both tablets on the same 2.4 GHz network**, and
+> check AP isolation is off. Confirm it by opening the print dialog on each
+> tablet and seeing the printer by name — not by pinging it, which passes on a
+> network where discovery still fails.
+>
+> **2. Install HP Print Service Plugin on both tablets.** Android does not
+> discover network printers by itself; it goes through Mopria Print Service or
+> the manufacturer's plugin. Either works here — HP's own is the safer pick
+> for an HP printer. Without one, the print dialog finds nothing and the
+> printer looks broken when it is not.
 
 Then print one real prescription on it before go-live. That is the last thing
 standing between M1 and a closed gate.

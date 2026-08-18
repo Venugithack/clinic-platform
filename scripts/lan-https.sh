@@ -41,18 +41,35 @@ cat <<BANNER
         - confirm https://${HOST}:3000 shows no warning
         - then install the PWA from the browser menu
 
-   4. Install the printer's Android print service plugin:
-        - Mopria Print Service if the printer is Mopria-certified,
-          otherwise the manufacturer's own (HP / Canon / Brother /
-          Epson Print Enabler)
-        - Android does NOT discover network printers on its own. With
-          no plugin the print dialog finds nothing, and the printer
-          looks broken when it is not.
-        - then print one real prescription and keep the sheet
+   4. The printer — an HP Smart Tank 580. Two things, not one:
+
+      a) Put the printer and BOTH tablets on the same 2.4 GHz network,
+         and switch AP isolation / guest-network isolation off.
+           - this printer is 802.11b/g/n, 2.4 GHz only. A dual-band
+             router with one SSID can leave the tablets on 5 GHz, and
+             where the bands are isolated mDNS discovery does not cross
+             between them.
+           - do NOT confirm this with a ping. A ping passes on a network
+             where discovery still fails. Confirm it in step (c).
+
+      b) Install HP Print Service Plugin on both tablets (Mopria Print
+         Service also works — this printer is Mopria-certified — but
+         HP's own is the safer pick for an HP printer).
+           - Android does NOT discover network printers on its own.
+             With no plugin the print dialog finds nothing, and the
+             printer looks broken when it is not.
+
+      c) Open the print dialog on each tablet and confirm the printer
+         appears BY NAME. Then print one real prescription and keep
+         the sheet.
 
  Both tablets need all of this. A certificate the tablet does not trust
- fails exactly like no certificate at all, and a print dialog with no
- plugin behind it fails exactly like a printer that is switched off.
+ fails exactly like no certificate at all; a print dialog with no plugin
+ behind it fails exactly like a printer that is switched off; and a
+ tablet on the wrong Wi-Fi band fails exactly like both.
+
+ Note there is no wired fallback: this printer has Wi-Fi and USB, no
+ Ethernet. If the clinic Wi-Fi is down, nothing prints.
 
 ─────────────────────────────────────────────────────────────
 BANNER

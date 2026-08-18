@@ -53,7 +53,7 @@ None of these need signature, all of them have lead times.
 
 | Item | Owner | Why now |
 |---|---|---|
-| **Model number of the clinic's A4 printer** | doctor | If it is USB-only it cannot print from a tablet at all (`TABLET.md` §1). A purchase decision, not a go-live discovery |
+| ~~**Model number of the clinic's A4 printer**~~ | doctor | **Answered 17 Aug 2026: HP Smart Tank 580.** Wi-Fi, Mopria-certified, no Ethernet, 2.4 GHz only (`TABLET.md` §1) |
 | **Resolve the verification question** against Meta's own docs — the four points in `WHATSAPP.md` §0 | Venu, ~20 min | Could remove the longest pole in `PLAN.md` §9 entirely |
 | **Order the two tablets and stands** | doctor | ~1 week to arrive, and M0's HTTPS setup wants them |
 | **Start the drug master** from the last 6 months of purchase invoices | doctor | The real bottleneck, 1–2 weeks of his time (`INVENTORY.md` §9) |
@@ -247,7 +247,9 @@ Four boxes cannot be ticked outside the clinic. They are all §1.3 or hardware:
   in the clinic, on the clinic Wi-Fi.
 - [ ] Both tablets open the app over HTTPS and install as PWAs
 - [ ] A staff member unlocks with a PIN **on the real tablets**
-- [ ] The A4 printer model number is checked — a tablet cannot print over USB
+- [ ] HP Print Service Plugin installed on both tablets, and the **HP Smart
+      Tank 580** visible by name in the print dialog — it is 2.4 GHz Wi-Fi
+      only, so both tablets must be on that band with AP isolation off
 
 Until §1.3 is done, the camera, the service worker and PWA install all fail
 silently on the tablets. That is the trap the section exists to avoid, and it is
@@ -313,10 +315,27 @@ Worth recording because each was invisible to the layer above it:
 The M1 gate does not close until the prescription prints on the clinic's own A4
 printer, and that is now the riskiest open item in the build.
 
-**16 Aug 2026 — resolved, and it went the good way.** The clinic's A4 is a
-Bluetooth printer **and** has Wi-Fi/Ethernet. Nothing to buy, nothing to build:
-the tablets reach it over the clinic Wi-Fi and the Bluetooth radio is never
-used.
+**16 Aug 2026 — resolved, and it went the good way.** The clinic's A4 has
+Wi-Fi. Nothing to buy, nothing to build: the tablets reach it over the clinic
+Wi-Fi and the Bluetooth radio is never used.
+
+**17 Aug 2026 — the model, and two corrections.** It is an **HP Smart Tank 580
+(1F3Y2A)**: A4 all-in-one, Wi-Fi 802.11b/g/n plus Wi-Fi Direct, Mopria-certified,
+with an HP Print Service Plugin for Android. It works, and the plan does not
+change. But the 16 Aug note said "Wi-Fi/Ethernet" and that was wrong on both
+counts worth knowing:
+
+- **No Ethernet port.** Wi-Fi or USB, nothing else. There is no cable that
+  rescues a printer when the clinic Wi-Fi is down.
+- **2.4 GHz only**, and this is the one that bites on a router that looks
+  perfectly healthy. A dual-band router with one SSID can put the tablets on
+  5 GHz and the printer on 2.4 GHz; where the bands are isolated, or AP
+  isolation or a guest network is on, mDNS discovery does not cross and the
+  print dialog finds nothing. Same symptom as a broken printer, different
+  cause, and a ping test passes right through it.
+- Its Bluetooth is HP Smart app **onboarding**, not a print transport — which
+  is what `TABLET.md` §1 says about Bluetooth generally. The old phrasing was
+  right about the outcome and wrong about the reason.
 
 It is worth recording how close this came to being expensive. Bluetooth is not
 a network, and had the printer been Bluetooth-only it would have been as
@@ -326,10 +345,12 @@ Android; and Mopria, which is what `window.print()` reaches on Android,
 excludes Bluetooth outright (`TABLET.md` §1). The word "Bluetooth" nearly read
 as reassurance when it was the opposite.
 
-**One residual step, added to the M0 §1.3 tablet setup:** Android does not
-discover network printers by itself. It needs Mopria Print Service, or the
-manufacturer's own plugin, installed on each tablet. Without one the print
-dialog finds nothing and the printer looks broken when it is not.
+**Two residual steps, in the M0 §1.3 tablet setup.** Android does not discover
+network printers by itself: it needs Mopria Print Service or the manufacturer's
+plugin — HP's own, here — installed on each tablet. And the printer and both
+tablets have to be on the same 2.4 GHz network with AP isolation off. Confirm
+by opening the print dialog and seeing the printer *by name*, not by pinging
+it: a ping passes on a network where discovery still fails.
 
 So the M1 gate now needs exactly one thing, and it is ten minutes in the
 clinic: install the plugin on both tablets and print one real prescription.
