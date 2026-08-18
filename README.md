@@ -239,7 +239,7 @@ Build continues after `PLAN.md` §20 is signed off.
 2. ~~§18 questions 1–12 answered~~ — 9 of 12 answered 16 Aug 2026. Q7, Q12 and the WhatsApp session (§18.2) remain
 3. ~~§10.4 supplier send mode chosen~~ — **one-tap approval**, chosen 16 Aug 2026
 4. The §18.2 WhatsApp session with the doctor — six decisions, ~30 minutes, gates Meta verification
-5. Free-tier risks accepted in writing (`HOSTING.md` §9)
+5. Free-tier risks accepted in writing (`HOSTING.md` §9) — **not a gate on starting.** `PLAN.md` §18.1 deferred this on 16 Aug 2026: build local, decide with a working system in the room. Due around M4
 6. ~~Check the model number of the clinic's A4 printer~~ — **settled 17 Aug 2026: an HP Smart Tank 580.** Wi-Fi and Mopria-certified, so nothing to buy; Bluetooth alone would not have worked (`TABLET.md` §1). Two things for the tablet setup: it has **no Ethernet**, and its Wi-Fi is **2.4 GHz only**, so both tablets must sit on that band with AP isolation off or discovery fails while everything still pings
 7. Meta business verification started (day 1, and `WHATSAPP.md` §0 may show it is not needed at all)
 8. ~~**`BUILD.md` §0 — Q15, multi-tenant or not**~~ — **single-tenant, decided 16 Aug 2026.** The first migration is applied

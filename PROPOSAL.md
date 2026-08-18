@@ -18,8 +18,8 @@ deeper in the places that matter to a clinic.
 |---|---|
 | "connection between the doctor room and pharmacy" | A prescription you sign appears on the pharmacy counter screen in under a second. The counter can send a question back — *"Amoxicillin is out, substitute?"* — and you answer it without leaving your chair |
 | "inventory management of the medicines" | Every medicine, every batch, every expiry date. Stock goes up when you receive goods and down when you dispense, and the system can always tell you why it moved |
-| "low stock notification" | A live list on screen, plus one WhatsApp message each morning listing what has run low. One message, not one per medicine |
-| "auto message send to supplier in whatsapp" | The system prepares the order by itself, grouped per supplier. You look at it and tap **Send**. See §4 — there is a decision for you there |
+| "low stock notification" | A live list on the screen the counter is already looking at, with what has run low at the top of the ordering screen. Not a WhatsApp message — see the note under §4 |
+| "auto message send to supplier in whatsapp" | The system prepares the order by itself, grouped per supplier. You look at it and tap **Send**, and it goes from your own WhatsApp. See §4 |
 | "patients whatsapp… know if the doctor is available or not" | A live clinic status your patients can check any time, driven by whether you are logged in at the clinic — with safeguards so it is never wrong. See §5 |
 | "appointment booking and prescription checking" | Patients book on WhatsApp, get a token number, see how many are ahead of them, and open their prescription and bill on a link |
 
@@ -103,7 +103,7 @@ Alerts you will get:
 
 | Alert | When |
 |---|---|
-| Low stock | on screen live; one WhatsApp summary each morning |
+| Low stock | on screen, live |
 | Expiring soon | 90 / 60 / 30 days before, so there is still time to return it |
 | Expired | blocked from sale immediately, and listed for disposal |
 
@@ -122,11 +122,10 @@ means in practice:
 | **Substitution that knows the salt** | When something is out of stock, the alternatives shown are the same salt at the same strength — with price differences — and you approve the swap from your screen. It never substitutes on its own |
 | **Ordering that learns** | How fast each supplier actually delivers, measured from your own order history rather than what they promise. Purchase orders show what you paid last time, and to whom |
 
-### Supplier orders — a decision for you
+### Supplier orders — decided 16 August 2026
 
-You asked for the order to go to the supplier automatically. The system will
-prepare it automatically. **My recommendation is that a person taps Send.**
-Three reasons:
+You asked for the order to go to the supplier automatically. The system prepares
+it automatically. **A person taps Send.** Three reasons:
 
 1. **WhatsApp's rules.** Meta requires the person receiving a business message
    to have agreed to receive them. Suppliers do not fill in consent forms. If
@@ -142,18 +141,19 @@ Three reasons:
 
 **What you would actually experience:**
 
-> 8:00 am — one WhatsApp message: *"3 orders ready for approval."* You open it,
-> glance at the quantities, tap **Send**. About four seconds.
+> You open the orders screen. What has run low is already there, grouped into one
+> order per supplier. You glance at the quantities and tap **Send**. WhatsApp
+> opens on your phone with the order written and the supplier chosen. You press
+> send. About four seconds.
 
-If you would still prefer it fully automatic, two safer ways to do it:
+**This is what has been built.** The order leaves from your own WhatsApp rather
+than from a business account, which is why it costs nothing per message and needs
+no approval from Meta. It also removes reason 1 above entirely: there is no
+business number that can be restricted.
 
-| Option | What it means |
-|---|---|
-| **Second WhatsApp number** for supplier orders only | A problem with a supplier can never affect the number your patients use. About ₹200/month. Worth doing regardless |
-| **Send from your own phone** | The system writes the order and opens WhatsApp on your phone with the message ready. You press send. No cost, no rules to worry about, and it is how most clinics order today |
-
-Whichever you choose, please tell me before the build starts — it changes how
-the system is put together.
+A second WhatsApp number, for supplier orders only, is still worth having if you
+ever want the clinic's number kept clear of supplier traffic — about ₹200/month.
+Nothing in this build depends on it.
 
 ---
 
@@ -337,7 +337,7 @@ is what it means in practice:
 | **Everything is traceable** | Every change records who made it, when, and what it was before |
 | **Automatic testing** | The system is re-tested automatically on every change, including every one of the refusals listed in §3 |
 | **A practice copy** | A complete second copy of the system, with your real medicine list and imaginary patients. Every change goes there first |
-| **Backups** | Daily, stored separately — and a full restore is *performed and proven* before go-live, not just configured. Repeated every three months |
+| **Backups** | Hourly, stored separately — and a full restore is *performed and proven* before go-live, not just configured. Repeated every three months |
 | **Nightly stock check** | The system reconciles itself every night and alerts me if any number has drifted |
 | **Monitoring** | I am alerted if anything breaks, whether or not anyone tells me |
 | **Two weeks running alongside paper** | Non-negotiable. It is the only reliable way to find the things about how your clinic actually works that neither of us thought to mention |
@@ -393,9 +393,15 @@ are genuinely production-grade at the size of one clinic, and they stay free —
 this is not a trial period that expires. Your database sits in Mumbai either
 way, which is what the privacy law requires.
 
-WhatsApp charges per message and the rates are set by Meta, not by me. The
-figure above assumes the once-daily reminder design in §5; per-dose reminders
-would push it to roughly ₹2,900.
+WhatsApp charges per message and the rates are set by Meta, not by me. **The
+~₹390 above carries no medicine reminders at all** — §5 recommends going live
+without them and adding them once you have seen the system in use. If you want
+them later, the two designs cost:
+
+| Reminder design | Added per month | New total |
+|---|---|---|
+| One message a day, listing that day's doses | ~₹150 | **~₹540** |
+| One message per dose | ~₹2,200 | **~₹2,590** |
 
 **What free hosting means in practice, honestly.** Two things are different from
 a paid plan, and you should decide with both in front of you:
@@ -457,7 +463,7 @@ same page.
 | **A 30-minute WhatsApp conversation** — six decisions about which number sends what, and to whom | I'll walk you through each one | Before day one, because Meta verification depends on it |
 | **Roughly how many patients a day**, and how many use a smartphone | Affects how much the patient side leans on WhatsApp versus the web link | Before week 7 |
 | **Who owns the software** | Assignment or a permanent licence to you — both are fine, they just say different things | Before signing |
-| **Whether you accept free hosting**, having read §10 | Your call, and worth ~₹4,300 a month | Before we start |
+| **Whether you accept free hosting**, having read §10 | Your call, and worth ~₹4,300 a month. We build locally first, so you make this one with the working system in front of you rather than on paper | Around week 7, once billing works |
 | **Anything you do daily that I have not mentioned** | Still the most useful question on this list | Any time |
 
 ---
