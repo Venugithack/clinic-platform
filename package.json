@@ -14,7 +14,7 @@
     "lint": "eslint . && node scripts/lint-css-hover.mjs",
     "test:unit": "vitest run",
     "test:db": "./scripts/db-test.sh",
-    "test:e2e": "./scripts/dev-stack.sh && playwright test",
+    "test:e2e": "./scripts/dev-stack.sh --reset && playwright test",
     "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:db && pnpm test:first-run && pnpm test:e2e",
     "db:start": "./scripts/db-start.sh",
     "db:stop": "./scripts/db-stop.sh",
