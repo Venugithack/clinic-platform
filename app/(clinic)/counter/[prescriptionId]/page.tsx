@@ -27,12 +27,12 @@ import { useParams, useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { ScanField } from '@/components/ScanField';
 import {
+  counterHeader,
   fefoPreview,
-  pharmacyQueueEntry,
   queriesForPrescription,
   type AnsweredQuery,
+  type CounterHeader,
   type FefoBatch,
-  type PharmacyQueueEntry,
 } from '@/lib/db/pharmacy';
 import { prescriptionForPrint, type PrescriptionItem } from '@/lib/db/encounters';
 import { drugsByIds, equivalentDrugs, stockBadge, type DrugRow } from '@/lib/db/drugs';
@@ -47,7 +47,7 @@ export default function CounterPrescriptionPage() {
   const router = useRouter();
   const { prescriptionId } = useParams<{ prescriptionId: string }>();
 
-  const [entry, setEntry] = useState<PharmacyQueueEntry | null>(null);
+  const [header, setHeader] = useState<CounterHeader | null>(null);
   const [items, setItems] = useState<PrescriptionItem[]>([]);
   const [drugs, setDrugs] = useState<Map<string, DrugRow>>(new Map());
   const [queries, setQueries] = useState<AnsweredQuery[]>([]);
@@ -82,12 +82,12 @@ export default function CounterPrescriptionPage() {
     setError(null);
     void (async () => {
       try {
-        const [queueEntry, rx, qs] = await Promise.all([
-          pharmacyQueueEntry(prescriptionId),
+        const [who, rx, qs] = await Promise.all([
+          counterHeader(prescriptionId),
           prescriptionForPrint(prescriptionId),
           queriesForPrescription(prescriptionId),
         ]);
-        setEntry(queueEntry);
+        setHeader(who);
         setQueries(qs);
 
         if (rx) {
@@ -175,7 +175,7 @@ export default function CounterPrescriptionPage() {
     try {
       await dispense({
         prescriptionId,
-        patientId: entry?.patient_id,
+        patientId: header?.patient_id,
         lines: items.map((item) => {
           const answer = answerFor(item.drug_id);
           const substituted =
@@ -233,14 +233,14 @@ export default function CounterPrescriptionPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-xl font-semibold">{entry?.patient_name ?? '…'}</h2>
+          <h2 className="text-xl font-semibold">{header?.patient_name ?? '…'}</h2>
           <p className="tabular mt-1 text-muted">
-            Token {entry?.token_no ?? '—'} · {entry?.doctor_name}
+            Token {header?.token_no ?? '—'} · {header?.doctor_name}
           </p>
 
-          {entry?.allergies ? (
+          {header?.allergies ? (
             <p className="mt-4 rounded-lg bg-danger/10 p-3 text-danger">
-              Allergies: {entry.allergies}
+              Allergies: {header.allergies}
             </p>
           ) : null}
 

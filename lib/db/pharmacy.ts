@@ -35,17 +35,66 @@ export async function pharmacyQueue(): Promise<PharmacyQueueEntry[]> {
   return data as PharmacyQueueEntry[];
 }
 
-export async function pharmacyQueueEntry(
+/** Who the dispense screen is about: the person, their allergies, their token. */
+export interface CounterHeader {
+  patient_id: string;
+  patient_name: string;
+  allergies: string | null;
+  token_no: number | null;
+  doctor_name: string;
+}
+
+/**
+ * The dispense screen's header, for a prescription in any state.
+ *
+ * Deliberately NOT read from `pharmacy_queue`. That view is the counter's
+ * worklist and holds only `pending` and `partial`, so the row vanished the
+ * instant a prescription was fully dispensed — and the screen, still open in
+ * front of the pharmacist, replaced the patient's name with the same `…` it
+ * shows while loading and the token with `—`. The identity disappeared at the
+ * exact moment it was being confirmed, and a completed dispense was rendered
+ * as a screen that had failed to load.
+ *
+ * `prescriptions` has no status filter on it, so this answers for a
+ * prescription that is pending, partly dispensed, or finished — which is what a
+ * header should do. Allergies come from the patient and the token from the
+ * appointment, neither of which stops being true when the medicine is handed
+ * over.
+ */
+export async function counterHeader(
   prescriptionId: string,
-): Promise<PharmacyQueueEntry | null> {
+): Promise<CounterHeader | null> {
   const { data, error } = await db()
-    .from('pharmacy_queue')
-    .select('*')
-    .eq('prescription_id', prescriptionId)
+    .from('prescriptions')
+    .select(
+      `patient_id,
+       patient:patients!prescriptions_patient_id_fkey(name, allergies),
+       doctor:staff!prescriptions_doctor_id_fkey(name),
+       encounter:encounters!prescriptions_encounter_id_fkey(
+         appointment:appointments!encounters_appointment_id_fkey(token_no)
+       )`,
+    )
+    .eq('id', prescriptionId)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  return (data as PharmacyQueueEntry) ?? null;
+  if (!data) return null;
+
+  const row = data as unknown as {
+    patient_id: string;
+    patient: { name: string; allergies: string | null } | null;
+    doctor: { name: string } | null;
+    encounter: { appointment: { token_no: number | null } | null } | null;
+  };
+
+  return {
+    patient_id: row.patient_id,
+    patient_name: row.patient?.name ?? '',
+    allergies: row.patient?.allergies ?? null,
+    // A walk-in seen without an appointment has no token, and never had one.
+    token_no: row.encounter?.appointment?.token_no ?? null,
+    doctor_name: row.doctor?.name ?? '',
+  };
 }
 
 export interface FefoBatch {

@@ -137,3 +137,56 @@ test('a pack that is not on the prescription is refused, loudly', async ({ brows
   await cabin.close();
   await counter.close();
 });
+
+test('the patient stays named after the medicine is handed over', async ({ browser }) => {
+  // The dispense screen's header used to read `pharmacy_queue`, which holds
+  // only pending and partial prescriptions. So the moment a dispense completed
+  // the row left the view, the header went null, and the pane fell back to the
+  // very placeholder it uses while loading: the patient's name became "…" and
+  // the token became "—", on the screen where the pharmacist is confirming who
+  // they are handing medicine to. A finished dispense rendered as one that had
+  // failed to load.
+  const cabin = await browser.newContext();
+  const counter = await browser.newContext();
+  const doctorPage = await cabin.newPage();
+  const counterPage = await counter.newPage();
+  counterPage.on('dialog', (dialog) => void dialog.accept());
+
+  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(counterPage, 'seed-device-counter', 'Counter');
+
+  const patient = `Named ${Date.now()}`;
+  await prescribe(doctorPage, patient, 'Glycomet 500', '1 strip');
+
+  await counterPage.goto('/counter');
+  await counterPage.getByRole('button', { name: new RegExp(patient) }).first().click();
+  await expect(counterPage.getByRole('heading', { name: 'Dispense', exact: true })).toBeVisible();
+
+  const pane = counterPage.locator('[data-pane="context"]');
+  await expect(pane).toContainText(patient);
+
+  const noBarcode = counterPage.getByRole('button', { name: 'No barcode' });
+  for (let left = await noBarcode.count(); left > 0; left = await noBarcode.count()) {
+    await noBarcode.first().click();
+  }
+  await counterPage.getByRole('button', { name: 'Dispense', exact: true }).click();
+  await expect(counterPage.getByText(/Dispensed\./)).toBeVisible();
+
+  // The assertion that matters: still named, still tokened, after success.
+  await expect(pane).toContainText(patient);
+  await expect(pane).not.toContainText('Token —');
+
+  // And the same screen opened cold, which the old header never handled at all
+  // — there the name was missing from the first paint rather than lost on the
+  // way through.
+  // A fresh tab is a fresh unlock: the device token is in localStorage and
+  // shared, but the PIN session is in sessionStorage and is not.
+  const cold = await cabin.newPage();
+  await signIn(cold, 'seed-device-cabin', 'Dr Seed');
+  await cold.goto(counterPage.url());
+  await expect(cold.getByRole('heading', { name: 'Dispense', exact: true })).toBeVisible();
+  await expect(cold.locator('[data-pane="context"]')).toContainText(patient);
+
+  await cabin.close();
+  await counter.close();
+});
