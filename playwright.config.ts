@@ -8,6 +8,26 @@ import { defineConfig, devices } from '@playwright/test';
  * passes at 1440px wide tells you nothing about the device the pharmacist is
  * actually holding.
  */
+/**
+ * This suite requires the development seed, and requires it FRESH.
+ *
+ * The specs assert against seeded rows by name and by number, deliberately:
+ * m3-expiry names Shelcal and Zincovit because the seed places one inside its
+ * supplier's return window and one past it, and m9-offline asserts a count of
+ * exactly one unbilled counter sale because "it landed once" is the property
+ * under test. Both are the right assertions and neither survives a database
+ * that has already been run against.
+ *
+ * So `pnpm test:e2e` resets before it runs, and CI does the same. Without that
+ * the suite passes once and then fails on the second run with counts that have
+ * drifted — 7 specs, all of them reporting a number that looks like a real
+ * regression and is not. That symptom cost a debugging session once already;
+ * the reset is what stops it being rediscovered.
+ *
+ * The consequence to know about: running the E2E suite DISCARDS whatever is in
+ * the local database. That is the intended trade — a suite that only passes on
+ * a virgin database, without guaranteeing one, is a suite that lies.
+ */
 export default defineConfig({
   testDir: './e2e',
   /**
