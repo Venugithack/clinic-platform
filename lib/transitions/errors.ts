@@ -33,6 +33,7 @@ export type TransitionErrorCode =
   | 'NOT_REPLAYABLE'
   | 'IMPORT_REFUSED'
   | 'BAD_SETTING'
+  | 'ALREADY_DISPENSED'
   | 'UNKNOWN';
 
 const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
@@ -62,6 +63,7 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   CL024: 'NOT_REPLAYABLE',
   CL025: 'IMPORT_REFUSED',
   CL026: 'BAD_SETTING',
+  CL028: 'ALREADY_DISPENSED',
 };
 
 export class TransitionError extends Error {
