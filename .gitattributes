@@ -1,0 +1,26 @@
+# Line endings.
+#
+# Git's default on Windows (core.autocrlf=true) converts text files to CRLF on
+# checkout. For most of this repository that is harmless. For anything with a
+# shebang it is fatal, and fatal in a way that reads as a broken toolchain
+# rather than a line-ending problem:
+#
+#   $ ./scripts/dev-stack.sh
+#   /usr/bin/env: 'bash\r': No such file or directory
+#   /usr/bin/env: use -[v]S to pass options in shebang lines
+#
+# `bash\r` is not a program, so every one of the 22 shell scripts here — the
+# local stack, the migrations, the backup, the restore drill, the first-run
+# drill, the LAN HTTPS runbook — fails on a fresh Windows clone before it runs
+# a single line. CI never saw it because CI is Ubuntu.
+#
+# So the scripts are checked out LF everywhere, whatever the platform and
+# whatever the developer's core.autocrlf says. The .mjs entries are here for
+# the same reason: scripts/dev-api.mjs and scripts/lint-css-hover.mjs both
+# carry shebangs, and today they are only ever invoked as `node <file>` — which
+# is exactly the kind of detail that changes quietly and breaks loudly.
+
+* text=auto
+
+*.sh  text eol=lf
+*.mjs text eol=lf
