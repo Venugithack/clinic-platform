@@ -91,12 +91,33 @@ test('an H1 row with no address is fixed from the register that flagged it', asy
     .locator('tr', { hasText: PATIENT });
   await expect(flagged).toBeVisible();
 
+  // Slow the record's own read right down before opening it.
+  //
+  // This does not create a race, it widens one. The patient form used to render
+  // immediately, empty, while load() was still in flight — and load() ends by
+  // calling setName/setAddress/… with whatever came back. So an address typed
+  // in that window was overwritten the instant the read landed, Save wrote the
+  // server's values, and the screen still said "Saved. The change is recorded
+  // against your name." Nothing had been recorded, and this test failed about
+  // one run in four because of it. On the clinic's 4G fallback the window is
+  // wide enough to type a whole address into.
+  await doctorPage.route('**/rest/v1/patients*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+
   // M8 stopped here. M11d adds the way out of it.
   await flagged.getByRole('button', { name: 'Add address' }).click();
   await expect(doctorPage.getByRole('heading', { name: 'Patient record' })).toBeVisible();
   await doctorPage.getByLabel('Address').fill('12 Nehru Street, Kadapa');
+
+  // Long enough for the delayed read to land on top of it, if it still could.
+  await doctorPage.waitForTimeout(2000);
+  await expect(doctorPage.getByLabel('Address')).toHaveValue('12 Nehru Street, Kadapa');
+
   await doctorPage.getByRole('button', { name: 'Save' }).click();
   await expect(doctorPage.getByTestId('patient-saved')).toBeVisible();
+  await doctorPage.unroute('**/rest/v1/patients*');
 
   // Back on the register the row is complete, and the offer to fix it is gone.
   await doctorPage.goto('/reports');
