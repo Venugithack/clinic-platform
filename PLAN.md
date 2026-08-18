@@ -561,7 +561,7 @@ and year, as printed on the strip.
 | Channel | When | Why |
 |---|---|---|
 | In-app badge + list | live | the counter is looking at the screen anyway |
-| WhatsApp digest to staff | once daily, 08:00 | one message, not one per drug |
+| ~~WhatsApp digest to staff~~ | — | **Dropped.** §10.3 is the decision of record: in-app only. A staff digest is business-initiated, so it needs a template and a per-message cost to deliver what is already on the screen they are holding |
 | Escalation | still low after 3 days | it was seen and ignored |
 
 Reorder level is manual at go-live. After 60 days of movement data, offer a
