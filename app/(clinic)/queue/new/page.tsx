@@ -246,7 +246,7 @@ export default function RegisterWalkInPage() {
             className="flex h-14 w-full items-center gap-3 rounded-box border border-rule bg-sheet px-4 text-left active:bg-paper-2"
           >
             <span
-              className={`flex h-6 w-6 items-center justify-center rounded border ${
+              className={`flex h-6 w-6 items-center justify-center rounded-box border ${
                 consent ? 'border-ink bg-ink text-paper' : 'border-rule'
               }`}
             >

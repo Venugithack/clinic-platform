@@ -325,7 +325,7 @@ function Receiving() {
             </p>
           ) : null}
 
-          <p className="mt-3 text-sm text-ink-2">Supplier</p>
+          <p className="eyebrow mt-3">Supplier</p>
           <div className="mt-1 flex flex-col gap-2" role="group" aria-label="Supplier">
             {suppliers.map((row) => (
               <button
@@ -499,7 +499,7 @@ function Receiving() {
             className="blank tabular mt-1 h-14 w-64 px-3 text-lg"
           />
 
-          <p className="mt-4 text-sm text-ink-2">Expiry, as printed on the strip</p>
+          <p className="eyebrow mt-4">Expiry, as printed on the strip</p>
           <div className="mt-1 flex flex-wrap gap-2" role="group" aria-label="Expiry month">
             {MONTHS.map((label, index) => (
               <button

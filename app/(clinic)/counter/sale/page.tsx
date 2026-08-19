@@ -149,7 +149,7 @@ export default function CounterSalePage() {
           ) : null}
 
           <div className="rounded-box border border-rule bg-sheet p-3 text-center">
-            <p className="text-sm text-ink-2">Total</p>
+            <p className="eyebrow">Total</p>
             {/* Large enough to read from the customer's side of the counter. */}
             <p className="tabular text-4xl font-medium" data-testid="sale-total">
               ₹{paiseToRupees(totalPaise)}

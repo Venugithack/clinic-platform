@@ -175,6 +175,21 @@ table,
 }
 
 /*
+ * Placeholders carry instructions in this app, not examples — "Needed on the
+ * H1 register", "None known", "Or type the code". At ink-3 they measured
+ * 3.30:1 on the sheet, which is below AA and genuinely hard to read on a
+ * tablet at arm's length. ink-3 keeps its other jobs (chevrons, disabled text,
+ * where 3:1 is the right bar); placeholder text is lifted to ink-2 at 6.69:1.
+ *
+ * It stays clearly lighter than a real value, which is ink at 16.52:1, so a
+ * placeholder is still not mistaken for something somebody typed.
+ */
+::placeholder {
+  color: var(--color-ink-2);
+  opacity: 1; /* Firefox dims placeholders by default; that is the bug again. */
+}
+
+/*
  * TABLET.md §2 rule 1: nothing depends on hover, because there is no cursor.
  *
  * Any hover styling in this codebase is written inside this query, so a device
