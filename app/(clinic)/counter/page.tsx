@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { pharmacyQueue, type PharmacyQueueEntry, type StockState } from '@/lib/db/pharmacy';
 import { subscribe } from '@/lib/realtime';
 import { currentSession, lock } from '@/lib/auth';
@@ -23,9 +24,9 @@ const STOCK_LABEL: Record<StockState, string> = {
 };
 
 const STOCK_STYLE: Record<StockState, string> = {
-  full: 'text-ok',
+  full: 'text-free',
   partial: 'text-ink',
-  out: 'text-danger',
+  out: 'text-stop',
 };
 
 export default function CounterPage() {
@@ -64,7 +65,7 @@ export default function CounterPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Pharmacy</h2>
+          <h2 className="eyebrow">Pharmacy</h2>
           <p className="mt-1 text-lg">
             {queue.length} waiting to dispense
           </p>
@@ -73,13 +74,13 @@ export default function CounterPage() {
               because a screen that has quietly stopped receiving looks exactly
               like a quiet afternoon. */}
           {asOf ? (
-            <p className="tabular mt-2 text-sm text-muted">
+            <p className="tabular mt-2 text-sm text-ink-2">
               live · as of {asOf.toLocaleTimeString('en-IN')}
             </p>
           ) : null}
 
           {session ? (
-            <p className="mt-8 text-sm text-muted">Signed in as {session.staffName}</p>
+            <p className="mt-8 text-sm text-ink-2">Signed in as {session.staffName}</p>
           ) : null}
         </div>
       }
@@ -107,12 +108,12 @@ export default function CounterPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Counter</h1>
+      <PageHeader eyebrow="Pharmacy" title="Counter" />
 
-      {error ? <p className="mt-4 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
 
       {queue.length === 0 && !error ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           Nothing to dispense. Signed prescriptions appear here as the doctor
           signs them.
         </p>
@@ -126,7 +127,7 @@ export default function CounterPage() {
               onClick={() =>
                 router.push(`/counter/${entry.prescription_id}` as Route)
               }
-              className="flex h-20 w-full items-center gap-5 border-b border-line px-3 text-left active:bg-line"
+              className="flex h-20 w-full items-center gap-5 border-b border-rule px-3 text-left active:bg-paper-2"
             >
               <span className="tabular w-14 shrink-0 text-3xl font-medium">
                 {entry.token_no ?? '—'}
@@ -134,19 +135,19 @@ export default function CounterPage() {
 
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-lg">{entry.patient_name}</span>
-                <span className="tabular block truncate text-sm text-muted">
+                <span className="tabular block truncate text-sm text-ink-2">
                   {entry.lines} item{entry.lines === 1 ? '' : 's'} · {entry.doctor_name}
                 </span>
               </span>
 
               {entry.allergies ? (
-                <span className="shrink-0 rounded bg-danger/10 px-2 py-1 text-sm text-danger">
+                <span className="shrink-0 rounded bg-stop-wash px-2 py-1 text-sm text-stop">
                   {entry.allergies}
                 </span>
               ) : null}
 
               {entry.open_queries > 0 ? (
-                <span className="shrink-0 rounded bg-ink px-2 py-1 text-sm text-white">
+                <span className="shrink-0 rounded bg-ink px-2 py-1 text-sm text-paper">
                   waiting on doctor
                 </span>
               ) : null}

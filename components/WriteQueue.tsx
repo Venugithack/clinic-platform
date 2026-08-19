@@ -58,21 +58,21 @@ export function WriteQueue() {
   if (waiting.length === 0 && stopped.length === 0) return null;
 
   return (
-    <div className="border-b border-line" data-testid="write-queue">
+    <div className="border-b border-rule" data-testid="write-queue">
       {waiting.length > 0 ? (
-        <div className="flex items-center gap-4 bg-ink/5 px-5 py-3">
+        <div className="flex items-center gap-4 bg-paper-2 px-5 py-3">
           <span className="tabular text-lg">
             {waiting.length} write{waiting.length === 1 ? '' : 's'} saved on this
             tablet, not yet in the ledger
           </span>
-          <span className="flex-1 text-sm text-muted">
+          <span className="flex-1 text-sm text-ink-2">
             They go in on their own when the network is back.
           </span>
           <button
             type="button"
             disabled={busy}
             onClick={send}
-            className="h-11 rounded-lg border border-ink px-4 text-sm active:bg-line disabled:opacity-40"
+            className="h-11 rounded-box border border-ink px-4 text-sm active:bg-paper-2 disabled:opacity-40"
           >
             {busy ? 'Sending…' : 'Try now'}
           </button>
@@ -82,7 +82,7 @@ export function WriteQueue() {
       {stopped.map((item) => (
         <div
           key={item.key}
-          className="flex items-center gap-4 bg-danger/10 px-5 py-3 text-danger"
+          className="flex items-center gap-4 bg-stop-wash px-5 py-3 text-stop"
         >
           <span className="flex-1">{item.refusal}</span>
           <span className="text-sm">
@@ -92,7 +92,7 @@ export function WriteQueue() {
           <button
             type="button"
             onClick={() => forget(item.key)}
-            className="h-11 rounded-lg border border-danger px-4 text-sm active:bg-line"
+            className="h-11 rounded-box border border-stop px-4 text-sm active:bg-paper-2"
           >
             Dismiss
           </button>

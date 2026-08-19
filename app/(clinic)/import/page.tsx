@@ -24,6 +24,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
 import { downloadCsv, parseCsvObjects, toCsv } from '@/lib/reports/csv';
 import {
@@ -240,18 +241,18 @@ export default function ImportPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">
+          <h2 className="eyebrow">
             {tab === 'drugs' ? 'Drug master' : 'Opening stock'}
           </h2>
           <p className="tabular mt-1 text-lg">
             {count === 0 ? 'no file yet' : `${count} rows read`}
           </p>
 
-          <p className="mt-6 text-sm text-muted">
+          <p className="mt-6 text-sm text-ink-2">
             Three things are true of both these files, and they are worth
             knowing before you start.
           </p>
-          <ol className="mt-3 list-decimal space-y-3 pl-4 text-sm text-muted">
+          <ol className="mt-3 list-decimal space-y-3 pl-4 text-sm text-ink-2">
             <li>
               Nothing is written until you have seen what it will do. Check the
               file as often as you like.
@@ -269,12 +270,12 @@ export default function ImportPage() {
 
           {tab === 'drugs' ? (
             <>
-              <p className="mt-6 text-sm text-muted">
+              <p className="mt-6 text-sm text-ink-2">
                 <strong className="text-ink">Needed on every row:</strong> name,
                 strength, salt composition, form. Everything else is optional
                 and an empty cell keeps whatever is already there.
               </p>
-              <p className="mt-3 text-sm text-muted">
+              <p className="mt-3 text-sm text-ink-2">
                 Suppliers are created from the supplier column, by name. Their
                 WhatsApp number and return window are set on the supplier, not
                 here.
@@ -282,12 +283,12 @@ export default function ImportPage() {
             </>
           ) : (
             <>
-              <p className="mt-6 text-sm text-muted">
+              <p className="mt-6 text-sm text-ink-2">
                 <strong className="text-ink">Load the drug master first.</strong>{' '}
                 Every stock row names a drug, and one the master has never heard
                 of is refused rather than invented.
               </p>
-              <p className="mt-3 text-sm text-muted">
+              <p className="mt-3 text-sm text-ink-2">
                 <strong className="text-ink">Say what the numbers mean.</strong>{' '}
                 A quantity and a rate can be in different units on the same row —
                 boxes counted, rate per strip. Both default to strips, and
@@ -352,9 +353,10 @@ export default function ImportPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">
-        {tab === 'drugs' ? 'Import the drug master' : 'Load the opening stock'}
-      </h1>
+      <PageHeader
+        eyebrow="Administration"
+        title={tab === 'drugs' ? 'Import the drug master' : 'Load the opening stock'}
+      />
 
       {/* The order is not a preference: stock names drugs. */}
       <div className="mt-4 flex gap-3">
@@ -372,8 +374,8 @@ export default function ImportPage() {
               setTab(value);
               reset();
             }}
-            className={`h-14 rounded-xl border px-5 text-base font-medium active:bg-line ${
-              tab === value ? 'border-ink bg-ink text-white' : 'border-line bg-white'
+            className={`h-14 rounded-box border px-5 text-base font-medium active:bg-paper-2 ${
+              tab === value ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'
             }`}
           >
             {label}
@@ -382,7 +384,7 @@ export default function ImportPage() {
       </div>
 
       {!allowed ? (
-        <p className="mt-4 max-w-2xl rounded-lg bg-ink/5 p-3 text-muted">
+        <p className="mt-4 max-w-2xl rounded-box bg-paper-2 p-3 text-ink-2">
           {tab === 'drugs'
             ? 'The drug master is loaded by the doctor or an administrator — it decides what can be prescribed and what a strip is worth.'
             : 'Opening stock is loaded by the doctor or an administrator — it is the whole value of the shelf.'}
@@ -390,14 +392,14 @@ export default function ImportPage() {
       ) : null}
 
       {error ? (
-        <p className="mt-4 max-w-3xl rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad" className="max-w-3xl">{error}</Notice>
       ) : null}
 
       {done ? (
         <p
           role="status"
           data-testid="import-done"
-          className="mt-4 max-w-3xl rounded-lg bg-ok/10 p-3 text-ok"
+          className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free"
         >
           Loaded. {done.created} new, {done.updated} updated
           {done.suppliers_created > 0
@@ -411,7 +413,7 @@ export default function ImportPage() {
         <p
           role="status"
           data-testid="stock-done"
-          className="mt-4 max-w-3xl rounded-lg bg-ok/10 p-3 text-ok"
+          className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free"
         >
           The shelf is loaded. {stockDone.batches} batches, {stockDone.units} units,{' '}
           {rupees(stockDone.value)} at cost. Every one of them went through goods
@@ -420,7 +422,7 @@ export default function ImportPage() {
       ) : null}
 
       <div className="mt-6 flex items-center gap-4">
-        <label className="flex h-14 cursor-pointer items-center rounded-xl border border-line bg-white px-5 text-base font-medium active:opacity-80">
+        <label className="flex h-14 cursor-pointer items-center rounded-box border border-rule bg-sheet px-5 text-base font-medium active:opacity-80">
           Choose a CSV
           <input
             type="file"
@@ -429,7 +431,7 @@ export default function ImportPage() {
             onChange={(event) => void onFile(event.target.files?.[0])}
           />
         </label>
-        <span className="text-sm text-muted">or paste it below</span>
+        <span className="text-sm text-ink-2">or paste it below</span>
       </div>
 
       <textarea
@@ -448,7 +450,7 @@ export default function ImportPage() {
             ? 'name,strength,salt_composition,form,schedule,supplier\nDolo 650,650mg,Paracetamol,tablet,OTC,Kumar Distributors'
             : 'name,strength,batch_no,expiry,qty,qty_basis,cost,cost_basis,mrp\nDolo 650,650mg,DL2411A,03/2027,20,strip,18.00,strip,34.50'
         }
-        className="tabular mt-4 h-56 w-full max-w-4xl rounded-xl border border-line bg-white p-3 font-mono text-sm"
+        className="blank tabular mt-4 h-56 w-full max-w-4xl p-3 font-mono text-sm"
       />
 
       {/* What the tablet read, before the database has been asked anything.
@@ -457,11 +459,11 @@ export default function ImportPage() {
       {count > 0 ? (
         <>
           <h2 className="mt-6 text-lg font-medium">The first few rows, as read</h2>
-          <div className="mt-2 max-w-4xl overflow-x-auto rounded-xl border border-line bg-white">
+          <div className="mt-2 min-w-0 max-w-4xl overflow-x-auto rounded-box border border-rule bg-sheet">
             {tab === 'drugs' ? (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-line text-left text-muted">
+                  <tr className="border-b border-rule text-left text-ink-2">
                     <th className="p-2 font-medium">Name</th>
                     <th className="p-2 font-medium">Strength</th>
                     <th className="p-2 font-medium">Salt</th>
@@ -473,7 +475,7 @@ export default function ImportPage() {
                 </thead>
                 <tbody>
                   {rows.slice(0, 8).map((row, index) => (
-                    <tr key={index} className="border-b border-line last:border-0">
+                    <tr key={index} className="border-b border-rule last:border-0">
                       <td className="p-2">{row.name ?? '—'}</td>
                       <td className="p-2">{row.strength ?? '—'}</td>
                       <td className="p-2">{row.salt_composition ?? '—'}</td>
@@ -490,7 +492,7 @@ export default function ImportPage() {
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-line text-left text-muted">
+                  <tr className="border-b border-rule text-left text-ink-2">
                     <th className="p-2 font-medium">Name</th>
                     <th className="p-2 font-medium">Batch</th>
                     <th className="p-2 font-medium">Expiry</th>
@@ -502,7 +504,7 @@ export default function ImportPage() {
                 </thead>
                 <tbody>
                   {stockRows.slice(0, 8).map((row, index) => (
-                    <tr key={index} className="border-b border-line last:border-0">
+                    <tr key={index} className="border-b border-rule last:border-0">
                       <td className="p-2">{row.name ?? '—'}</td>
                       <td className="p-2">{row.batch_no ?? '—'}</td>
                       <td className="p-2">{row.expiry ?? '—'}</td>
@@ -524,7 +526,7 @@ export default function ImportPage() {
             )}
           </div>
           {count > 8 ? (
-            <p className="mt-2 text-sm text-muted">and {count - 8} more.</p>
+            <p className="mt-2 text-sm text-ink-2">and {count - 8} more.</p>
           ) : null}
         </>
       ) : null}
@@ -532,7 +534,7 @@ export default function ImportPage() {
       {showCheck ? (
         <div
           data-testid={tab === 'drugs' ? 'import-check' : 'stock-check'}
-          className="mt-6 max-w-4xl rounded-xl border border-line bg-white p-4"
+          className="mt-6 max-w-4xl rounded-box border border-rule bg-sheet p-4"
         >
           <h2 className="text-lg font-medium">
             {clean ? 'The file reads cleanly' : 'Some rows cannot be imported'}
@@ -563,7 +565,7 @@ export default function ImportPage() {
               <p className="tabular mt-3 text-2xl font-medium" data-testid="stock-value">
                 {rupees(stockChecked?.value ?? 0)}
               </p>
-              <p className="text-sm text-muted">
+              <p className="text-sm text-ink-2">
                 the whole shelf, at cost. If that is not roughly the number you
                 expect, a quantity or a rate is in the wrong unit.
               </p>
@@ -571,13 +573,13 @@ export default function ImportPage() {
           )}
 
           {clean ? (
-            <p className="mt-2 text-sm text-muted">
+            <p className="mt-2 text-sm text-ink-2">
               Nothing has been written yet.{' '}
               {tab === 'drugs' ? 'Import writes it.' : 'Loading writes it.'}
             </p>
           ) : (
             <>
-              <p className="mt-2 text-sm text-muted">
+              <p className="mt-2 text-sm text-ink-2">
                 Nothing has been written. Fix these rows in the file and check it
                 again — the whole file goes in together or not at all.
               </p>
@@ -585,13 +587,13 @@ export default function ImportPage() {
                 {errors.map((row) => (
                   <li
                     key={row.row}
-                    className="flex gap-3 border-b border-line py-2 last:border-0"
+                    className="flex gap-3 border-b border-rule py-2 last:border-0"
                   >
-                    <span className="tabular w-20 shrink-0 text-muted">
+                    <span className="tabular w-20 shrink-0 text-ink-2">
                       row {row.row}
                     </span>
                     <span className="w-48 shrink-0 truncate">{row.name ?? '—'}</span>
-                    <span className="flex-1 text-danger">{row.message}</span>
+                    <span className="flex-1 text-stop">{row.message}</span>
                   </li>
                 ))}
               </ul>

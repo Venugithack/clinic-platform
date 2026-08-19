@@ -27,6 +27,7 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import { ScanField } from '@/components/ScanField';
 import { DrugSearch } from '@/components/DrugSearch';
@@ -296,11 +297,11 @@ function Receiving() {
       type="button"
       aria-label={label}
       onClick={() => setField(key)}
-      className={`h-14 flex-1 rounded-xl border px-3 text-left ${
-        field === key ? 'border-ink bg-ink/5' : 'border-line'
+      className={`h-14 flex-1 rounded-box border px-3 text-left ${
+        field === key ? 'border-ink bg-paper-2' : 'border-rule'
       }`}
     >
-      <span className="block text-xs text-muted">{label}</span>
+      <span className="block text-xs text-ink-2">{label}</span>
       <span className="tabular block text-lg">
         {money
           ? `₹${paiseToRupees(Number(values[key] || '0'))}`
@@ -313,18 +314,18 @@ function Receiving() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Goods receipt</h2>
+          <h2 className="eyebrow">Goods receipt</h2>
 
           {po ? (
-            <p className="mt-2 rounded-lg bg-ink/5 p-3 text-sm">
+            <p className="mt-2 rounded-box bg-paper-2 p-3 text-sm">
               Against {po.po_no ?? 'a draft order'} · {po.supplier_name}
-              <span className="tabular block text-muted">
+              <span className="tabular block text-ink-2">
                 {po.outstanding_qty_base} units still outstanding
               </span>
             </p>
           ) : null}
 
-          <p className="mt-3 text-sm text-muted">Supplier</p>
+          <p className="mt-3 text-sm text-ink-2">Supplier</p>
           <div className="mt-1 flex flex-col gap-2" role="group" aria-label="Supplier">
             {suppliers.map((row) => (
               <button
@@ -332,8 +333,8 @@ function Receiving() {
                 type="button"
                 aria-pressed={supplier?.id === row.id}
                 onClick={() => setSupplier(row)}
-                className={`h-14 rounded-xl border px-3 text-left ${
-                  supplier?.id === row.id ? 'border-ink bg-ink/5' : 'border-line'
+                className={`h-14 rounded-box border px-3 text-left ${
+                  supplier?.id === row.id ? 'border-ink bg-ink text-paper' : 'border-rule'
                 }`}
               >
                 {row.name}
@@ -341,14 +342,14 @@ function Receiving() {
             ))}
           </div>
 
-          <label className="mt-4 block text-sm text-muted" htmlFor="invoice">
+          <label className="mt-4 block text-sm text-ink-2" htmlFor="invoice">
             Invoice number
           </label>
           <input
             id="invoice"
             value={invoiceNo}
             onChange={(event) => setInvoiceNo(event.target.value)}
-            className="mt-1 h-14 w-full rounded-xl border border-line px-3 text-lg"
+            className="blank mt-1 h-14 w-full px-3 text-lg"
           />
 
           {/* INVENTORY.md §3: stock on the shelf with the paperwork still in the
@@ -358,15 +359,15 @@ function Receiving() {
             type="button"
             aria-pressed={awaitingInvoice}
             onClick={() => setAwaitingInvoice((current) => !current)}
-            className={`mt-3 h-14 w-full rounded-xl border px-3 text-left ${
-              awaitingInvoice ? 'border-ink bg-ink/5' : 'border-line'
+            className={`mt-3 h-14 w-full rounded-box border px-3 text-left ${
+              awaitingInvoice ? 'border-ink bg-ink text-paper' : 'border-rule'
             }`}
           >
             Invoice to follow
           </button>
 
           <p className="tabular mt-6 text-lg">₹{total.toFixed(2)}</p>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-ink-2">
             {lines.length} line{lines.length === 1 ? '' : 's'} at cost
           </p>
         </div>
@@ -387,18 +388,18 @@ function Receiving() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Goods receipt</h1>
+      <PageHeader eyebrow="Pharmacy" title="Goods receipt" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
       {posted && lines.length === 0 ? (
-        <p className="mt-4 text-muted">Scan the next box to start another receipt.</p>
+        <p className="mt-4 text-ink-2">Scan the next box to start another receipt.</p>
       ) : null}
 
       {lines.length > 0 ? (
@@ -406,11 +407,11 @@ function Receiving() {
           {lines.map((line, index) => (
             <li
               key={`${line.drug.id}-${line.batchNo}-${index}`}
-              className="flex items-center gap-4 border-b border-line py-3"
+              className="flex items-center gap-4 border-b border-rule py-3"
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-lg">{line.drug.name}</span>
-                <span className="tabular block text-sm text-muted">
+                <span className="tabular block text-sm text-ink-2">
                   {line.batchNo} · exp {MONTHS[line.month - 1]} {line.year} ·{' '}
                   {line.qtyPacks} strip{line.qtyPacks === 1 ? '' : 's'}
                   {line.freePacks > 0 ? ` + ${line.freePacks} free` : ''} ·{' '}
@@ -426,7 +427,7 @@ function Receiving() {
                 type="button"
                 aria-label={`Remove ${line.drug.name}`}
                 onClick={() => setLines((c) => c.filter((_, i) => i !== index))}
-                className="h-11 w-11 shrink-0 rounded-lg border border-line text-muted active:bg-line"
+                className="h-11 w-11 shrink-0 rounded-box border border-rule text-ink-2 active:bg-paper-2"
               >
                 ✕
               </button>
@@ -449,23 +450,23 @@ function Receiving() {
                   <button
                     type="button"
                     onClick={() => void fromOrder(line)}
-                    className="flex h-16 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line"
+                    className="flex h-16 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2"
                   >
                     <span className="min-w-0 flex-1 truncate text-lg">
                       {line.drug_name}{' '}
-                      <span className="text-sm text-muted">{line.strength}</span>
+                      <span className="text-sm text-ink-2">{line.strength}</span>
                     </span>
-                    <span className="tabular shrink-0 text-sm text-muted">
+                    <span className="tabular shrink-0 text-sm text-ink-2">
                       {line.received_qty_base} of {line.ordered_qty_base} in
                     </span>
-                    <span className="tabular w-20 shrink-0 text-right text-danger">
+                    <span className="tabular w-20 shrink-0 text-right text-stop">
                       {line.outstanding_qty_base}
                     </span>
                   </button>
                 </li>
               ))}
             {poLines.every((line) => line.outstanding_qty_base === 0) ? (
-              <li className="py-3 text-muted">
+              <li className="py-3 text-ink-2">
                 Everything ordered has arrived.
               </li>
             ) : null}
@@ -474,31 +475,31 @@ function Receiving() {
       ) : null}
 
       {!drug ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           Scan a box, or search for it. Everything else on this screen is about
           that one box: its batch, its expiry, its MRP and what it cost.
         </p>
       ) : (
-        <div className="mt-6 max-w-3xl rounded-xl border border-line bg-white p-4">
+        <div className="mt-6 max-w-3xl rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">
-            {drug.name} <span className="text-sm text-muted">{drug.strength}</span>
+            {drug.name} <span className="text-sm text-ink-2">{drug.strength}</span>
           </p>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-ink-2">
             {pack.unitsPerStrip} to a strip, {pack.stripsPerBox} strips to a box —
             the drug&rsquo;s default. What arrived is what gets recorded.
           </p>
 
-          <label className="mt-4 block text-sm text-muted" htmlFor="batch">
+          <label className="mt-4 block text-sm text-ink-2" htmlFor="batch">
             Batch number
           </label>
           <input
             id="batch"
             value={batchNo}
             onChange={(event) => setBatchNo(event.target.value.toUpperCase())}
-            className="tabular mt-1 h-14 w-64 rounded-xl border border-line px-3 text-lg"
+            className="blank tabular mt-1 h-14 w-64 px-3 text-lg"
           />
 
-          <p className="mt-4 text-sm text-muted">Expiry, as printed on the strip</p>
+          <p className="mt-4 text-sm text-ink-2">Expiry, as printed on the strip</p>
           <div className="mt-1 flex flex-wrap gap-2" role="group" aria-label="Expiry month">
             {MONTHS.map((label, index) => (
               <button
@@ -506,8 +507,8 @@ function Receiving() {
                 type="button"
                 aria-pressed={month === index + 1}
                 onClick={() => setMonth(index + 1)}
-                className={`h-11 w-16 rounded-lg border text-sm ${
-                  month === index + 1 ? 'border-ink bg-ink text-white' : 'border-line'
+                className={`h-11 w-16 rounded-box border text-sm ${
+                  month === index + 1 ? 'border-ink bg-ink text-paper' : 'border-rule'
                 }`}
               >
                 {label}
@@ -529,8 +530,8 @@ function Receiving() {
                   type="button"
                   aria-pressed={year === value}
                   onClick={() => setYear(value)}
-                  className={`tabular h-11 w-20 rounded-lg border text-sm ${
-                    year === value ? 'border-ink bg-ink text-white' : 'border-line'
+                  className={`tabular h-11 w-20 rounded-box border text-sm ${
+                    year === value ? 'border-ink bg-ink text-paper' : 'border-rule'
                   }`}
                 >
                   {value}
@@ -546,7 +547,7 @@ function Receiving() {
             {fieldButton('cost', 'Rate per strip', true)}
           </div>
 
-          <p className="mt-2 text-sm text-muted">
+          <p className="mt-2 text-sm text-ink-2">
             {Number(values.qty || '0') * pack.unitsPerStrip +
               Number(values.free || '0') * pack.unitsPerStrip}{' '}
             base units in · ₹
@@ -583,20 +584,20 @@ function Receiving() {
                 values.cost === ''
               }
               onClick={addLine}
-              className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+              className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
             >
               Add to receipt
             </button>
             <button
               type="button"
               onClick={resetLine}
-              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+              className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
             >
               Cancel
             </button>
           </div>
 
-          <p className="mt-3 text-sm text-muted">
+          <p className="mt-3 text-sm text-ink-2">
             One strip is {unitsInPack(pack, 'strip')} and one box is{' '}
             {unitsInPack(pack, 'box')}. The ledger only ever stores the base units.
           </p>

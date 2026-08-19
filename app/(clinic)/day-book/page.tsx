@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import {
   dayBook,
@@ -88,53 +89,53 @@ export default function DayBookPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Today</h2>
+          <h2 className="eyebrow">Today</h2>
           {today ? (
             <>
               <p className="tabular mt-1 text-3xl font-medium" data-testid="day-total">
                 {money(today.net_total)}
               </p>
-              <p className="tabular text-sm text-muted">
+              <p className="tabular text-sm text-ink-2">
                 {today.bills} bill{today.bills === 1 ? '' : 's'}
                 {today.cancelled > 0 ? ` · ${today.cancelled} cancelled` : ''}
               </p>
               <dl className="tabular mt-6 text-sm">
                 <div className="flex justify-between py-1">
-                  <dt className="text-muted">Consultations</dt>
+                  <dt className="text-ink-2">Consultations</dt>
                   <dd>{money(today.consult_total)}</dd>
                 </div>
                 <div className="flex justify-between py-1">
-                  <dt className="text-muted">Medicines</dt>
+                  <dt className="text-ink-2">Medicines</dt>
                   <dd>{money(today.medicines_total)}</dd>
                 </div>
                 <div className="flex justify-between py-1">
-                  <dt className="text-muted">Discount</dt>
+                  <dt className="text-ink-2">Discount</dt>
                   <dd>− {money(today.discount)}</dd>
                 </div>
                 <div className="flex justify-between py-1">
-                  <dt className="text-muted">Round off</dt>
+                  <dt className="text-ink-2">Round off</dt>
                   <dd>{Number(today.round_off).toFixed(2)}</dd>
                 </div>
-                <div className="mt-2 flex justify-between border-t border-line py-1">
-                  <dt className="text-muted">Cash</dt>
+                <div className="mt-2 flex justify-between border-t border-rule py-1">
+                  <dt className="text-ink-2">Cash</dt>
                   <dd>{money(today.cash)}</dd>
                 </div>
                 <div className="flex justify-between py-1">
-                  <dt className="text-muted">UPI</dt>
+                  <dt className="text-ink-2">UPI</dt>
                   <dd>{money(today.upi)}</dd>
                 </div>
                 <div className="flex justify-between py-1">
-                  <dt className="text-muted">Card</dt>
+                  <dt className="text-ink-2">Card</dt>
                   <dd>{money(today.card)}</dd>
                 </div>
                 <div className="flex justify-between py-1">
-                  <dt className="text-danger">Unpaid</dt>
-                  <dd className="text-danger">{money(today.unpaid)}</dd>
+                  <dt className="text-stop">Unpaid</dt>
+                  <dd className="text-stop">{money(today.unpaid)}</dd>
                 </div>
               </dl>
             </>
           ) : (
-            <p className="mt-1 text-muted">Nothing billed today yet.</p>
+            <p className="mt-1 text-ink-2">Nothing billed today yet.</p>
           )}
         </div>
       }
@@ -167,23 +168,23 @@ export default function DayBookPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Day-book</h1>
+      <PageHeader eyebrow="Counter" title="Day-book" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
 
       {kind ? (
-        <div className="mt-4 max-w-md rounded-xl border border-line bg-white p-4">
+        <div className="mt-4 max-w-md rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">
             {kind === 'payin' ? 'Cash into the drawer' : 'Cash out of the drawer'}
           </p>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-ink-2">
             Petty cash left unrecorded looks exactly like a shortfall at closing
             time, which is why the reason is not optional.
           </p>
@@ -196,28 +197,28 @@ export default function DayBookPage() {
               onBackspace={() => setAmount((c) => c.slice(0, -1))}
             />
           </div>
-          <label className="mt-4 block text-sm text-muted" htmlFor="reason">
+          <label className="mt-4 block text-sm text-ink-2" htmlFor="reason">
             Reason
           </label>
           <input
             id="reason"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            className="mt-1 h-14 w-full rounded-xl border border-line px-3 text-lg"
+            className="blank mt-1 h-14 w-full px-3 text-lg"
           />
           <div className="mt-4 flex gap-3">
             <button
               type="button"
               disabled={busy || amount === '' || reason.trim() === ''}
               onClick={() => void submitCash()}
-              className="h-14 flex-1 rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+              className="h-14 flex-1 rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
             >
               Record
             </button>
             <button
               type="button"
               onClick={() => setKind(null)}
-              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+              className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
             >
               Cancel
             </button>
@@ -226,9 +227,10 @@ export default function DayBookPage() {
       ) : null}
 
       <h2 className="mt-8 text-lg font-medium">Tills</h2>
-      <table className="mt-2 w-full max-w-3xl">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="mt-2 w-full max-w-3xl">
         <thead>
-          <tr className="border-b border-line text-left text-sm text-muted">
+          <tr className="border-b border-rule text-left text-sm text-ink-2">
             <th className="py-2">Opened</th>
             <th>By</th>
             <th className="text-right">Float</th>
@@ -240,7 +242,7 @@ export default function DayBookPage() {
         </thead>
         <tbody>
           {tills.map((till) => (
-            <tr key={till.till_id} className="border-b border-line">
+            <tr key={till.till_id} className="border-b border-rule">
               <td className="tabular py-3 text-sm">
                 {new Date(till.opened_at).toLocaleDateString('en-IN')}{' '}
                 {new Date(till.opened_at).toLocaleTimeString('en-IN')}
@@ -251,7 +253,7 @@ export default function DayBookPage() {
               <td className="tabular text-right">{money(till.expected_cash)}</td>
               <td className="tabular text-right">
                 {till.counted_cash === null ? (
-                  <span className="text-muted">open</span>
+                  <span className="text-ink-2">open</span>
                 ) : (
                   money(till.counted_cash)
                 )}
@@ -259,10 +261,10 @@ export default function DayBookPage() {
               <td
                 className={`tabular text-right ${
                   till.variance === null
-                    ? 'text-muted'
+                    ? 'text-ink-2'
                     : Number(till.variance) === 0
-                      ? 'text-ok'
-                      : 'text-danger'
+                      ? 'text-free'
+                      : 'text-stop'
                 }`}
                 data-testid={`variance-${till.till_id}`}
               >
@@ -272,11 +274,13 @@ export default function DayBookPage() {
           ))}
         </tbody>
       </table>
+      </div>
 
       <h2 className="mt-8 text-lg font-medium">The last fortnight</h2>
-      <table className="mt-2 w-full max-w-3xl">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="mt-2 w-full max-w-3xl">
         <thead>
-          <tr className="border-b border-line text-left text-sm text-muted">
+          <tr className="border-b border-rule text-left text-sm text-ink-2">
             <th className="py-2">Day</th>
             <th className="text-right">Bills</th>
             <th className="text-right">Consults</th>
@@ -287,7 +291,7 @@ export default function DayBookPage() {
         </thead>
         <tbody>
           {days.map((day) => (
-            <tr key={day.day} className="border-b border-line">
+            <tr key={day.day} className="border-b border-rule">
               <td className="tabular py-3">
                 {new Date(day.day).toLocaleDateString('en-IN')}
               </td>
@@ -300,6 +304,7 @@ export default function DayBookPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </ThreePane>
   );
 }

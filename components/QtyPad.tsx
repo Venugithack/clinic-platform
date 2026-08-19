@@ -51,7 +51,7 @@ export function QtyPad({
   ];
 
   return (
-    <div className="rounded-xl border border-line bg-white p-4" data-testid="qtypad">
+    <div className="rounded-box border border-rule bg-sheet p-4" data-testid="qtypad">
       <div className="flex flex-wrap gap-2">
         {chips.map((chip) => (
           <button
@@ -61,7 +61,7 @@ export function QtyPad({
               setDigits(String(chip.qty));
               setBasis(chip.basis);
             }}
-            className="h-11 rounded-lg border border-line px-4 text-sm active:bg-line"
+            className="h-11 rounded-box border border-rule px-4 text-sm active:bg-paper-2"
           >
             {chip.label}
           </button>
@@ -76,8 +76,8 @@ export function QtyPad({
               key={unit.value}
               type="button"
               onClick={() => setBasis(unit.value)}
-              className={`h-11 rounded-lg border px-3 text-sm ${
-                basis === unit.value ? 'border-ink bg-ink text-white' : 'border-line'
+              className={`h-11 rounded-box border px-3 text-sm ${
+                basis === unit.value ? 'border-ink bg-ink text-paper' : 'border-rule'
               }`}
             >
               {unit.label}
@@ -88,7 +88,7 @@ export function QtyPad({
 
       {/* The conversion is shown, not assumed. He is prescribing 30 tablets;
           the fact that this is 2 strips is information, not a substitution. */}
-      <p className="tabular mt-2 text-sm text-muted" data-testid="qty-base">
+      <p className="tabular mt-2 text-sm text-ink-2" data-testid="qty-base">
         {qtyBase} {baseUnitLabel}
         {basis !== 'unit' && qtyBase > 0
           ? ` — ${parts.strips} strip${parts.strips === 1 ? '' : 's'}${
@@ -109,14 +109,14 @@ export function QtyPad({
           type="button"
           onClick={() => onCommit(qtyBase)}
           disabled={qtyBase <= 0}
-          className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+          className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
         >
           Add to prescription
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+          className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
         >
           Cancel
         </button>

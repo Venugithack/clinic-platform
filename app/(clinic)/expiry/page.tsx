@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import {
   expiredStock,
@@ -189,20 +190,20 @@ export default function ExpiryPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Expiry</h2>
+          <h2 className="eyebrow">Expiry</h2>
           <p className="tabular mt-1 text-lg">{rupees(atRisk)} at risk</p>
-          <p className="tabular mt-1 text-sm text-muted">
+          <p className="tabular mt-1 text-sm text-ink-2">
             {rupees(lost)} already expired
           </p>
 
-          <p className="mt-6 text-sm text-muted">
+          <p className="mt-6 text-sm text-ink-2">
             Suppliers want stock back months before it expires, and the window
             differs per supplier. This list is ordered by whose window closes
             first — not by expiry date, which is always too late.
           </p>
 
           {batchIds.length > 0 ? (
-            <p className="tabular mt-6 rounded-lg bg-ink/5 p-3 text-sm">
+            <p className="tabular mt-6 rounded-box bg-paper-2 p-3 text-sm">
               {batchIds.length} batch{batchIds.length === 1 ? '' : 'es'} selected ·{' '}
               {rupees(selectedValue)}
             </p>
@@ -228,7 +229,7 @@ export default function ExpiryPage() {
           </RailButton>
 
           {batchIds.length > 0 && !oneSupplier ? (
-            <p className="text-sm text-muted">
+            <p className="text-sm text-ink-2">
               One supplier per return note. Deselect the others.
             </p>
           ) : null}
@@ -239,13 +240,13 @@ export default function ExpiryPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Expiry</h1>
+      <PageHeader eyebrow="Pharmacy" title="Expiry" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
@@ -253,7 +254,7 @@ export default function ExpiryPage() {
       {/* 1 — what can still go back, soonest deadline first. */}
       <h2 className="mt-6 text-lg font-medium">Closing first</h2>
       {expiring.length === 0 ? (
-        <p className="mt-2 text-muted">Nothing is near a return deadline.</p>
+        <p className="mt-2 text-ink-2">Nothing is near a return deadline.</p>
       ) : null}
 
       <ul className="mt-2 max-w-4xl">
@@ -263,13 +264,13 @@ export default function ExpiryPage() {
               type="button"
               aria-pressed={row.batch_id in selected}
               onClick={() => toggle(row.batch_id, row.supplier_id)}
-              className={`flex h-20 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line ${
-                row.batch_id in selected ? 'bg-ink/5' : ''
+              className={`flex h-20 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2 ${
+                row.batch_id in selected ? 'bg-paper-2' : ''
               }`}
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-lg">{row.drug_name}</span>
-                <span className="tabular block text-sm text-muted">
+                <span className="tabular block text-sm text-ink-2">
                   {row.batch_no} · exp {asPrinted(row.expiry)} · {row.qty_base_on_hand} units
                 </span>
               </span>
@@ -277,17 +278,17 @@ export default function ExpiryPage() {
               <span className="w-44 shrink-0 text-sm">
                 {row.returnable ? (
                   <>
-                    <span className="block text-ok">
+                    <span className="block text-free">
                       Return by {asDay(row.return_by as string)}
                     </span>
-                    <span className="tabular block text-muted">
+                    <span className="tabular block text-ink-2">
                       {row.days_to_return_by} days left · {row.supplier_name}
                     </span>
                   </>
                 ) : (
                   <>
-                    <span className="block text-danger">Window closed</span>
-                    <span className="block text-muted">
+                    <span className="block text-stop">Window closed</span>
+                    <span className="block text-ink-2">
                       {row.return_by ? asDay(row.return_by) : 'no window recorded'}
                     </span>
                   </>
@@ -304,11 +305,11 @@ export default function ExpiryPage() {
 
       {/* 2 — the stock no other screen can see. */}
       <h2 className="mt-8 text-lg font-medium">Expired</h2>
-      <p className="mt-1 text-sm text-muted">
+      <p className="mt-1 text-sm text-ink-2">
         Excluded from availability, so this is the only screen it appears on.
       </p>
       {expired.length === 0 ? (
-        <p className="mt-2 text-muted">Nothing expired on the shelf.</p>
+        <p className="mt-2 text-ink-2">Nothing expired on the shelf.</p>
       ) : null}
 
       <ul className="mt-2 max-w-4xl">
@@ -318,17 +319,17 @@ export default function ExpiryPage() {
               type="button"
               aria-pressed={row.batch_id in selected}
               onClick={() => toggle(row.batch_id, row.supplier_id)}
-              className={`flex h-20 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line ${
-                row.batch_id in selected ? 'bg-ink/5' : ''
+              className={`flex h-20 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2 ${
+                row.batch_id in selected ? 'bg-paper-2' : ''
               }`}
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-lg">{row.drug_name}</span>
-                <span className="tabular block text-sm text-muted">
+                <span className="tabular block text-sm text-ink-2">
                   {row.batch_no} · expired {asPrinted(row.expiry)} · {row.qty_base_on_hand} units
                 </span>
               </span>
-              <span className="tabular w-24 shrink-0 text-right text-lg text-danger">
+              <span className="tabular w-24 shrink-0 text-right text-lg text-stop">
                 {rupees(Number(row.value_at_cost))}
               </span>
             </button>
@@ -339,7 +340,7 @@ export default function ExpiryPage() {
       {/* 3 — money the supplier owes. */}
       <h2 className="mt-8 text-lg font-medium">Credits owed to the clinic</h2>
       {credits.length === 0 ? (
-        <p className="mt-2 text-muted">Nothing outstanding.</p>
+        <p className="mt-2 text-ink-2">Nothing outstanding.</p>
       ) : null}
 
       <ul className="mt-2 max-w-4xl">
@@ -348,10 +349,10 @@ export default function ExpiryPage() {
             <button
               type="button"
               onClick={() => void openCreditPanel(row)}
-              className="flex h-16 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line"
+              className="flex h-16 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2"
             >
               <span className="flex-1 truncate text-lg">{row.supplier_name}</span>
-              <span className="tabular shrink-0 text-sm text-muted">
+              <span className="tabular shrink-0 text-sm text-ink-2">
                 {row.days_open} days old
               </span>
               <span className="tabular w-28 shrink-0 text-right text-lg">
@@ -363,12 +364,12 @@ export default function ExpiryPage() {
       </ul>
 
       {credit ? (
-        <div className="mt-6 max-w-xl rounded-xl border border-line bg-white p-4">
+        <div className="mt-6 max-w-xl rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">
             {credit.supplier_name} ·{' '}
             <span className="tabular">{rupees(Number(credit.outstanding))}</span> outstanding
           </p>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-ink-2">
             Net it off one of their invoices. Part of it is fine — the rest stays
             on the list.
           </p>
@@ -380,21 +381,21 @@ export default function ExpiryPage() {
                   type="button"
                   aria-pressed={invoice?.id === row.id}
                   onClick={() => setInvoice(row)}
-                  className={`flex h-14 w-full items-center gap-3 border-b border-line px-2 text-left active:bg-line ${
-                    invoice?.id === row.id ? 'bg-ink/5' : ''
+                  className={`flex h-14 w-full items-center gap-3 border-b border-rule px-2 text-left active:bg-paper-2 ${
+                    invoice?.id === row.id ? 'bg-active-wash' : ''
                   }`}
                 >
                   <span className="flex-1 truncate">
                     {row.invoice_no ?? 'awaiting invoice'}
                   </span>
-                  <span className="tabular text-sm text-muted">
+                  <span className="tabular text-sm text-ink-2">
                     {rupees(Number(row.total))}
                   </span>
                 </button>
               </li>
             ))}
             {invoices.length === 0 ? (
-              <li className="py-3 text-muted">
+              <li className="py-3 text-ink-2">
                 No receipts from this supplier yet — the credit waits.
               </li>
             ) : null}
@@ -413,7 +414,7 @@ export default function ExpiryPage() {
                 type="button"
                 disabled={busy || digits === ''}
                 onClick={() => void doSettle()}
-                className="mt-4 h-14 w-full rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+                className="mt-4 h-14 w-full rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
               >
                 Settle
               </button>

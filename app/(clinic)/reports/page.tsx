@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import {
   batchTrace,
   expiryWriteoffs,
@@ -190,17 +191,17 @@ export default function ReportsPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Registers</h2>
+          <h2 className="eyebrow">Registers</h2>
 
           {tab === 'recall' ? (
-            <p className="mt-2 text-sm text-muted">
+            <p className="mt-2 text-sm text-ink-2">
               A recall is not a date range. This searches every dispense of that
               batch, however long ago.
             </p>
           ) : (
             <>
               <p className="mt-1 text-lg">{range.label}</p>
-              <p className="tabular text-sm text-muted">
+              <p className="tabular text-sm text-ink-2">
                 {range.from} to {range.to}
               </p>
 
@@ -211,10 +212,10 @@ export default function ReportsPage() {
                     type="button"
                     aria-pressed={range.label === preset.label}
                     onClick={() => setRange(preset)}
-                    className={`h-11 rounded-lg border px-3 text-left text-sm ${
+                    className={`h-11 rounded-box border px-3 text-left text-sm ${
                       range.label === preset.label
-                        ? 'border-ink bg-ink text-white'
-                        : 'border-line'
+                        ? 'border-ink bg-ink text-paper'
+                        : 'border-rule'
                     }`}
                   >
                     {preset.label}
@@ -227,14 +228,14 @@ export default function ReportsPage() {
           <p className="tabular mt-6 text-lg">{rows.length} rows</p>
 
           {missingAddresses > 0 ? (
-            <p className="mt-3 rounded-lg bg-danger/15 p-3 text-sm text-danger">
+            <Notice tone="bad">
               {missingAddresses} row{missingAddresses === 1 ? '' : 's'} with no
               patient address. The rule requires one — fix them before an
               inspection asks.
-            </p>
+            </Notice>
           ) : null}
 
-          <p className="mt-6 text-sm text-muted">
+          <p className="mt-6 text-sm text-ink-2">
             The Schedule H1 register is retained three years (§15.2).
           </p>
         </div>
@@ -264,7 +265,10 @@ export default function ReportsPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">{register?.label ?? 'Recall — batch trace'}</h1>
+      <PageHeader
+        eyebrow="Registers"
+        title={register?.label ?? 'Recall — batch trace'}
+      />
 
       {/* Only on paper: what was asked for, so it can be checked. */}
       <div className="report-print-head">
@@ -294,8 +298,8 @@ export default function ReportsPage() {
               setTab(key);
               setRows([]);
             }}
-            className={`h-11 rounded-lg border px-4 text-sm ${
-              tab === key ? 'border-ink bg-ink text-white' : 'border-line'
+            className={`h-11 rounded-box border px-4 text-sm ${
+              tab === key ? 'border-ink bg-ink text-paper' : 'border-rule'
             }`}
           >
             {label}
@@ -304,24 +308,24 @@ export default function ReportsPage() {
       </div>
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
 
       {tab === 'recall' ? (
         <div className="no-print mt-4 flex max-w-xl items-end gap-3">
           <label className="flex-1">
-            <span className="mb-1 block text-sm text-muted">Batch number</span>
+            <span className="mb-1 block text-sm text-ink-2">Batch number</span>
             <input
               value={batchNo}
               onChange={(event) => setBatchNo(event.target.value.toUpperCase())}
-              className="tabular h-14 w-full rounded-xl border border-line px-3 text-lg"
+              className="blank tabular h-14 w-full px-3 text-lg"
             />
           </label>
           <button
             type="button"
             disabled={busy || batchNo.trim().length < 2}
             onClick={load}
-            className="h-14 rounded-xl border border-ink bg-ink px-6 font-medium text-white disabled:opacity-40"
+            className="h-14 rounded-box border border-ink bg-ink px-6 font-medium text-paper disabled:opacity-40"
           >
             Trace
           </button>
@@ -329,7 +333,7 @@ export default function ReportsPage() {
       ) : null}
 
       {rows.length === 0 && !busy ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           {tab === 'recall'
             ? 'Type a batch number to find everyone who was given it.'
             : 'Nothing in this range.'}
@@ -337,9 +341,10 @@ export default function ReportsPage() {
       ) : null}
 
       {rows.length > 0 ? (
-        <table className="mt-4 w-full" data-testid="register">
+        <div className="min-w-0 overflow-x-auto">
+          <table className="mt-4 w-full" data-testid="register">
           <thead>
-            <tr className="border-b border-line text-left text-sm text-muted">
+            <tr className="border-b border-rule text-left text-sm text-ink-2">
               {columns.map((column) => (
                 <th key={column.key} className="py-2 pr-3">
                   {column.label}
@@ -352,8 +357,8 @@ export default function ReportsPage() {
             {rows.map((row, index) => (
               <tr
                 key={String(row.dispense_line_id ?? row.bill_id ?? row.grn_id ?? row.movement_id ?? index)}
-                className={`border-b border-line ${
-                  row.address_missing ? 'bg-danger/5' : ''
+                className={`border-b border-rule ${
+                  row.address_missing ? 'bg-stop-wash' : ''
                 }`}
               >
                 {columns.map((column) => (
@@ -374,7 +379,7 @@ export default function ReportsPage() {
                       <button
                         type="button"
                         onClick={() => router.push(`/patient/${String(row.patient_id)}` as Route)}
-                        className="h-11 rounded-lg border border-danger px-3 text-sm text-danger active:bg-line"
+                        className="h-11 rounded-box border border-stop px-3 text-sm text-stop active:bg-paper-2"
                       >
                         Add address
                       </button>
@@ -385,6 +390,7 @@ export default function ReportsPage() {
             ))}
           </tbody>
         </table>
+        </div>
       ) : null}
     </ThreePane>
   );

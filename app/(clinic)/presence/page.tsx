@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import { clinicNow, presenceDetail, type ClinicNow, type PresenceDetail } from '@/lib/db/presence';
 import {
@@ -113,7 +114,7 @@ export default function PresencePage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">
+          <h2 className="eyebrow">
             What patients see
           </h2>
 
@@ -123,11 +124,11 @@ export default function PresencePage() {
                 {now.doctor_name} is {WORDING[now.status] ?? now.status}
               </p>
               {/* Never "available". A stale reading must not read as a promise. */}
-              <p className="tabular mt-1 text-sm text-muted">
+              <p className="tabular mt-1 text-sm text-ink-2">
                 as of {asOf(now.as_of)}
               </p>
               {now.break_until && now.status === 'break' ? (
-                <p className="mt-1 text-sm text-muted">
+                <p className="mt-1 text-sm text-ink-2">
                   back by{' '}
                   {new Date(now.break_until).toLocaleTimeString('en-IN', {
                     hour: '2-digit',
@@ -136,18 +137,18 @@ export default function PresencePage() {
                 </p>
               ) : null}
               {!now.clinic_open ? (
-                <p className="mt-3 rounded-lg bg-ink/5 p-3 text-sm">
+                <p className="mt-3 rounded-box bg-paper-2 p-3 text-sm">
                   The clinic is closed right now, so the page says closed
                   whatever this tablet is doing.
                 </p>
               ) : null}
             </>
           ) : (
-            <p className="mt-2 text-muted">Loading…</p>
+            <p className="mt-2 text-ink-2">Loading…</p>
           )}
 
           {mine ? (
-            <p className="mt-6 text-sm text-muted">
+            <p className="mt-6 text-sm text-ink-2">
               You last said: {WORDING[mine.declared_status]} ·{' '}
               {mine.device_label ?? 'unknown device'}
               {mine.is_clinic_device === false ? ' (not a clinic device)' : ''}
@@ -179,7 +180,7 @@ export default function PresencePage() {
               </RailButton>
             </>
           ) : (
-            <p className="text-sm text-muted">
+            <p className="text-sm text-ink-2">
               The doctor sets his own status. This screen shows what patients are
               being told.
             </p>
@@ -193,19 +194,19 @@ export default function PresencePage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Presence</h1>
+      <PageHeader eyebrow="Clinic" title="Presence" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
 
       {backBy ? (
-        <div className="mt-4 max-w-md rounded-xl border border-line bg-white p-4">
+        <div className="mt-4 max-w-md rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">Back by</p>
           <p className="tabular mt-2 text-4xl font-medium">
             {digits.padEnd(4, '–').replace(/(.{2})(.{2})/, '$1:$2')}
@@ -221,14 +222,14 @@ export default function PresencePage() {
               type="button"
               disabled={busy || digits.length < 4}
               onClick={backAt}
-              className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+              className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
             >
               Tell patients
             </button>
             <button
               type="button"
               onClick={() => setBackBy(null)}
-              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+              className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
             >
               Cancel
             </button>
@@ -254,7 +255,7 @@ export default function PresencePage() {
                   .catch((cause: Error) => setError(cause.message))
                   .finally(() => setBusy(false));
               }}
-              className="mt-2 h-14 rounded-xl border border-ink px-6 font-medium active:bg-line"
+              className="mt-2 h-14 rounded-box border border-ink px-6 font-medium active:bg-paper-2"
             >
               Open the clinic again
             </button>
@@ -262,22 +263,22 @@ export default function PresencePage() {
             <button
               type="button"
               onClick={() => setClosing(true)}
-              className="mt-2 h-14 rounded-xl border border-danger px-6 font-medium text-danger active:bg-line"
+              className="mt-2 h-14 rounded-box border border-stop px-6 font-medium text-stop active:bg-paper-2"
             >
               Close the clinic today
             </button>
           )}
 
           {closing ? (
-            <div className="mt-4 max-w-xl rounded-xl border border-danger bg-white p-4">
-              <label className="block text-sm text-muted" htmlFor="reason">
+            <div className="mt-4 max-w-xl rounded-box border border-stop bg-sheet p-4">
+              <label className="block text-sm text-ink-2" htmlFor="reason">
                 Why? Patients will be told this.
               </label>
               <input
                 id="reason"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                className="mt-1 h-14 w-full rounded-xl border border-line px-3 text-lg"
+                className="blank mt-1 h-14 w-full px-3 text-lg"
               />
               <button
                 type="button"
@@ -300,7 +301,7 @@ export default function PresencePage() {
                     .catch((cause: Error) => setError(cause.message))
                     .finally(() => setBusy(false));
                 }}
-                className="mt-3 h-14 w-full rounded-xl border border-danger bg-danger font-medium text-white disabled:opacity-40"
+                className="mt-3 h-14 w-full rounded-box border border-stop bg-stop font-medium text-paper disabled:opacity-40"
               >
                 Close today
               </button>
@@ -310,9 +311,10 @@ export default function PresencePage() {
       ) : null}
 
       <h2 className="mt-8 text-lg font-medium">Everyone</h2>
-      <table className="mt-2 w-full max-w-3xl">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="mt-2 w-full max-w-3xl">
         <thead>
-          <tr className="border-b border-line text-left text-sm text-muted">
+          <tr className="border-b border-rule text-left text-sm text-ink-2">
             <th className="py-2">Who</th>
             <th>Said</th>
             <th>Patients are told</th>
@@ -322,20 +324,20 @@ export default function PresencePage() {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.staff_id} className="border-b border-line">
+            <tr key={row.staff_id} className="border-b border-rule">
               <td className="py-3">{row.staff_name}</td>
-              <td className="text-muted">{WORDING[row.declared_status]}</td>
+              <td className="text-ink-2">{WORDING[row.declared_status]}</td>
               <td
                 className={
-                  row.declared_status !== row.effective_status ? 'text-danger' : ''
+                  row.declared_status !== row.effective_status ? 'text-stop' : ''
                 }
               >
                 {WORDING[row.effective_status]}
               </td>
-              <td className="tabular text-sm text-muted">
+              <td className="tabular text-sm text-ink-2">
                 {asOf(row.last_heartbeat_at)}
               </td>
-              <td className="text-sm text-muted">
+              <td className="text-sm text-ink-2">
                 {row.device_label ?? '—'}
                 {row.is_clinic_device === false ? ' · not in the clinic' : ''}
               </td>
@@ -343,6 +345,7 @@ export default function PresencePage() {
           ))}
         </tbody>
       </table>
+      </div>
     </ThreePane>
   );
 }

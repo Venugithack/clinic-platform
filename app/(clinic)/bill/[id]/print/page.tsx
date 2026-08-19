@@ -43,19 +43,19 @@ export default function PrintBillPage() {
     })();
   }, [params.id]);
 
-  if (error) return <p className="p-8 text-danger">{error}</p>;
-  if (!bill) return <p className="p-8 text-muted">Loading…</p>;
+  if (error) return <p className="p-8 text-stop">{error}</p>;
+  if (!bill) return <p className="p-8 text-ink-2">Loading…</p>;
 
   const money = (value: number | string) => `₹${Number(value).toFixed(2)}`;
   const dated = new Date(bill.created_at);
 
   return (
     <div className="bill-screen">
-      <div className="no-print flex gap-3 border-b border-line bg-surface p-4">
+      <div className="no-print flex gap-3 border-b border-rule bg-sheet p-4">
         <button
           type="button"
           onClick={() => window.print()}
-          className="h-14 rounded-xl border border-ink bg-ink px-6 font-medium text-white"
+          className="h-14 rounded-box border border-ink bg-ink px-6 font-medium text-paper"
         >
           Print
         </button>
@@ -63,14 +63,14 @@ export default function PrintBillPage() {
           type="button"
           aria-pressed={roll}
           onClick={() => setRoll((current) => !current)}
-          className="h-14 rounded-xl border border-line bg-white px-6"
+          className="h-14 rounded-box border border-rule bg-sheet px-6"
         >
           {roll ? 'A4' : '80mm roll'}
         </button>
         <button
           type="button"
           onClick={() => router.back()}
-          className="h-14 rounded-xl border border-line bg-white px-6 text-muted"
+          className="h-14 rounded-box border border-rule bg-sheet px-6 text-ink-2"
         >
           Back
         </button>

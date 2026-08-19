@@ -17,7 +17,7 @@
  */
 
 .bill-screen {
-  background: var(--surface, #f6f6f5);
+  background: var(--color-paper, #e5e9e7);
   min-height: 100%;
 }
 
@@ -185,6 +185,6 @@
 
   .bill-sheet {
     margin: 0;
-    box-shadow: none;
+    border: 0;
   }
 }

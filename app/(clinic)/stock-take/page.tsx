@@ -14,6 +14,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import { ScanField } from '@/components/ScanField';
 import {
@@ -116,20 +117,20 @@ export default function StockTakePage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Stock-take</h2>
+          <h2 className="eyebrow">Stock-take</h2>
           {take ? (
             <>
               <p className="mt-1 text-lg">{take.scope_note || 'Full count'}</p>
-              <p className="tabular mt-1 text-sm text-muted">
+              <p className="tabular mt-1 text-sm text-ink-2">
                 {counted.length} of {batches.length} batches counted
               </p>
-              <p className="mt-6 text-sm text-muted">
+              <p className="mt-6 text-sm text-ink-2">
                 The expected quantity is not shown, and not fetched. Count what
                 is actually on the shelf.
               </p>
             </>
           ) : (
-            <p className="mt-1 text-muted">Nothing in progress.</p>
+            <p className="mt-1 text-ink-2">Nothing in progress.</p>
           )}
         </div>
       }
@@ -190,17 +191,17 @@ export default function StockTakePage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Stock-take</h1>
+      <PageHeader eyebrow="Pharmacy" title="Stock-take" />
 
-      {error ? <p className="mt-4 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
 
       {!take ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           A count can be partial — one shelf, one rack, one drug group. Partial
           counts are what actually happen.
         </p>
@@ -209,10 +210,10 @@ export default function StockTakePage() {
       {/* Step 2: blind counting. */}
       {take?.status === 'counting' ? (
         selected ? (
-          <div className="mt-6 max-w-md rounded-xl border border-line bg-white p-4">
+          <div className="mt-6 max-w-md rounded-box border border-rule bg-sheet p-4">
             <p className="text-lg">
               {selected.drug_name}{' '}
-              <span className="tabular text-sm text-muted">{selected.batch_no}</span>
+              <span className="tabular text-sm text-ink-2">{selected.batch_no}</span>
             </p>
             <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
             <div className="mt-4 w-64">
@@ -226,14 +227,14 @@ export default function StockTakePage() {
                 type="button"
                 disabled={busy || digits === ''}
                 onClick={() => void submitCount()}
-                className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+                className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
               >
                 Record count
               </button>
               <button
                 type="button"
                 onClick={() => setSelected(null)}
-                className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+                className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
               >
                 Cancel
               </button>
@@ -251,15 +252,15 @@ export default function StockTakePage() {
                       setSelected(batch);
                       setDigits('');
                     }}
-                    className="flex h-16 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line"
+                    className="flex h-16 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2"
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-lg">{batch.drug_name}</span>
-                      <span className="tabular block text-sm text-muted">
+                      <span className="tabular block text-sm text-ink-2">
                         {batch.batch_no}
                       </span>
                     </span>
-                    <span className="tabular shrink-0 text-sm text-muted">
+                    <span className="tabular shrink-0 text-sm text-ink-2">
                       {line ? `counted ${line.counted_qty_base}` : 'not counted'}
                     </span>
                   </button>
@@ -273,14 +274,15 @@ export default function StockTakePage() {
       {/* Step 3: variance, by rupee value. */}
       {take?.status === 'review' ? (
         <>
-          <p className="mt-6 text-muted">
+          <p className="mt-6 text-ink-2">
             Sorted by the value of the discrepancy, not its size. Anything over
             ₹{take.recount_threshold_value} goes back for a second count before
             it can post.
           </p>
-          <table className="mt-4 w-full max-w-3xl">
+          <div className="min-w-0 overflow-x-auto">
+            <table className="mt-4 w-full max-w-3xl">
             <thead>
-              <tr className="border-b border-line text-left text-sm text-muted">
+              <tr className="border-b border-rule text-left text-sm text-ink-2">
                 <th className="py-2">Drug</th>
                 <th>Batch</th>
                 <th className="text-right">Expected</th>
@@ -292,14 +294,14 @@ export default function StockTakePage() {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.batch_id} className="border-b border-line">
+                <tr key={row.batch_id} className="border-b border-rule">
                   <td className="py-3">{row.drug_name}</td>
-                  <td className="tabular text-sm text-muted">{row.batch_no}</td>
+                  <td className="tabular text-sm text-ink-2">{row.batch_no}</td>
                   <td className="tabular text-right">{row.system_qty_base}</td>
                   <td className="tabular text-right">{row.counted_qty_base}</td>
                   <td
                     className={`tabular text-right ${
-                      row.variance_base === 0 ? 'text-muted' : 'text-danger'
+                      row.variance_base === 0 ? 'text-ink-2' : 'text-stop'
                     }`}
                   >
                     {row.variance_base > 0 ? '+' : ''}
@@ -320,7 +322,7 @@ export default function StockTakePage() {
                           });
                           setDigits('');
                         }}
-                        className="h-11 rounded-lg border border-danger px-3 text-sm text-danger active:bg-line"
+                        className="h-11 rounded-box border border-stop px-3 text-sm text-stop active:bg-paper-2"
                       >
                         Recount
                       </button>
@@ -330,12 +332,13 @@ export default function StockTakePage() {
               ))}
             </tbody>
           </table>
+          </div>
 
           {selected ? (
-            <div className="mt-6 max-w-md rounded-xl border border-danger bg-white p-4">
+            <div className="mt-6 max-w-md rounded-box border border-stop bg-sheet p-4">
               <p className="text-lg">
                 Second count — {selected.drug_name}{' '}
-                <span className="tabular text-sm text-muted">{selected.batch_no}</span>
+                <span className="tabular text-sm text-ink-2">{selected.batch_no}</span>
               </p>
               <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
               <div className="mt-4 w-64">
@@ -348,7 +351,7 @@ export default function StockTakePage() {
                 type="button"
                 disabled={busy || digits === ''}
                 onClick={() => void submitCount()}
-                className="mt-4 h-14 w-full rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+                className="mt-4 h-14 w-full rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
               >
                 Record second count
               </button>
