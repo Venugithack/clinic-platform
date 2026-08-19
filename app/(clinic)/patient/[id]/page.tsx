@@ -283,7 +283,7 @@ export default function PatientPage() {
           onChange={(event) => setAddress(event.target.value)}
           onFocus={() => setActive(null)}
           aria-label="Address"
-          className="mt-1 h-24 w-full rounded-box border border-rule bg-sheet p-3 text-lg"
+          className="blank mt-1 h-24 w-full p-3 text-lg"
         />
       </label>
 

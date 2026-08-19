@@ -15,7 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
-import { Notice, PageHeader } from '@/components/ui';
+import { Notice, PageHeader, Token } from '@/components/ui';
 import { DrugSearch } from '@/components/DrugSearch';
 import { QtyPad } from '@/components/QtyPad';
 import { queueEntry, type QueueEntry } from '@/lib/db/queue';
@@ -149,7 +149,18 @@ export default function ConsultPage() {
   if (error && !entry) {
     return (
       <ThreePane rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}>
-        <p className="text-stop">{error}</p>
+        <PageHeader eyebrow="Consulting room" title="This consult will not open" />
+        {/* A sentence a doctor can act on, and the database's own words kept
+            underneath it rather than shown as the message. "JSON object
+            requested, multiple (or no) rows returned" was the entire screen
+            here, which tells the person holding the tablet nothing about what
+            to do next and nothing they can repeat down the phone. */}
+        <Notice tone="bad">
+          The record for this patient could not be opened. Go back to the queue
+          and open them again; if it keeps happening, this appointment needs
+          looking at before the consult can go ahead.
+        </Notice>
+        <p className="font-mono text-xs text-ink-2">{error}</p>
       </ThreePane>
     );
   }
@@ -208,9 +219,12 @@ export default function ConsultPage() {
       }
       rail={
         <>
-          <div className="rounded-box border border-rule bg-sheet p-3 text-center">
-            <p className="eyebrow">Token</p>
-            <p className="tabular font-mono text-3xl font-medium">{entry?.token_no ?? '—'}</p>
+          {/* The signature object, not a card with a number in it. The queue
+              shows this patient as a token box and so does the counter; the
+              consult screen showing the same fact in a different shape made
+              one number look like three different things. */}
+          <div className="flex justify-center">
+            <Token prefix="Token" serial={entry?.token_no ?? '—'} size="lg" />
           </div>
 
           <RailButton
@@ -270,7 +284,7 @@ export default function ConsultPage() {
             onChange={(event) => setDiagnosis(event.target.value)}
             aria-label="Diagnosis"
             placeholder="As you would write it"
-            className="h-14 flex-1 rounded-box border border-rule bg-sheet px-4 text-lg"
+            className="blank h-14 min-w-0 flex-1 px-4 text-lg"
           />
           <button
             type="button"
@@ -279,7 +293,7 @@ export default function ConsultPage() {
               setDiagnoses((current) => [...current, diagnosis.trim()]);
               setDiagnosis('');
             }}
-            className="h-14 rounded-box border border-rule bg-sheet px-5 active:bg-paper-2"
+            className="h-14 rounded-box border border-ink bg-transparent px-5 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
           >
             Add diagnosis
           </button>
@@ -290,7 +304,7 @@ export default function ConsultPage() {
               <button
                 type="button"
                 onClick={() => setDiagnoses((current) => current.filter((_, i) => i !== index))}
-                className="h-11 rounded-box border border-rule bg-sheet px-4 text-sm active:bg-paper-2"
+                className="h-11 rounded-box border border-ink bg-transparent px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
               >
                 {entryText} ✕
               </button>
@@ -306,7 +320,7 @@ export default function ConsultPage() {
             <button
               type="button"
               onClick={() => setSearching(true)}
-              className="h-11 rounded-box border border-rule bg-sheet px-4 text-sm active:bg-paper-2"
+              className="h-11 rounded-box border border-ink bg-transparent px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
             >
               + Add medicine
             </button>
@@ -433,7 +447,7 @@ export default function ConsultPage() {
           onChange={(event) => setAdvice(event.target.value)}
           aria-label="Advice"
           rows={3}
-          className="mt-2 w-full rounded-box border border-rule bg-sheet p-4 text-lg"
+          className="blank mt-2 w-full p-4 text-lg"
         />
 
         <label className="mt-4 block">
@@ -445,7 +459,7 @@ export default function ConsultPage() {
             value={followUp}
             onChange={(event) => setFollowUp(event.target.value)}
             aria-label="Follow-up date"
-            className="tabular h-14 rounded-box border border-rule bg-sheet px-4 text-lg"
+            className="blank tabular h-14 px-4 text-lg"
           />
         </label>
       </section>

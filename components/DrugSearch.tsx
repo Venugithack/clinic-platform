@@ -79,7 +79,7 @@ export function DrugSearch({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Brand, generic or salt"
             aria-label="Search medicines"
-            className="h-14 flex-1 rounded-box border border-rule bg-sheet px-4 text-lg"
+            className="blank h-14 min-w-0 flex-1 px-4 text-lg"
           />
           <button
             type="button"
