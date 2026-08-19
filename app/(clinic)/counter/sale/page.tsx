@@ -151,7 +151,7 @@ export default function CounterSalePage() {
           <div className="rounded-box border border-rule bg-sheet p-3 text-center">
             <p className="eyebrow">Total</p>
             {/* Large enough to read from the customer's side of the counter. */}
-            <p className="tabular text-4xl font-medium" data-testid="sale-total">
+            <p className="tabular font-mono text-4xl font-medium" data-testid="sale-total">
               ₹{paiseToRupees(totalPaise)}
             </p>
           </div>

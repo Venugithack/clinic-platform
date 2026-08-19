@@ -215,7 +215,7 @@ export default function StockTakePage() {
               {selected.drug_name}{' '}
               <span className="tabular text-sm text-ink-2">{selected.batch_no}</span>
             </p>
-            <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
+            <p className="tabular font-mono mt-3 text-4xl font-medium">{digits || '0'}</p>
             <div className="mt-4 w-64">
               <Numpad
                 onDigit={(digit) => setDigits((c) => (c + digit).slice(0, 6))}
@@ -297,8 +297,8 @@ export default function StockTakePage() {
                 <tr key={row.batch_id} className="border-b border-rule">
                   <td className="py-3">{row.drug_name}</td>
                   <td className="tabular text-sm text-ink-2">{row.batch_no}</td>
-                  <td className="tabular text-right">{row.system_qty_base}</td>
-                  <td className="tabular text-right">{row.counted_qty_base}</td>
+                  <td className="tabular font-mono text-right">{row.system_qty_base}</td>
+                  <td className="tabular font-mono text-right">{row.counted_qty_base}</td>
                   <td
                     className={`tabular text-right ${
                       row.variance_base === 0 ? 'text-ink-2' : 'text-stop'
@@ -307,7 +307,7 @@ export default function StockTakePage() {
                     {row.variance_base > 0 ? '+' : ''}
                     {row.variance_base}
                   </td>
-                  <td className="tabular text-right">₹{row.variance_value}</td>
+                  <td className="tabular font-mono text-right">₹{row.variance_value}</td>
                   <td className="py-3 pl-3 text-right">
                     {row.needs_recount ? (
                       <button
@@ -340,7 +340,7 @@ export default function StockTakePage() {
                 Second count — {selected.drug_name}{' '}
                 <span className="tabular text-sm text-ink-2">{selected.batch_no}</span>
               </p>
-              <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
+              <p className="tabular font-mono mt-3 text-4xl font-medium">{digits || '0'}</p>
               <div className="mt-4 w-64">
                 <Numpad
                   onDigit={(digit) => setDigits((c) => (c + digit).slice(0, 6))}

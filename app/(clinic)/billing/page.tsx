@@ -229,7 +229,7 @@ export default function BillingPage() {
             {bills.filter((bill) => bill.status !== 'cancelled').length} bill
             {bills.filter((bill) => bill.status !== 'cancelled').length === 1 ? '' : 's'}
           </p>
-          <p className="tabular text-sm text-ink-2">
+          <p className="tabular font-mono text-sm text-ink-2">
             ₹
             {bills
               .filter((bill) => bill.status !== 'cancelled')
@@ -292,7 +292,7 @@ export default function BillingPage() {
               drawer counted to match it proves nothing.
             </p>
           ) : null}
-          <p className="tabular mt-3 text-4xl font-medium">₹{paiseToRupees(Number(cash || '0'))}</p>
+          <p className="tabular font-mono mt-3 text-4xl font-medium">₹{paiseToRupees(Number(cash || '0'))}</p>
           <div className="mt-4 w-64">
             <Numpad
               onDigit={(digit) => setCash((c) => (c + digit).slice(0, 8))}
@@ -327,7 +327,7 @@ export default function BillingPage() {
         <div className="mt-6 max-w-xl rounded-box border border-ink bg-sheet p-4">
           <div className="flex items-baseline justify-between">
             <p className="tabular text-lg">{raised.bill_no}</p>
-            <p className="tabular text-3xl font-medium">
+            <p className="tabular font-mono text-3xl font-medium">
               ₹{Number(raised.total).toFixed(2)}
             </p>
           </div>
@@ -514,7 +514,7 @@ export default function BillingPage() {
               >
                 {bill.status === 'paid' ? bill.method : bill.status}
               </span>
-              <span className="tabular w-24 shrink-0 text-right">
+              <span className="tabular font-mono w-24 shrink-0 text-right">
                 ₹{Number(bill.total).toFixed(2)}
               </span>
             </button>

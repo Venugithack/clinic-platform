@@ -69,7 +69,7 @@ export function QtyPad({
       </div>
 
       <div className="mt-4 flex items-baseline gap-3">
-        <span className="tabular text-4xl font-medium">{digits || '0'}</span>
+        <span className="tabular font-mono text-4xl font-medium">{digits || '0'}</span>
         <div className="flex gap-2">
           {units.map((unit) => (
             <button

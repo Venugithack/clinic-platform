@@ -324,7 +324,7 @@ export default function OrdersPage() {
               <span className="w-40 shrink-0 text-sm text-ink-2">
                 {STATUS_LABEL[order.status] ?? order.status}
               </span>
-              <span className="tabular w-24 shrink-0 text-right">
+              <span className="tabular font-mono w-24 shrink-0 text-right">
                 ₹{Number(order.estimated_total).toFixed(2)}
               </span>
             </button>
@@ -363,8 +363,8 @@ export default function OrdersPage() {
                         })}
                       </span>
                     </td>
-                    <td className="tabular text-right">{line.ordered_qty_base}</td>
-                    <td className="tabular text-right">{line.received_qty_base}</td>
+                    <td className="tabular font-mono text-right">{line.ordered_qty_base}</td>
+                    <td className="tabular font-mono text-right">{line.received_qty_base}</td>
                     <td
                       className={`tabular text-right ${
                         line.outstanding_qty_base > 0 ? 'text-stop' : 'text-free'
@@ -402,7 +402,7 @@ export default function OrdersPage() {
                 the supplier&rsquo;s minimum order is a judgement this screen does
                 not make.
               </p>
-              <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
+              <p className="tabular font-mono mt-3 text-4xl font-medium">{digits || '0'}</p>
               <div className="mt-4 w-64">
                 <Numpad
                   onDigit={(digit) => setDigits((c) => (c + digit).slice(0, 6))}

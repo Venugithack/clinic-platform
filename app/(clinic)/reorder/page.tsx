@@ -198,13 +198,20 @@ export default function ReorderPage() {
                   </span>
                 </span>
 
+                {/* Named after the drug, like the Drop button below it. Without
+                    this the accessible name is the bare number, and suggested
+                    quantities repeat across the list — four rows offering 450
+                    gave four buttons all called "450", which tells a screen
+                    reader nothing about which medicine is being ordered and
+                    makes the control ambiguous to address in a test. */}
                 <button
                   type="button"
+                  aria-label={`Order quantity for ${row.drug_name}`}
                   onClick={() => {
                     setEditing(row);
                     setDigits('');
                   }}
-                  className="tabular h-14 w-32 shrink-0 rounded-box border border-rule px-3 text-right text-xl active:bg-paper-2"
+                  className="tabular font-mono h-14 w-32 shrink-0 rounded-box border border-rule px-3 text-right text-xl active:bg-paper-2"
                 >
                   {qty[row.drug_id] ?? 0}
                 </button>
@@ -262,7 +269,7 @@ export default function ReorderPage() {
           <p className="text-sm text-ink-2">
             Suggested {editing.suggested_qty_base} · {editing.basis}
           </p>
-          <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
+          <p className="tabular font-mono mt-3 text-4xl font-medium">{digits || '0'}</p>
           <div className="mt-4 w-64">
             <Numpad
               onDigit={(digit) => setDigits((c) => (c + digit).slice(0, 6))}
