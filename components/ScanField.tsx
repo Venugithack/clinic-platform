@@ -52,8 +52,8 @@ export function ScanField({
   }, [autoStart, supported, onCode]);
 
   return (
-    <div className="rounded-xl border border-line bg-white p-4" data-testid="scanfield">
-      <p className="text-sm text-muted">{label}</p>
+    <div className="rounded-box border border-rule bg-sheet p-4" data-testid="scanfield">
+      <p className="text-sm text-ink-2">{label}</p>
 
       {supported ? (
         <video
@@ -61,17 +61,17 @@ export function ScanField({
           muted
           playsInline
           aria-label="Camera"
-          className={`mt-3 h-40 w-full rounded-lg bg-ink/5 object-cover ${
+          className={`mt-3 h-40 w-full rounded-box bg-paper-2 object-cover ${
             scanning ? '' : 'opacity-50'
           }`}
         />
       ) : (
-        <p className="mt-3 text-sm text-muted">
+        <p className="mt-3 text-sm text-ink-2">
           This tablet cannot scan. Type the code from the strip.
         </p>
       )}
 
-      {notice ? <p className="mt-2 text-sm text-danger">{notice}</p> : null}
+      {notice ? <p className="mt-2 text-sm text-stop">{notice}</p> : null}
 
       <div className="mt-3 flex gap-3">
         <input
@@ -80,7 +80,7 @@ export function ScanField({
           aria-label="Barcode"
           inputMode="numeric"
           placeholder="Or type the code"
-          className="tabular h-14 flex-1 rounded-xl border border-line px-4 text-lg"
+          className="tabular h-14 flex-1 rounded-box border border-rule px-4 text-lg"
         />
         <button
           type="button"
@@ -89,7 +89,7 @@ export function ScanField({
             onCode(typed.trim());
             setTyped('');
           }}
-          className="h-14 rounded-xl border border-ink bg-ink px-5 font-medium text-white disabled:opacity-40"
+          className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40"
         >
           Check
         </button>

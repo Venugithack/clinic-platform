@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Field, Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import { createPatient, searchPatients, type Patient } from '@/lib/db/patients';
 import { bookAppointment } from '@/lib/transitions/clinic';
@@ -77,14 +78,14 @@ export default function RegisterWalkInPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Registering</h2>
+          <h2 className="eyebrow">Registering</h2>
           <p className="mt-1 text-lg">{existing?.name || name || 'New patient'}</p>
 
           {/* Families share one handset constantly, so a phone match is a
               chooser rather than an answer (PLAN.md §14). */}
           {matches.length > 0 && !existing ? (
             <div className="mt-6">
-              <p className="text-sm text-muted">
+              <p className="text-sm text-ink-2">
                 This number is already registered to {matches.length === 1 ? '' : 'these people'}:
               </p>
               <ul className="mt-3 space-y-2">
@@ -93,10 +94,10 @@ export default function RegisterWalkInPage() {
                     <button
                       type="button"
                       onClick={() => setExisting(match)}
-                      className="h-14 w-full rounded-xl border border-line bg-white px-3 text-left active:bg-line"
+                      className="h-14 w-full rounded-box border border-rule bg-sheet px-3 text-left active:bg-paper-2"
                     >
                       {match.name}
-                      <span className="block text-sm text-muted">
+                      <span className="block text-sm text-ink-2">
                         {[match.age, match.sex].filter(Boolean).join(' · ')}
                       </span>
                     </button>
@@ -110,7 +111,7 @@ export default function RegisterWalkInPage() {
             <button
               type="button"
               onClick={() => setExisting(null)}
-              className="mt-4 h-11 rounded-lg border border-line px-4 text-sm text-muted"
+              className="mt-4 h-11 rounded-box border border-rule px-4 text-sm text-ink-2"
             >
               Someone else on this number
             </button>
@@ -120,7 +121,7 @@ export default function RegisterWalkInPage() {
       rail={
         active ? (
           <>
-            <p className="text-sm text-muted">{active === 'phone' ? 'Phone' : 'Age'}</p>
+            <p className="text-sm text-ink-2">{active === 'phone' ? 'Phone' : 'Age'}</p>
             <Numpad
               onDigit={(digit) => setActiveValue((current) => current + digit)}
               onBackspace={() => setActiveValue((current) => current.slice(0, -1))}
@@ -137,12 +138,12 @@ export default function RegisterWalkInPage() {
         )
       }
     >
-      <h1 className="text-2xl font-semibold">Register walk-in</h1>
+      <PageHeader eyebrow="Consulting room" title="Register walk-in" />
 
-      {error ? <p className="mt-4 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
 
       {existing ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           {existing.name} is already registered. Registering will give them today&apos;s next token.
         </p>
       ) : (
@@ -153,7 +154,7 @@ export default function RegisterWalkInPage() {
               onChange={(event) => setName(event.target.value)}
               onFocus={() => setActive(null)}
               aria-label="Name"
-              className="h-14 w-full rounded-xl border border-line bg-white px-4 text-lg"
+              className="blank h-14 w-full px-4 text-lg"
             />
           </Field>
 
@@ -162,11 +163,11 @@ export default function RegisterWalkInPage() {
               type="button"
               onClick={() => setActive('phone')}
               aria-label="Phone"
-              className={`tabular h-14 w-full rounded-xl border bg-white px-4 text-left text-lg ${
-                active === 'phone' ? 'border-ink' : 'border-line'
+              className={`blank tabular h-14 w-full px-4 text-left text-lg ${
+                active === 'phone' ? 'border-active' : ''
               }`}
             >
-              {phone || <span className="text-muted">Tap to enter</span>}
+              {phone || <span className="text-ink-2">Tap to enter</span>}
             </button>
           </Field>
 
@@ -176,11 +177,11 @@ export default function RegisterWalkInPage() {
                 type="button"
                 onClick={() => setActive('age')}
                 aria-label="Age"
-                className={`tabular h-14 w-32 rounded-xl border bg-white px-4 text-left text-lg ${
-                  active === 'age' ? 'border-ink' : 'border-line'
+                className={`blank tabular h-14 w-32 px-4 text-left text-lg ${
+                  active === 'age' ? 'border-active' : ''
                 }`}
               >
-                {age || <span className="text-muted">—</span>}
+                {age || <span className="text-ink-2">—</span>}
               </button>
             </Field>
 
@@ -189,7 +190,7 @@ export default function RegisterWalkInPage() {
                 other two. role="group" with a label is the correct shape, and
                 screen-reader users get three distinct buttons. */}
             <div role="group" aria-label="Sex">
-              <span className="mb-1 block text-sm text-muted">Sex</span>
+              <span className="eyebrow mb-1 block">Sex</span>
               <div className="flex gap-2">
                 {(['M', 'F', 'O'] as const).map((option) => (
                   <button
@@ -198,8 +199,8 @@ export default function RegisterWalkInPage() {
                     aria-label={option}
                     aria-pressed={sex === option}
                     onClick={() => setSex(option)}
-                    className={`h-14 w-14 rounded-xl border text-lg ${
-                      sex === option ? 'border-ink bg-ink text-white' : 'border-line bg-white'
+                    className={`h-14 w-14 rounded-box border text-lg ${
+                      sex === option ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'
                     }`}
                   >
                     {option}
@@ -222,7 +223,7 @@ export default function RegisterWalkInPage() {
               onFocus={() => setActive(null)}
               aria-label="Address"
               placeholder="Needed on the H1 register"
-              className="h-14 w-full rounded-xl border border-line bg-white px-4 text-lg"
+              className="blank h-14 w-full px-4 text-lg"
             />
           </Field>
 
@@ -233,7 +234,7 @@ export default function RegisterWalkInPage() {
               onFocus={() => setActive(null)}
               aria-label="Allergies"
               placeholder="None known"
-              className="h-14 w-full rounded-xl border border-line bg-white px-4 text-lg"
+              className="blank h-14 w-full px-4 text-lg"
             />
           </Field>
 
@@ -242,11 +243,11 @@ export default function RegisterWalkInPage() {
             onClick={() => setConsent((value) => !value)}
             aria-label="Consent"
             aria-pressed={consent}
-            className="flex h-14 w-full items-center gap-3 rounded-xl border border-line bg-white px-4 text-left active:bg-line"
+            className="flex h-14 w-full items-center gap-3 rounded-box border border-rule bg-sheet px-4 text-left active:bg-paper-2"
           >
             <span
               className={`flex h-6 w-6 items-center justify-center rounded border ${
-                consent ? 'border-ink bg-ink text-white' : 'border-line'
+                consent ? 'border-ink bg-ink text-paper' : 'border-rule'
               }`}
             >
               {consent ? '✓' : ''}
@@ -261,11 +262,3 @@ export default function RegisterWalkInPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm text-muted">{label}</span>
-      {children}
-    </label>
-  );
-}

@@ -82,16 +82,16 @@ export function CounterQueries() {
   return (
     <section
       aria-label="Questions from the counter"
-      className="border-b-2 border-ink bg-ink/5 px-6 py-4"
+      className="border-b-2 border-ink bg-paper-2 px-6 py-4"
     >
-      {error ? <p className="mb-3 text-danger">{error}</p> : null}
+      {error ? <p className="mb-3 text-stop">{error}</p> : null}
 
       <ul className="space-y-4">
         {queries.map((query) => (
           <li key={query.id}>
             <div className="flex flex-wrap items-center gap-4">
               <p className="min-w-0 flex-1 text-lg">
-                <span className="text-muted">Counter · {query.raised_by_name} · </span>
+                <span className="text-ink-2">Counter · {query.raised_by_name} · </span>
                 {query.patient_name}:{' '}
                 <strong>
                   {query.drug_name} {query.drug_strength}
@@ -113,7 +113,7 @@ export function CounterQueries() {
                   type="button"
                   disabled={busy}
                   onClick={() => void answer(query.id, 'approved')}
-                  className="h-14 rounded-xl border border-ink bg-ink px-5 font-medium text-white disabled:opacity-40"
+                  className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40"
                 >
                   Approve
                 </button>
@@ -121,7 +121,7 @@ export function CounterQueries() {
                   type="button"
                   disabled={busy}
                   onClick={() => void startAmending(query)}
-                  className="h-14 rounded-xl border border-line bg-white px-5 disabled:opacity-40"
+                  className="h-14 rounded-box border border-rule bg-sheet px-5 disabled:opacity-40"
                 >
                   Something else
                 </button>
@@ -129,7 +129,7 @@ export function CounterQueries() {
                   type="button"
                   disabled={busy}
                   onClick={() => void answer(query.id, 'rejected')}
-                  className="h-14 rounded-xl border border-danger bg-white px-5 text-danger disabled:opacity-40"
+                  className="h-14 rounded-box border border-stop bg-sheet px-5 text-stop disabled:opacity-40"
                 >
                   Reject
                 </button>
@@ -137,13 +137,13 @@ export function CounterQueries() {
             </div>
 
             {amending === query.id ? (
-              <div className="mt-3 rounded-xl border border-line bg-white p-4">
-                <p className="text-sm text-muted">
+              <div className="mt-3 rounded-box border border-rule bg-sheet p-4">
+                <p className="text-sm text-ink-2">
                   Equivalents — same salt, same strength, same form. Nothing else
                   is offered, and nothing else would be accepted.
                 </p>
                 {options.length === 0 ? (
-                  <p className="mt-2 text-muted">None in the catalogue.</p>
+                  <p className="mt-2 text-ink-2">None in the catalogue.</p>
                 ) : (
                   <ul className="mt-2 flex flex-wrap gap-3">
                     {options.map((option) => {
@@ -154,12 +154,12 @@ export function CounterQueries() {
                             type="button"
                             disabled={busy}
                             onClick={() => void answer(query.id, 'amended', option.id)}
-                            className="h-14 rounded-xl border border-line px-5 text-left active:bg-line disabled:opacity-40"
+                            className="h-14 rounded-box border border-rule px-5 text-left active:bg-paper-2 disabled:opacity-40"
                           >
                             {option.name}
                             <span
                               className={`tabular ml-3 text-sm ${
-                                badge.out ? 'text-danger' : 'text-ok'
+                                badge.out ? 'text-stop' : 'text-free'
                               }`}
                             >
                               {badge.label}
@@ -173,7 +173,7 @@ export function CounterQueries() {
                 <button
                   type="button"
                   onClick={() => setAmending(null)}
-                  className="mt-3 h-11 rounded-lg px-4 text-sm text-muted active:bg-line"
+                  className="mt-3 h-11 rounded-box px-4 text-sm text-ink-2 active:bg-paper-2"
                 >
                   Cancel
                 </button>

@@ -14,13 +14,13 @@ import type { MetadataRoute } from 'next';
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Clinic',
-    short_name: 'Clinic',
+    name: 'Jayamurugan Clinic',
+    short_name: 'Jayamurugan',
     start_url: '/',
     display: 'fullscreen',
     orientation: 'landscape',
-    background_color: '#ffffff',
-    theme_color: '#ffffff',
+    background_color: '#e5e9e7',
+    theme_color: '#01554e',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },

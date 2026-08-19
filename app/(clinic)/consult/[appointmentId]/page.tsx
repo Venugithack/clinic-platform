@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { DrugSearch } from '@/components/DrugSearch';
 import { QtyPad } from '@/components/QtyPad';
 import { queueEntry, type QueueEntry } from '@/lib/db/queue';
@@ -148,7 +149,7 @@ export default function ConsultPage() {
   if (error && !entry) {
     return (
       <ThreePane rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}>
-        <p className="text-danger">{error}</p>
+        <p className="text-stop">{error}</p>
       </ThreePane>
     );
   }
@@ -170,25 +171,25 @@ export default function ConsultPage() {
       context={
         <div>
           <h2 className="text-xl font-semibold">{entry?.patient_name ?? '…'}</h2>
-          <p className="mt-1 text-muted">
+          <p className="mt-1 text-ink-2">
             {[entry?.age, entry?.sex, entry?.phone].filter(Boolean).join(' · ')}
           </p>
 
           {/* The one thing that must be impossible to miss. */}
           {entry?.allergies ? (
-            <p className="mt-4 rounded-lg bg-danger/10 p-3 text-danger">
+            <Notice tone="bad">
               Allergies: {entry.allergies}
-            </p>
+            </Notice>
           ) : null}
 
-          <h3 className="mt-8 text-sm uppercase tracking-wide text-muted">Previous visits</h3>
+          <h3 className="eyebrow mt-8">Previous visits</h3>
           {visits.length === 0 ? (
-            <p className="mt-2 text-muted">First visit.</p>
+            <p className="mt-2 text-ink-2">First visit.</p>
           ) : (
             <ul className="mt-2 space-y-3">
               {visits.map((visit) => (
-                <li key={visit.id} className="border-b border-line pb-3">
-                  <p className="tabular text-sm text-muted">
+                <li key={visit.id} className="border-b border-rule pb-3">
+                  <p className="tabular text-sm text-ink-2">
                     {new Date(visit.created_at).toLocaleDateString('en-IN', {
                       day: 'numeric',
                       month: 'short',
@@ -197,7 +198,7 @@ export default function ConsultPage() {
                   </p>
                   <p>{(visit.diagnoses as string[])?.join(', ') || '—'}</p>
                   {visit.advice ? (
-                    <p className="text-sm text-muted">{visit.advice}</p>
+                    <p className="text-sm text-ink-2">{visit.advice}</p>
                   ) : null}
                 </li>
               ))}
@@ -207,8 +208,8 @@ export default function ConsultPage() {
       }
       rail={
         <>
-          <div className="rounded-xl border border-line bg-white p-3 text-center">
-            <p className="text-sm text-muted">Token</p>
+          <div className="rounded-box border border-rule bg-sheet p-3 text-center">
+            <p className="text-sm text-ink-2">Token</p>
             <p className="tabular text-3xl font-medium">{entry?.token_no ?? '—'}</p>
           </div>
 
@@ -250,26 +251,26 @@ export default function ConsultPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Consult</h1>
+      <PageHeader eyebrow="Consulting room" title="Consult" />
 
-      {error ? <p className="mt-4 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
 
       {signedAt ? (
-        <p className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <Notice tone="good">
           Signed at {new Date(signedAt).toLocaleTimeString('en-IN')}. A signed prescription
           cannot be edited.
-        </p>
+        </Notice>
       ) : null}
 
       <section className="mt-6 max-w-2xl">
-        <h2 className="text-sm uppercase tracking-wide text-muted">Diagnosis</h2>
+        <h2 className="eyebrow">Diagnosis</h2>
         <div className="mt-2 flex gap-3">
           <input
             value={diagnosis}
             onChange={(event) => setDiagnosis(event.target.value)}
             aria-label="Diagnosis"
             placeholder="As you would write it"
-            className="h-14 flex-1 rounded-xl border border-line bg-white px-4 text-lg"
+            className="h-14 flex-1 rounded-box border border-rule bg-sheet px-4 text-lg"
           />
           <button
             type="button"
@@ -278,7 +279,7 @@ export default function ConsultPage() {
               setDiagnoses((current) => [...current, diagnosis.trim()]);
               setDiagnosis('');
             }}
-            className="h-14 rounded-xl border border-line bg-white px-5 active:bg-line"
+            className="h-14 rounded-box border border-rule bg-sheet px-5 active:bg-paper-2"
           >
             Add diagnosis
           </button>
@@ -289,7 +290,7 @@ export default function ConsultPage() {
               <button
                 type="button"
                 onClick={() => setDiagnoses((current) => current.filter((_, i) => i !== index))}
-                className="h-11 rounded-lg border border-line bg-white px-4 text-sm active:bg-line"
+                className="h-11 rounded-box border border-rule bg-sheet px-4 text-sm active:bg-paper-2"
               >
                 {entryText} ✕
               </button>
@@ -300,12 +301,12 @@ export default function ConsultPage() {
 
       <section className="mt-8 max-w-2xl">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm uppercase tracking-wide text-muted">Medicines</h2>
+          <h2 className="eyebrow">Medicines</h2>
           {!signedAt ? (
             <button
               type="button"
               onClick={() => setSearching(true)}
-              className="h-11 rounded-lg border border-line bg-white px-4 text-sm active:bg-line"
+              className="h-11 rounded-box border border-rule bg-sheet px-4 text-sm active:bg-paper-2"
             >
               + Add medicine
             </button>
@@ -313,19 +314,19 @@ export default function ConsultPage() {
         </div>
 
         {items.length === 0 ? (
-          <p className="mt-3 text-muted">Nothing prescribed yet.</p>
+          <p className="mt-3 text-ink-2">Nothing prescribed yet.</p>
         ) : (
           <ul className="mt-3">
             {items.map((item, index) => (
               <li
                 key={`${item.drug_id}-${index}`}
-                className="flex items-center gap-4 border-b border-line py-3"
+                className="flex items-center gap-4 border-b border-rule py-3"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-lg">
-                    {item.name} <span className="text-sm text-muted">{item.strength}</span>
+                    {item.name} <span className="text-sm text-ink-2">{item.strength}</span>
                   </span>
-                  <span className="tabular block text-sm text-muted">
+                  <span className="tabular block text-sm text-ink-2">
                     {item.dose} · {item.freq} · {item.days} days
                     {item.food ? ` · ${item.food} food` : ''}
                   </span>
@@ -336,7 +337,7 @@ export default function ConsultPage() {
                     type="button"
                     aria-label={`Remove ${item.name}`}
                     onClick={() => setItems((current) => current.filter((_, i) => i !== index))}
-                    className="h-11 w-11 shrink-0 rounded-lg border border-line text-muted active:bg-line"
+                    className="h-11 w-11 shrink-0 rounded-box border border-rule text-ink-2 active:bg-paper-2"
                   >
                     ✕
                   </button>
@@ -349,40 +350,40 @@ export default function ConsultPage() {
         {pending ? (
           <div className="mt-5">
             <p className="text-lg">
-              {pending.name} <span className="text-sm text-muted">{pending.strength}</span>
+              {pending.name} <span className="text-sm text-ink-2">{pending.strength}</span>
             </p>
 
             <div className="mt-3 flex flex-wrap items-end gap-4">
               <label className="block">
-                <span className="mb-1 block text-sm text-muted">Dose</span>
+                <span className="mb-1 block text-sm text-ink-2">Dose</span>
                 <input
                   value={dose}
                   onChange={(event) => setDose(event.target.value)}
                   aria-label="Dose"
-                  className="h-14 w-24 rounded-xl border border-line bg-white px-3 text-lg"
+                  className="blank h-14 w-24 px-3 text-lg"
                 />
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm text-muted">Frequency</span>
+                <span className="mb-1 block text-sm text-ink-2">Frequency</span>
                 <input
                   value={freq}
                   onChange={(event) => setFreq(event.target.value)}
                   aria-label="Frequency"
-                  className="tabular h-14 w-32 rounded-xl border border-line bg-white px-3 text-lg"
+                  className="blank tabular h-14 w-32 px-3 text-lg"
                 />
               </label>
 
               <div>
-                <span className="mb-1 block text-sm text-muted">Days</span>
+                <span className="mb-1 block text-sm text-ink-2">Days</span>
                 <div className="flex gap-2">
                   {DAY_CHIPS.map((count) => (
                     <button
                       key={count}
                       type="button"
                       onClick={() => setDays(count)}
-                      className={`tabular h-14 w-14 rounded-xl border text-lg ${
-                        days === count ? 'border-ink bg-ink text-white' : 'border-line bg-white'
+                      className={`tabular h-14 w-14 rounded-box border text-lg ${
+                        days === count ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'
                       }`}
                     >
                       {count}
@@ -392,15 +393,15 @@ export default function ConsultPage() {
               </div>
 
               <div>
-                <span className="mb-1 block text-sm text-muted">Food</span>
+                <span className="mb-1 block text-sm text-ink-2">Food</span>
                 <div className="flex gap-2">
                   {(['before', 'after', 'with'] as const).map((option) => (
                     <button
                       key={option}
                       type="button"
                       onClick={() => setFood(option)}
-                      className={`h-14 rounded-xl border px-4 ${
-                        food === option ? 'border-ink bg-ink text-white' : 'border-line bg-white'
+                      className={`h-14 rounded-box border px-4 ${
+                        food === option ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'
                       }`}
                     >
                       {option}
@@ -426,17 +427,17 @@ export default function ConsultPage() {
       </section>
 
       <section className="mt-8 max-w-2xl">
-        <h2 className="text-sm uppercase tracking-wide text-muted">Advice</h2>
+        <h2 className="eyebrow">Advice</h2>
         <textarea
           value={advice}
           onChange={(event) => setAdvice(event.target.value)}
           aria-label="Advice"
           rows={3}
-          className="mt-2 w-full rounded-xl border border-line bg-white p-4 text-lg"
+          className="mt-2 w-full rounded-box border border-rule bg-sheet p-4 text-lg"
         />
 
         <label className="mt-4 block">
-          <span className="mb-1 block text-sm uppercase tracking-wide text-muted">
+          <span className="eyebrow mb-1 block">
             Follow-up
           </span>
           <input
@@ -444,7 +445,7 @@ export default function ConsultPage() {
             value={followUp}
             onChange={(event) => setFollowUp(event.target.value)}
             aria-label="Follow-up date"
-            className="tabular h-14 rounded-xl border border-line bg-white px-4 text-lg"
+            className="tabular h-14 rounded-box border border-rule bg-sheet px-4 text-lg"
           />
         </label>
       </section>

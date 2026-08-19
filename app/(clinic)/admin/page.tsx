@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import { currentSession } from '@/lib/auth';
 import {
@@ -145,12 +146,12 @@ export default function AdminPage() {
 
   const pinPad = (onDone: () => void, label: string) => (
     <div className="mt-4 max-w-xs">
-      <p className="text-sm text-muted">Six-digit PIN</p>
+      <p className="text-sm text-ink-2">Six-digit PIN</p>
       <div className="mt-2 flex gap-3" role="status" aria-label="PIN entry">
         {Array.from({ length: 6 }, (_, index) => (
           <span
             key={index}
-            className={`h-4 w-4 rounded-full border border-line ${
+            className={`h-4 w-4 rounded-full border border-rule ${
               index < pin.length ? 'bg-ink' : ''
             }`}
           />
@@ -166,7 +167,7 @@ export default function AdminPage() {
         type="button"
         disabled={busy || pin.length !== 6}
         onClick={onDone}
-        className="mt-4 h-14 w-64 rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+        className="mt-4 h-14 w-64 rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
       >
         {label}
       </button>
@@ -177,19 +178,19 @@ export default function AdminPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">People and tablets</h2>
+          <h2 className="eyebrow">People and tablets</h2>
           <p className="tabular mt-1 text-lg">
             {staff.filter((row) => row.active).length} working ·{' '}
             {devices.filter((row) => row.revoked_at === null).length} tablets
           </p>
 
-          <p className="mt-6 text-sm text-muted">
+          <p className="mt-6 text-sm text-ink-2">
             Nobody is ever deleted here. Every prescription, dispense and
             register line names a person, and that name is the record of who
             did it — so somebody who leaves is marked as gone.
           </p>
 
-          <p className="mt-4 text-sm text-muted">
+          <p className="mt-4 text-sm text-ink-2">
             <strong className="text-ink">Lost a tablet?</strong> Revoke it. The
             session running on it ends immediately, not when it next idles out.
           </p>
@@ -216,49 +217,49 @@ export default function AdminPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">People and tablets</h1>
+      <PageHeader eyebrow="Administration" title="People and tablets" />
 
       {!allowed ? (
-        <p className="mt-4 max-w-2xl rounded-lg bg-ink/5 p-3 text-muted">
+        <p className="mt-4 max-w-2xl rounded-box bg-paper-2 p-3 text-ink-2">
           Only an administrator can add staff or register a tablet — the person
           who can reset a PIN can sign in as anybody.
         </p>
       ) : null}
 
       {error ? (
-        <p className="mt-4 max-w-3xl rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad" className="max-w-3xl">{error}</Notice>
       ) : null}
       {notice ? (
         <p
           role="status"
           data-testid="admin-notice"
-          className="mt-4 max-w-3xl rounded-lg bg-ok/10 p-3 text-ok"
+          className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free"
         >
           {notice}
         </p>
       ) : null}
 
       {adding ? (
-        <div className="mt-6 max-w-2xl rounded-xl border border-line bg-white p-4">
+        <div className="mt-6 max-w-2xl rounded-box border border-rule bg-sheet p-4">
           <h2 className="text-lg font-medium">Someone new</h2>
 
           <label className="mt-3 block">
-            <span className="block text-sm text-muted">Name</span>
+            <span className="block text-sm text-ink-2">Name</span>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
               aria-label="Name"
-              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+              className="blank mt-1 h-14 w-full px-3 text-lg"
             />
           </label>
 
           <label className="mt-3 block">
-            <span className="block text-sm text-muted">Phone</span>
+            <span className="block text-sm text-ink-2">Phone</span>
             <input
               value={phone}
               onChange={(event) => setPhone(event.target.value)}
               aria-label="Phone"
-              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+              className="blank mt-1 h-14 w-full px-3 text-lg"
             />
           </label>
 
@@ -269,12 +270,12 @@ export default function AdminPage() {
                 type="button"
                 aria-pressed={role === option.value}
                 onClick={() => setRole(option.value)}
-                className={`h-14 flex-1 rounded-xl border px-3 text-left active:bg-line ${
-                  role === option.value ? 'border-ink bg-ink/5' : 'border-line bg-white'
+                className={`h-14 flex-1 rounded-box border px-3 text-left active:bg-paper-2 ${
+                  role === option.value ? 'border-ink bg-paper-2' : 'border-rule bg-sheet'
                 }`}
               >
                 <span className="block">{option.label}</span>
-                <span className="block text-xs text-muted">{option.hint}</span>
+                <span className="block text-xs text-ink-2">{option.hint}</span>
               </button>
             ))}
           </div>
@@ -285,9 +286,9 @@ export default function AdminPage() {
       ) : null}
 
       {resetting ? (
-        <div className="mt-6 max-w-2xl rounded-xl border border-line bg-white p-4">
+        <div className="mt-6 max-w-2xl rounded-box border border-rule bg-sheet p-4">
           <h2 className="text-lg font-medium">New PIN for {resetting.name}</h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-ink-2">
             Their old PIN stops working immediately.
           </p>
           {pinPad(() => void doResetPin(), 'Set it')}
@@ -299,13 +300,13 @@ export default function AdminPage() {
         {staff.map((row) => (
           <li
             key={row.id}
-            className={`flex items-center gap-4 border-b border-line py-3 ${
+            className={`flex items-center gap-4 border-b border-rule py-3 ${
               row.active ? '' : 'opacity-50'
             }`}
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate text-lg">{row.name}</span>
-              <span className="block text-sm text-muted">
+              <span className="block text-sm text-ink-2">
                 {row.role} · PIN set {asDay(row.pin_set_at)}
                 {row.active ? '' : ' · not here any more'}
               </span>
@@ -319,7 +320,7 @@ export default function AdminPage() {
                 setAdding(false);
                 setPin('');
               }}
-              className="h-14 rounded-xl border border-line bg-white px-4 active:bg-line disabled:opacity-40"
+              className="h-14 rounded-box border border-rule bg-sheet px-4 active:bg-paper-2 disabled:opacity-40"
             >
               New PIN
             </button>
@@ -338,7 +339,7 @@ export default function AdminPage() {
                     : `${row.name} is back.`;
                 })
               }
-              className="h-14 w-36 rounded-xl border border-line bg-white px-4 active:bg-line disabled:opacity-40"
+              className="h-14 w-36 rounded-box border border-rule bg-sheet px-4 active:bg-paper-2 disabled:opacity-40"
             >
               {row.active ? 'Mark as left' : 'Bring back'}
             </button>
@@ -351,20 +352,20 @@ export default function AdminPage() {
       {issued ? (
         <div
           data-testid="registration-code"
-          className="mt-2 max-w-3xl rounded-xl border border-ink bg-ink/5 p-4"
+          className="mt-2 max-w-3xl rounded-box border border-ink bg-paper-2 p-4"
         >
           <p className="font-medium">{issued.label} — type this on the new tablet</p>
           <p className="tabular mt-2 break-all font-mono text-lg">
             {issued.device_token}
           </p>
-          <p className="mt-2 text-sm text-muted">
+          <p className="mt-2 text-sm text-ink-2">
             Shown once. Nothing in this system can display it again, so if it is
             lost, register the tablet a second time and revoke this one.
           </p>
           <button
             type="button"
             onClick={() => setIssued(null)}
-            className="mt-3 h-14 rounded-xl border border-line bg-white px-5 active:bg-line"
+            className="mt-3 h-14 rounded-box border border-rule bg-sheet px-5 active:bg-paper-2"
           >
             Done — it is on the tablet
           </button>
@@ -373,13 +374,13 @@ export default function AdminPage() {
 
       <div className="mt-3 flex max-w-3xl items-end gap-3">
         <label className="flex-1">
-          <span className="block text-sm text-muted">Register another tablet</span>
+          <span className="block text-sm text-ink-2">Register another tablet</span>
           <input
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             aria-label="Tablet name"
             placeholder="Counter tablet"
-            className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+            className="blank mt-1 h-14 w-full px-3 text-lg"
           />
         </label>
 
@@ -387,14 +388,14 @@ export default function AdminPage() {
           type="button"
           aria-pressed={isClinicDevice}
           onClick={() => setIsClinicDevice((value) => !value)}
-          className={`h-14 w-56 rounded-xl border px-3 text-left active:bg-line ${
-            isClinicDevice ? 'border-ink bg-ink/5' : 'border-line bg-white'
+          className={`h-14 w-56 rounded-box border px-3 text-left active:bg-paper-2 ${
+            isClinicDevice ? 'border-ink bg-paper-2' : 'border-rule bg-sheet'
           }`}
         >
           <span className="block text-sm">
             {isClinicDevice ? 'In the clinic' : 'Outside the clinic'}
           </span>
-          <span className="block text-xs text-muted">
+          <span className="block text-xs text-ink-2">
             {isClinicDevice
               ? 'Locks in 3 minutes; can set presence'
               : 'Locks in 10 minutes; cannot say he is here'}
@@ -405,7 +406,7 @@ export default function AdminPage() {
           type="button"
           disabled={!allowed || busy || label.trim() === ''}
           onClick={() => void doRegister()}
-          className="h-14 rounded-xl border border-ink bg-ink px-5 font-medium text-white disabled:opacity-40"
+          className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40"
         >
           Register
         </button>
@@ -415,13 +416,13 @@ export default function AdminPage() {
         {devices.map((row) => (
           <li
             key={row.id}
-            className={`flex items-center gap-4 border-b border-line py-3 ${
+            className={`flex items-center gap-4 border-b border-rule py-3 ${
               row.revoked_at ? 'opacity-50' : ''
             }`}
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate text-lg">{row.label}</span>
-              <span className="block text-sm text-muted">
+              <span className="block text-sm text-ink-2">
                 {row.is_clinic_device ? 'in the clinic' : 'outside the clinic'} ·
                 locks after {Math.round(row.idle_timeout_seconds / 60)} min · last
                 used {asDay(row.last_seen_at)}
@@ -441,7 +442,7 @@ export default function AdminPage() {
                     : `${row.label} is revoked. Nobody was signed in on it.`;
                 })
               }
-              className="h-14 w-36 rounded-xl border border-danger bg-white px-4 text-danger active:bg-line disabled:opacity-40"
+              className="h-14 w-36 rounded-box border border-stop bg-sheet px-4 text-stop active:bg-paper-2 disabled:opacity-40"
             >
               Revoke
             </button>

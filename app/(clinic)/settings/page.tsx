@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
 import { clinicRow, type ClinicRow } from '@/lib/db/settings';
 import {
@@ -93,14 +94,14 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-sm text-muted">{label}</span>
+      <span className="block text-sm text-ink-2">{label}</span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+        className="blank mt-1 h-14 w-full px-3 text-lg"
       />
-      {hint ? <span className="mt-1 block text-sm text-muted">{hint}</span> : null}
+      {hint ? <span className="mt-1 block text-sm text-ink-2">{hint}</span> : null}
     </label>
   );
 }
@@ -182,8 +183,8 @@ export default function SettingsPage() {
   if (!form) {
     return (
       <ThreePane rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        {error ? <p className="mt-4 text-danger">{error}</p> : null}
+        <PageHeader eyebrow="Administration" title="Settings" />
+        {error ? <Notice tone="bad">{error}</Notice> : null}
       </ThreePane>
     );
   }
@@ -192,24 +193,24 @@ export default function SettingsPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Settings</h2>
+          <h2 className="eyebrow">Settings</h2>
           <p className="mt-1 text-lg">{exists ? form.name : 'No clinic yet'}</p>
 
           {!exists ? (
-            <p className="mt-6 rounded-lg bg-ink/5 p-3 text-sm">
+            <p className="mt-6 rounded-box bg-paper-2 p-3 text-sm">
               This database has no clinic record. Fill this in and save — it is
               the first thing go-live does, and nothing else needs a developer.
             </p>
           ) : null}
 
-          <p className="mt-6 text-sm text-muted">
+          <p className="mt-6 text-sm text-ink-2">
             <strong className="text-ink">The licence numbers and the GSTIN are
             printed on every bill.</strong>{' '}
             A bill is a legal document and it cannot be un-printed, so they are
             checked before they are saved.
           </p>
 
-          <p className="mt-4 text-sm text-muted">
+          <p className="mt-4 text-sm text-ink-2">
             <strong className="text-ink">The hours drive the public page.</strong>{' '}
             A day left empty means closed all day — which is the safe direction
             for a page a patient drives to the clinic on.
@@ -233,23 +234,23 @@ export default function SettingsPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Settings</h1>
+      <PageHeader eyebrow="Administration" title="Settings" />
 
       {!allowed ? (
-        <p className="mt-4 max-w-2xl rounded-lg bg-ink/5 p-3 text-muted">
+        <p className="mt-4 max-w-2xl rounded-box bg-paper-2 p-3 text-ink-2">
           Settings are changed by the doctor or an administrator — the fee and
           the licence numbers appear on every bill.
         </p>
       ) : null}
 
       {error ? (
-        <p className="mt-4 max-w-3xl rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad" className="max-w-3xl">{error}</Notice>
       ) : null}
       {notice ? (
         <p
           role="status"
           data-testid="settings-saved"
-          className="mt-4 max-w-3xl rounded-lg bg-ok/10 p-3 text-ok"
+          className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free"
         >
           {notice}
         </p>
@@ -308,25 +309,25 @@ export default function SettingsPage() {
         onClick={() => set('roundToRupee', !form.roundToRupee)}
         aria-label="Round bills down to the rupee"
         aria-pressed={form.roundToRupee}
-        className="mt-4 flex h-14 w-full max-w-md items-center gap-3 rounded-xl border border-line bg-white px-4 text-left active:bg-line"
+        className="mt-4 flex h-14 w-full max-w-md items-center gap-3 rounded-box border border-rule bg-sheet px-4 text-left active:bg-paper-2"
       >
         <span
           className={`flex h-6 w-6 shrink-0 items-center justify-center rounded border ${
-            form.roundToRupee ? 'border-ink bg-ink text-white' : 'border-line'
+            form.roundToRupee ? 'border-ink bg-ink text-paper' : 'border-rule'
           }`}
         >
           {form.roundToRupee ? '✓' : ''}
         </span>
         <span>
           Round bills down to the rupee
-          <span className="block text-sm text-muted">
+          <span className="block text-sm text-ink-2">
             The rounding is always in the patient&apos;s favour
           </span>
         </span>
       </button>
 
       <h2 className="mt-8 text-lg font-medium">Opening hours</h2>
-      <p className="mt-1 max-w-3xl text-sm text-muted">
+      <p className="mt-1 max-w-3xl text-sm text-ink-2">
         One line per day. Two sittings is two windows:{' '}
         <span className="tabular">09:30-13:00, 17:00-20:30</span>. An empty line
         is a day off.
@@ -334,14 +335,14 @@ export default function SettingsPage() {
 
       <div className="mt-3 max-w-2xl">
         {WEEKDAYS.map((day) => (
-          <label key={day} className="flex items-center gap-4 border-b border-line py-2">
-            <span className="w-28 shrink-0 text-muted">{WEEKDAY_NAMES[day]}</span>
+          <label key={day} className="flex items-center gap-4 border-b border-rule py-2">
+            <span className="w-28 shrink-0 text-ink-2">{WEEKDAY_NAMES[day]}</span>
             <input
               aria-label={WEEKDAY_NAMES[day]}
               value={form.hours[day] ?? ''}
               onChange={(event) => setDay(day, event.target.value)}
               placeholder="closed"
-              className="tabular h-14 flex-1 rounded-xl border border-line bg-white px-3 text-lg"
+              className="tabular h-14 flex-1 rounded-box border border-rule bg-sheet px-3 text-lg"
             />
           </label>
         ))}

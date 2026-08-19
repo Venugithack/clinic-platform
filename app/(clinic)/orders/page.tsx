@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import {
   messagesFor,
@@ -171,37 +172,37 @@ export default function OrdersPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Orders</h2>
+          <h2 className="eyebrow">Orders</h2>
           <p className="mt-1 text-lg">{orders.length} open</p>
 
           {picked ? (
             <>
               <p className="mt-6 text-lg">{picked.supplier_name}</p>
-              <p className="tabular text-sm text-muted">
+              <p className="tabular text-sm text-ink-2">
                 {picked.po_no ?? 'not yet numbered'} ·{' '}
                 {STATUS_LABEL[picked.status] ?? picked.status}
               </p>
-              <p className="tabular mt-2 text-sm text-muted">
+              <p className="tabular mt-2 text-sm text-ink-2">
                 about ₹{Number(picked.estimated_total).toFixed(2)}
               </p>
               {picked.whatsapp_number ? (
-                <p className="tabular mt-1 text-sm text-muted">
+                <p className="tabular mt-1 text-sm text-ink-2">
                   {picked.whatsapp_number}
                 </p>
               ) : (
-                <p className="mt-1 text-sm text-danger">
+                <p className="mt-1 text-sm text-stop">
                   No WhatsApp number for this supplier.
                 </p>
               )}
               {picked.expected_on ? (
-                <p className="mt-2 text-sm text-muted">
+                <p className="mt-2 text-sm text-ink-2">
                   expected {new Date(picked.expected_on).toLocaleDateString('en-IN')}
                 </p>
               ) : null}
             </>
           ) : null}
 
-          <p className="mt-8 text-sm text-muted">
+          <p className="mt-8 text-sm text-ink-2">
             The order opens in WhatsApp with the text already written. It is sent
             from the clinic&rsquo;s own phone, so nothing here is a business
             message and nothing needs Meta&rsquo;s approval — and this screen
@@ -222,7 +223,7 @@ export default function OrdersPage() {
           ) : null}
 
           {picked && !canSend && picked.status === 'draft' ? (
-            <p className="text-sm text-muted">
+            <p className="text-sm text-ink-2">
               The doctor sends orders. This one is ready for him.
             </p>
           ) : null}
@@ -267,13 +268,13 @@ export default function OrdersPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Purchase orders</h1>
+      <PageHeader eyebrow="Purchasing" title="Purchase orders" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
@@ -281,22 +282,22 @@ export default function OrdersPage() {
       {/* The hand-off. Rendered as a link and not only as a popup, because a
           blocked popup must not lose the order. */}
       {link ? (
-        <div className="mt-4 max-w-2xl rounded-xl border border-ink bg-white p-4">
+        <div className="mt-4 max-w-2xl rounded-box border border-ink bg-sheet p-4">
           <a
             href={link.href}
             target="_blank"
             rel="noopener noreferrer"
             data-testid="wa-link"
-            className="flex h-14 items-center justify-center rounded-xl border border-ink bg-ink px-4 font-medium text-white"
+            className="flex h-14 items-center justify-center rounded-box border border-ink bg-ink px-4 font-medium text-paper"
           >
             Open WhatsApp
           </a>
-          <pre className="mt-3 whitespace-pre-wrap text-sm text-muted">{link.body}</pre>
+          <pre className="mt-3 whitespace-pre-wrap text-sm text-ink-2">{link.body}</pre>
         </div>
       ) : null}
 
       {orders.length === 0 ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           Nothing on order. The reorder list is where orders start.
         </p>
       ) : null}
@@ -308,19 +309,19 @@ export default function OrdersPage() {
               type="button"
               aria-pressed={picked?.po_id === order.po_id}
               onClick={() => void open(order)}
-              className={`flex h-16 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line ${
-                picked?.po_id === order.po_id ? 'bg-ink/5' : ''
+              className={`flex h-16 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2 ${
+                picked?.po_id === order.po_id ? 'bg-active-wash' : ''
               }`}
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-lg">{order.supplier_name}</span>
-                <span className="tabular block text-sm text-muted">
+                <span className="tabular block text-sm text-ink-2">
                   {order.po_no ?? 'draft'} · {order.lines} line
                   {order.lines === 1 ? '' : 's'}
                   {order.sends > 1 ? ` · sent ${order.sends}×` : ''}
                 </span>
               </span>
-              <span className="w-40 shrink-0 text-sm text-muted">
+              <span className="w-40 shrink-0 text-sm text-ink-2">
                 {STATUS_LABEL[order.status] ?? order.status}
               </span>
               <span className="tabular w-24 shrink-0 text-right">
@@ -334,9 +335,10 @@ export default function OrdersPage() {
       {picked ? (
         <>
           <h2 className="mt-8 text-lg font-medium">Lines</h2>
-          <table className="mt-2 w-full max-w-3xl">
+          <div className="min-w-0 overflow-x-auto">
+            <table className="mt-2 w-full max-w-3xl">
             <thead>
-              <tr className="border-b border-line text-left text-sm text-muted">
+              <tr className="border-b border-rule text-left text-sm text-ink-2">
                 <th className="py-2">Drug</th>
                 <th className="text-right">Ordered</th>
                 <th className="text-right">Received</th>
@@ -351,11 +353,11 @@ export default function OrdersPage() {
                   stripsPerBox: line.default_strips_per_box ?? 1,
                 };
                 return (
-                  <tr key={line.po_line_id} className="border-b border-line">
+                  <tr key={line.po_line_id} className="border-b border-rule">
                     <td className="py-3">
                       {line.drug_name}{' '}
-                      <span className="text-sm text-muted">{line.strength}</span>
-                      <span className="block text-sm text-muted">
+                      <span className="text-sm text-ink-2">{line.strength}</span>
+                      <span className="block text-sm text-ink-2">
                         {formatQty(line.ordered_qty_base, pack, line.base_unit, {
                           boxes: true,
                         })}
@@ -365,7 +367,7 @@ export default function OrdersPage() {
                     <td className="tabular text-right">{line.received_qty_base}</td>
                     <td
                       className={`tabular text-right ${
-                        line.outstanding_qty_base > 0 ? 'text-danger' : 'text-ok'
+                        line.outstanding_qty_base > 0 ? 'text-stop' : 'text-free'
                       }`}
                     >
                       {line.outstanding_qty_base}
@@ -379,7 +381,7 @@ export default function OrdersPage() {
                             setEditing(line);
                             setDigits('');
                           }}
-                          className="h-11 rounded-lg border border-line px-3 text-sm active:bg-line"
+                          className="h-11 rounded-box border border-rule px-3 text-sm active:bg-paper-2"
                         >
                           Change
                         </button>
@@ -390,11 +392,12 @@ export default function OrdersPage() {
               })}
             </tbody>
           </table>
+          </div>
 
           {editing ? (
-            <div className="mt-4 max-w-md rounded-xl border border-line bg-white p-4">
+            <div className="mt-4 max-w-md rounded-box border border-rule bg-sheet p-4">
               <p className="text-lg">{editing.drug_name}</p>
-              <p className="text-sm text-muted">
+              <p className="text-sm text-ink-2">
                 Suggested {editing.suggested_qty_base ?? editing.ordered_qty_base} —
                 the supplier&rsquo;s minimum order is a judgement this screen does
                 not make.
@@ -411,14 +414,14 @@ export default function OrdersPage() {
                   type="button"
                   disabled={busy || digits === ''}
                   onClick={() => void saveQty(Number(digits || '0'))}
-                  className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+                  className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
                 >
                   Set quantity
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditing(null)}
-                  className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+                  className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
                 >
                   Cancel
                 </button>
@@ -427,17 +430,17 @@ export default function OrdersPage() {
           ) : null}
 
           {replying ? (
-            <div className="mt-4 max-w-xl rounded-xl border border-line bg-white p-4">
-              <label className="block text-sm text-muted" htmlFor="reply">
+            <div className="mt-4 max-w-xl rounded-box border border-rule bg-sheet p-4">
+              <label className="block text-sm text-ink-2" htmlFor="reply">
                 What did the supplier say?
               </label>
               <input
                 id="reply"
                 value={reply}
                 onChange={(event) => setReply(event.target.value)}
-                className="mt-1 h-14 w-full rounded-xl border border-line px-3 text-lg"
+                className="blank mt-1 h-14 w-full px-3 text-lg"
               />
-              <p className="mt-2 text-sm text-muted">
+              <p className="mt-2 text-sm text-ink-2">
                 Typed in by hand, because a deep link has no reply channel back
                 into the app. It is worse than an API and much better than an
                 order nobody is tracking.
@@ -446,7 +449,7 @@ export default function OrdersPage() {
                 type="button"
                 disabled={busy || reply.trim() === ''}
                 onClick={() => void saveReply()}
-                className="mt-3 h-14 w-full rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+                className="mt-3 h-14 w-full rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
               >
                 Record reply
               </button>
@@ -454,7 +457,7 @@ export default function OrdersPage() {
           ) : null}
 
           {picked.supplier_reply ? (
-            <p className="mt-4 max-w-2xl rounded-lg bg-ok/10 p-3">
+            <p className="mt-4 max-w-2xl rounded-box bg-free-wash p-3">
               Supplier: {picked.supplier_reply}
             </p>
           ) : null}
@@ -464,8 +467,8 @@ export default function OrdersPage() {
               <h2 className="mt-8 text-lg font-medium">What was sent</h2>
               <ul className="mt-2 max-w-2xl">
                 {messages.map((message) => (
-                  <li key={message.id} className="border-b border-line py-3">
-                    <p className="tabular text-sm text-muted">
+                  <li key={message.id} className="border-b border-rule py-3">
+                    <p className="tabular text-sm text-ink-2">
                       {new Date(message.at).toLocaleString('en-IN')} ·{' '}
                       {message.to_number} · {message.status}
                     </p>

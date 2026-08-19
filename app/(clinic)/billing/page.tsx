@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import {
   billsToday,
@@ -193,20 +194,20 @@ export default function BillingPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Till</h2>
+          <h2 className="eyebrow">Till</h2>
 
           {till ? (
             <>
               <p className="tabular mt-1 text-2xl">
                 ₹{Number(till.expected_cash).toFixed(2)}
               </p>
-              <p className="text-sm text-muted">expected in the drawer</p>
-              <p className="tabular mt-3 text-sm text-muted">
+              <p className="text-sm text-ink-2">expected in the drawer</p>
+              <p className="tabular mt-3 text-sm text-ink-2">
                 opened {new Date(till.opened_at).toLocaleTimeString('en-IN')} with ₹
                 {Number(till.opening_float).toFixed(2)}
                 {till.opened_by_name ? ` by ${till.opened_by_name}` : ''}
               </p>
-              <p className="tabular mt-1 text-sm text-muted">
+              <p className="tabular mt-1 text-sm text-ink-2">
                 ₹{Number(till.cash_sales).toFixed(2)} taken
                 {Number(till.pay_outs) !== 0
                   ? ` · ₹${Math.abs(Number(till.pay_outs)).toFixed(2)} paid out`
@@ -216,19 +217,19 @@ export default function BillingPage() {
           ) : (
             <>
               <p className="mt-1 text-lg">Closed</p>
-              <p className="mt-1 text-sm text-muted">
+              <p className="mt-1 text-sm text-ink-2">
                 Cash cannot be taken until a drawer is open to put it in. Card and
                 UPI are unaffected.
               </p>
             </>
           )}
 
-          <h2 className="mt-8 text-sm uppercase tracking-wide text-muted">Today</h2>
+          <h2 className="eyebrow mt-8">Today</h2>
           <p className="tabular mt-1 text-lg">
             {bills.filter((bill) => bill.status !== 'cancelled').length} bill
             {bills.filter((bill) => bill.status !== 'cancelled').length === 1 ? '' : 's'}
           </p>
-          <p className="tabular text-sm text-muted">
+          <p className="tabular text-sm text-ink-2">
             ₹
             {bills
               .filter((bill) => bill.status !== 'cancelled')
@@ -268,25 +269,25 @@ export default function BillingPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Billing</h1>
+      <PageHeader eyebrow="Counter" title="Billing" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
 
       {/* The till pad: opening float, or the closing count. */}
       {pad === 'float' || pad === 'count' ? (
-        <div className="mt-4 max-w-md rounded-xl border border-line bg-white p-4">
+        <div className="mt-4 max-w-md rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">
             {pad === 'float' ? 'Cash in the drawer to start with' : 'Count the drawer'}
           </p>
           {pad === 'count' && till ? (
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-sm text-ink-2">
               Count it before you look: the expectation is on the left, and a
               drawer counted to match it proves nothing.
             </p>
@@ -303,7 +304,7 @@ export default function BillingPage() {
               type="button"
               disabled={busy || cash === ''}
               onClick={() => void doTill(pad === 'float' ? 'open' : 'close')}
-              className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white disabled:opacity-40"
+              className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
             >
               {/* Not "Open till" again: the rail button is already called that,
                   and two controls with one name is the accessibility bug this
@@ -313,7 +314,7 @@ export default function BillingPage() {
             <button
               type="button"
               onClick={() => setPad(null)}
-              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+              className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
             >
               Cancel
             </button>
@@ -323,7 +324,7 @@ export default function BillingPage() {
 
       {/* The bill just raised, and its payment. */}
       {raised ? (
-        <div className="mt-6 max-w-xl rounded-xl border border-ink bg-white p-4">
+        <div className="mt-6 max-w-xl rounded-box border border-ink bg-sheet p-4">
           <div className="flex items-baseline justify-between">
             <p className="tabular text-lg">{raised.bill_no}</p>
             <p className="tabular text-3xl font-medium">
@@ -333,10 +334,10 @@ export default function BillingPage() {
 
           <ul className="mt-3">
             {raised.lines.map((line) => (
-              <li key={line.id} className="flex gap-3 border-b border-line py-2 text-sm">
+              <li key={line.id} className="flex gap-3 border-b border-rule py-2 text-sm">
                 <span className="flex-1">{line.description}</span>
                 {line.qty_base ? (
-                  <span className="tabular text-muted">{line.qty_base}</span>
+                  <span className="tabular text-ink-2">{line.qty_base}</span>
                 ) : null}
                 <span className="tabular w-20 text-right">
                   ₹{Number(line.amount).toFixed(2)}
@@ -346,7 +347,7 @@ export default function BillingPage() {
           </ul>
 
           {Number(raised.round_off) !== 0 ? (
-            <p className="tabular mt-2 text-sm text-muted">
+            <p className="tabular mt-2 text-sm text-ink-2">
               rounded down ₹{Math.abs(Number(raised.round_off)).toFixed(2)}
             </p>
           ) : null}
@@ -359,28 +360,28 @@ export default function BillingPage() {
                   type="button"
                   disabled={busy}
                   onClick={() => void pay(method)}
-                  className="h-14 flex-1 rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+                  className="h-14 flex-1 rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
                 >
                   {method === 'upi' ? 'UPI' : method[0]?.toUpperCase() + method.slice(1)}
                 </button>
               ))}
             </div>
           ) : (
-            <p className="mt-4 text-ok">Paid by {raised.method}.</p>
+            <Notice tone="good">Paid by {raised.method}.</Notice>
           )}
 
           <div className="mt-4 flex gap-3">
             <button
               type="button"
               onClick={() => router.push(`/bill/${raised.id}/print` as Route)}
-              className="h-14 flex-1 rounded-xl border border-line px-4 active:bg-line"
+              className="h-14 flex-1 rounded-box border border-rule px-4 active:bg-paper-2"
             >
               Print
             </button>
             <button
               type="button"
               onClick={() => setRaised(null)}
-              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+              className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
             >
               Done
             </button>
@@ -391,7 +392,7 @@ export default function BillingPage() {
       {/* The worklist: medicine that has left with no bill against it. */}
       <h2 className="mt-8 text-lg font-medium">Not yet billed</h2>
       {unbilled.length === 0 ? (
-        <p className="mt-2 text-muted">
+        <p className="mt-2 text-ink-2">
           Everything dispensed has a bill against it.
         </p>
       ) : null}
@@ -407,13 +408,13 @@ export default function BillingPage() {
                 setRaised(null);
                 setWithConsult(!row.is_counter_sale);
               }}
-              className={`flex h-16 w-full items-center gap-4 border-b border-line px-3 text-left active:bg-line ${
-                picked?.id === row.id ? 'bg-ink/5' : ''
+              className={`flex h-16 w-full items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2 ${
+                picked?.id === row.id ? 'bg-paper-2' : ''
               }`}
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-lg">{row.patient_name}</span>
-                <span className="tabular block text-sm text-muted">
+                <span className="tabular block text-sm text-ink-2">
                   {row.lines} item{row.lines === 1 ? '' : 's'} ·{' '}
                   {new Date(row.at).toLocaleTimeString('en-IN')}
                   {row.is_counter_sale ? ' · counter sale' : ''}
@@ -428,9 +429,9 @@ export default function BillingPage() {
       </ul>
 
       {picked ? (
-        <div className="mt-6 max-w-xl rounded-xl border border-line bg-white p-4">
+        <div className="mt-6 max-w-xl rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">{picked.patient_name}</p>
-          <p className="tabular text-sm text-muted">
+          <p className="tabular text-sm text-ink-2">
             ₹{picked.amount.toFixed(2)} of medicines
           </p>
 
@@ -438,12 +439,12 @@ export default function BillingPage() {
             type="button"
             aria-pressed={withConsult}
             onClick={() => setWithConsult((current) => !current)}
-            className={`mt-3 h-14 w-full rounded-xl border px-3 text-left ${
-              withConsult ? 'border-ink bg-ink/5' : 'border-line'
+            className={`mt-3 h-14 w-full rounded-box border px-3 text-left ${
+              withConsult ? 'border-ink bg-paper-2' : 'border-rule'
             }`}
           >
             Add the consultation
-            <span className="tabular block text-sm text-muted">
+            <span className="tabular block text-sm text-ink-2">
               ₹{Number(settings?.consult_fee ?? 0).toFixed(2)}
               {settings?.follow_up_free_days
                 ? ` · free within ${settings.follow_up_free_days} days of the last paid visit`
@@ -454,10 +455,10 @@ export default function BillingPage() {
           <button
             type="button"
             onClick={() => setPad(pad === 'discount' ? null : 'discount')}
-            className="mt-3 h-14 w-full rounded-xl border border-line px-3 text-left"
+            className="mt-3 h-14 w-full rounded-box border border-rule px-3 text-left"
           >
             Discount
-            <span className="tabular block text-sm text-muted">
+            <span className="tabular block text-sm text-ink-2">
               ₹{paiseToRupees(Number(discount || '0'))}
             </span>
           </button>
@@ -475,7 +476,7 @@ export default function BillingPage() {
             type="button"
             disabled={busy}
             onClick={() => void raise()}
-            className="mt-4 h-14 w-full rounded-xl border border-ink bg-ink font-medium text-white disabled:opacity-40"
+            className="mt-4 h-14 w-full rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40"
           >
             Raise bill
           </button>
@@ -486,7 +487,7 @@ export default function BillingPage() {
           `app.void_bill` was written and tested in M4 and no screen called it
           for two milestones, which is a feature the clinic did not have. */}
       <h2 className="mt-8 text-lg font-medium">Today&rsquo;s bills</h2>
-      {bills.length === 0 ? <p className="mt-2 text-muted">None yet.</p> : null}
+      {bills.length === 0 ? <p className="mt-2 text-ink-2">None yet.</p> : null}
 
       <ul className="mt-2 max-w-3xl">
         {bills.map((bill) => (
@@ -494,9 +495,9 @@ export default function BillingPage() {
             <button
               type="button"
               onClick={() => router.push(`/bill/${bill.id}/print` as Route)}
-              className="flex h-14 min-w-0 flex-1 items-center gap-4 border-b border-line px-3 text-left active:bg-line"
+              className="flex h-14 min-w-0 flex-1 items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2"
             >
-              <span className="tabular w-32 shrink-0 text-sm text-muted">
+              <span className="tabular w-32 shrink-0 text-sm text-ink-2">
                 {bill.bill_no}
               </span>
               <span className="min-w-0 flex-1 truncate">
@@ -505,10 +506,10 @@ export default function BillingPage() {
               <span
                 className={`shrink-0 text-sm ${
                   bill.status === 'paid'
-                    ? 'text-ok'
+                    ? 'text-free'
                     : bill.status === 'cancelled'
-                      ? 'text-muted line-through'
-                      : 'text-danger'
+                      ? 'text-ink-2 line-through'
+                      : 'text-stop'
                 }`}
               >
                 {bill.status === 'paid' ? bill.method : bill.status}
@@ -526,7 +527,7 @@ export default function BillingPage() {
                   setVoiding(voiding?.id === bill.id ? null : bill);
                   setVoidReason('');
                 }}
-                className="h-14 shrink-0 rounded-xl border border-danger bg-white px-4 text-sm text-danger active:bg-line"
+                className="h-14 shrink-0 rounded-box border border-stop bg-sheet px-4 text-sm text-stop active:bg-paper-2"
               >
                 Cancel
               </button>
@@ -536,10 +537,10 @@ export default function BillingPage() {
       </ul>
 
       {voiding ? (
-        <div className="mt-4 max-w-3xl rounded-xl border border-danger bg-white p-4">
+        <div className="mt-4 max-w-3xl rounded-box border border-stop bg-sheet p-4">
           <h3 className="text-lg font-medium">Cancel {voiding.bill_no}?</h3>
 
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-ink-2">
             {voiding.status === 'paid'
               ? `₹${Number(voiding.total).toFixed(2)} has been paid${
                   voiding.method === 'cash'
@@ -552,7 +553,7 @@ export default function BillingPage() {
           </p>
 
           <label className="mt-3 block">
-            <span className="block text-sm text-muted">
+            <span className="block text-sm text-ink-2">
               Why — it goes on the record
             </span>
             <input
@@ -560,7 +561,7 @@ export default function BillingPage() {
               onChange={(event) => setVoidReason(event.target.value)}
               aria-label="Reason"
               placeholder="billed to the wrong patient"
-              className="mt-1 h-14 w-full rounded-xl border border-line bg-white px-3 text-lg"
+              className="blank mt-1 h-14 w-full px-3 text-lg"
             />
           </label>
 
@@ -569,14 +570,14 @@ export default function BillingPage() {
               type="button"
               disabled={busy || voidReason.trim() === ''}
               onClick={() => void doVoid()}
-              className="h-14 flex-1 rounded-xl border border-danger bg-danger font-medium text-white disabled:opacity-40"
+              className="h-14 flex-1 rounded-box border border-stop bg-stop font-medium text-paper disabled:opacity-40"
             >
               Cancel this bill
             </button>
             <button
               type="button"
               onClick={() => setVoiding(null)}
-              className="h-14 flex-1 rounded-xl border border-line bg-white active:bg-line"
+              className="h-14 flex-1 rounded-box border border-rule bg-sheet active:bg-paper-2"
             >
               Leave it alone
             </button>

@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { ScanField } from '@/components/ScanField';
 import {
   counterHeader,
@@ -234,25 +235,25 @@ export default function CounterPrescriptionPage() {
       context={
         <div>
           <h2 className="text-xl font-semibold">{header?.patient_name ?? '…'}</h2>
-          <p className="tabular mt-1 text-muted">
+          <p className="tabular mt-1 text-ink-2">
             Token {header?.token_no ?? '—'} · {header?.doctor_name}
           </p>
 
           {header?.allergies ? (
-            <p className="mt-4 rounded-lg bg-danger/10 p-3 text-danger">
+            <Notice tone="bad">
               Allergies: {header.allergies}
-            </p>
+            </Notice>
           ) : null}
 
           {unknownCode ? (
-            <div className="mt-6 rounded-xl border border-line bg-white p-3">
-              <p className="text-sm text-muted">
+            <div className="mt-6 rounded-box border border-rule bg-sheet p-3">
+              <p className="text-sm text-ink-2">
                 Code {unknownCode} is not known. Tap the line it belongs to.
               </p>
               <button
                 type="button"
                 onClick={() => setUnknownCode(null)}
-                className="mt-2 h-11 rounded-lg px-3 text-sm text-muted active:bg-line"
+                className="mt-2 h-11 rounded-box px-3 text-sm text-ink-2 active:bg-paper-2"
               >
                 Cancel
               </button>
@@ -279,26 +280,26 @@ export default function CounterPrescriptionPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Dispense</h1>
+      <PageHeader eyebrow="Pharmacy" title="Dispense" />
 
       {/* A colour flash, not a dialog: the pharmacist is looking at the strip. */}
       {flash ? (
         <p
           role="status"
-          className={`mt-4 rounded-lg p-3 text-lg ${
-            flash.kind === 'ok' ? 'bg-ok/10 text-ok' : 'bg-danger/15 text-danger'
+          className={`mt-4 rounded-box p-3 text-lg ${
+            flash.kind === 'ok' ? 'bg-free-wash text-free' : 'bg-stop-wash text-stop'
           }`}
         >
           {flash.message}
         </p>
       ) : null}
 
-      {error ? <p className="mt-4 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
 
       {dispensedAt ? (
-        <p className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <Notice tone="good">
           Dispensed. The ledger has been written and the stock is down.
-        </p>
+        </Notice>
       ) : null}
 
       <ul className="mt-6 max-w-3xl">
@@ -314,32 +315,32 @@ export default function CounterPrescriptionPage() {
           const batches = allocation.get(item.drug_id) ?? [];
 
           return (
-            <li key={item.drug_id} className="border-b border-line py-4">
+            <li key={item.drug_id} className="border-b border-rule py-4">
               <div className="flex items-center gap-4">
                 <span
                   aria-hidden="true"
                   className={`h-3 w-3 shrink-0 rounded-full ${
-                    state ? 'bg-ok' : 'bg-line'
+                    state ? 'bg-free' : 'bg-paper-2'
                   }`}
                 />
 
                 <div className="min-w-0 flex-1">
                   <p className="text-lg">
                     {substituted ? (drug?.name ?? '…') : item.name}{' '}
-                    <span className="text-sm text-muted">{item.strength}</span>
+                    <span className="text-sm text-ink-2">{item.strength}</span>
                     {substituted ? (
-                      <span className="ml-2 rounded bg-ok/10 px-1.5 py-0.5 text-xs text-ok">
+                      <span className="ml-2 rounded bg-free-wash px-1.5 py-0.5 text-xs text-free">
                         substituted for {item.name}
                       </span>
                     ) : null}
                   </p>
-                  <p className="tabular text-sm text-muted">
+                  <p className="tabular text-sm text-ink-2">
                     {item.dose} · {item.freq} · {item.days} days · need {item.qty_base}
                   </p>
 
                   {/* Which box to reach for. FEFO, first expiry first out. */}
                   {batches.length > 0 && !dispensedAt ? (
-                    <p className="tabular mt-1 text-sm text-muted">
+                    <p className="tabular mt-1 text-sm text-ink-2">
                       take{' '}
                       {batches
                         .map(
@@ -356,7 +357,7 @@ export default function CounterPrescriptionPage() {
                   ) : null}
                 </div>
 
-                <span className={`tabular shrink-0 text-sm ${short ? 'text-danger' : 'text-ok'}`}>
+                <span className={`tabular shrink-0 text-sm ${short ? 'text-stop' : 'text-free'}`}>
                   {badge?.label ?? '—'}
                 </span>
 
@@ -374,12 +375,12 @@ export default function CounterPrescriptionPage() {
                           .catch((cause: Error) => setError(cause.message)),
                       );
                     }}
-                    className="h-11 shrink-0 rounded-lg border border-ink px-4 text-sm active:bg-line"
+                    className="h-11 shrink-0 rounded-box border border-ink px-4 text-sm active:bg-paper-2"
                   >
                     This one
                   </button>
                 ) : state ? (
-                  <span className="shrink-0 text-sm text-ok">
+                  <span className="shrink-0 text-sm text-free">
                     {state === 'scanned' ? 'scanned' : 'confirmed'}
                   </span>
                 ) : (
@@ -396,7 +397,7 @@ export default function CounterPrescriptionPage() {
                         setVerified((c) => new Map(c).set(item.drug_id, 'confirmed'));
                       }
                     }}
-                    className="h-11 shrink-0 rounded-lg border border-line px-4 text-sm active:bg-line"
+                    className="h-11 shrink-0 rounded-box border border-rule px-4 text-sm active:bg-paper-2"
                   >
                     No barcode
                   </button>
@@ -413,7 +414,7 @@ export default function CounterPrescriptionPage() {
                         .catch((cause: Error) => setError(cause.message))
                         .finally(() => setBusy(false));
                     }}
-                    className="h-11 shrink-0 rounded-lg border border-line px-4 text-sm active:bg-line"
+                    className="h-11 shrink-0 rounded-box border border-rule px-4 text-sm active:bg-paper-2"
                   >
                     Waiting on doctor · withdraw
                   </button>
@@ -422,7 +423,7 @@ export default function CounterPrescriptionPage() {
                     type="button"
                     disabled={busy}
                     onClick={() => void startAsking(item)}
-                    className="h-11 shrink-0 rounded-lg border border-line px-4 text-sm active:bg-line"
+                    className="h-11 shrink-0 rounded-box border border-rule px-4 text-sm active:bg-paper-2"
                   >
                     Ask doctor
                   </button>
@@ -431,10 +432,10 @@ export default function CounterPrescriptionPage() {
 
               {answered ? (
                 <p
-                  className={`mt-2 rounded-lg p-2 text-sm ${
+                  className={`mt-2 rounded-box p-2 text-sm ${
                     answered.decision === 'rejected'
-                      ? 'bg-danger/10 text-danger'
-                      : 'bg-ok/10 text-ok'
+                      ? 'bg-stop-wash text-stop'
+                      : 'bg-free-wash text-free'
                   }`}
                 >
                   Doctor {answered.decision}
@@ -446,15 +447,15 @@ export default function CounterPrescriptionPage() {
               ) : null}
 
               {asking?.drug_id === item.drug_id ? (
-                <div className="mt-3 rounded-xl border border-line bg-white p-4">
-                  <p className="text-sm text-muted">Ask the doctor about {item.name}</p>
+                <div className="mt-3 rounded-box border border-rule bg-sheet p-4">
+                  <p className="text-sm text-ink-2">Ask the doctor about {item.name}</p>
 
                   <div className="mt-3 flex flex-wrap gap-3">
                     <button
                       type="button"
                       disabled={busy}
                       onClick={() => void ask('out_of_stock')}
-                      className="h-14 rounded-xl border border-line px-5 active:bg-line"
+                      className="h-14 rounded-box border border-rule px-5 active:bg-paper-2"
                     >
                       Not enough on the shelf
                     </button>
@@ -462,14 +463,14 @@ export default function CounterPrescriptionPage() {
                       type="button"
                       disabled={busy}
                       onClick={() => void ask('clarification')}
-                      className="h-14 rounded-xl border border-line px-5 active:bg-line"
+                      className="h-14 rounded-box border border-rule px-5 active:bg-paper-2"
                     >
                       Something else
                     </button>
                     <button
                       type="button"
                       onClick={() => setAsking(null)}
-                      className="h-14 rounded-xl px-5 text-muted active:bg-line"
+                      className="h-14 rounded-box px-5 text-ink-2 active:bg-paper-2"
                     >
                       Cancel
                     </button>
@@ -477,7 +478,7 @@ export default function CounterPrescriptionPage() {
 
                   {options.length > 0 ? (
                     <>
-                      <p className="mt-5 text-sm text-muted">
+                      <p className="mt-5 text-sm text-ink-2">
                         Or propose an equivalent — same salt, same strength, same
                         form. The doctor decides.
                       </p>
@@ -490,12 +491,12 @@ export default function CounterPrescriptionPage() {
                                 type="button"
                                 disabled={busy || optionBadge.out}
                                 onClick={() => void ask('out_of_stock', option.id)}
-                                className="flex h-14 w-full items-center justify-between rounded-xl border border-line px-4 text-left active:bg-line disabled:opacity-40"
+                                className="flex h-14 w-full items-center justify-between rounded-box border border-rule px-4 text-left active:bg-paper-2 disabled:opacity-40"
                               >
                                 <span>{option.name}</span>
                                 <span
                                   className={`tabular text-sm ${
-                                    optionBadge.out ? 'text-danger' : 'text-ok'
+                                    optionBadge.out ? 'text-stop' : 'text-free'
                                   }`}
                                 >
                                   {optionBadge.label}
@@ -507,7 +508,7 @@ export default function CounterPrescriptionPage() {
                       </ul>
                     </>
                   ) : (
-                    <p className="mt-5 text-sm text-muted">
+                    <p className="mt-5 text-sm text-ink-2">
                       No equivalent in the catalogue. Same salt, same strength,
                       same form — or nothing.
                     </p>

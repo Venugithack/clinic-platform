@@ -38,30 +38,30 @@ export default function PrintPrescriptionPage() {
       .catch((cause: Error) => setError(cause.message));
   }, [params.id]);
 
-  if (error) return <p className="p-8 text-danger">{error}</p>;
-  if (!rx) return <p className="p-8 text-muted">Loading…</p>;
+  if (error) return <p className="p-8 text-stop">{error}</p>;
+  if (!rx) return <p className="p-8 text-ink-2">Loading…</p>;
 
   const dated = rx.signed_at ? new Date(rx.signed_at) : new Date();
 
   return (
     <div className="rx-screen">
-      <div className="no-print flex gap-3 border-b border-line bg-surface p-4">
+      <div className="no-print flex gap-3 border-b border-rule bg-sheet p-4">
         <button
           type="button"
           onClick={() => window.print()}
-          className="h-14 rounded-xl border border-ink bg-ink px-6 font-medium text-white"
+          className="h-14 rounded-box border border-ink bg-ink px-6 font-medium text-paper"
         >
           Print
         </button>
         <button
           type="button"
           onClick={() => router.back()}
-          className="h-14 rounded-xl border border-line bg-white px-6 text-muted"
+          className="h-14 rounded-box border border-rule bg-sheet px-6 text-ink-2"
         >
           Back
         </button>
         {!rx.signed_at ? (
-          <p className="self-center px-4 text-danger">
+          <p className="self-center px-4 text-stop">
             This prescription is not signed. A draft is not a prescription.
           </p>
         ) : null}

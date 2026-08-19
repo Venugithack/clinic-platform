@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { ScanField } from '@/components/ScanField';
 import { QtyPad } from '@/components/QtyPad';
 import { DrugSearch } from '@/components/DrugSearch';
@@ -130,9 +131,9 @@ export default function CounterSalePage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Counter sale</h2>
-          <p className="mt-1 text-muted">Walk-in, no prescription.</p>
-          <p className="mt-6 text-sm text-muted">
+          <h2 className="eyebrow">Counter sale</h2>
+          <p className="mt-1 text-ink-2">Walk-in, no prescription.</p>
+          <p className="mt-6 text-sm text-ink-2">
             Schedule H1 medicines cannot be sold here. The prescription is the
             only route, and the database refuses the rest.
           </p>
@@ -147,8 +148,8 @@ export default function CounterSalePage() {
             </>
           ) : null}
 
-          <div className="rounded-xl border border-line bg-white p-3 text-center">
-            <p className="text-sm text-muted">Total</p>
+          <div className="rounded-box border border-rule bg-sheet p-3 text-center">
+            <p className="text-sm text-ink-2">Total</p>
             {/* Large enough to read from the customer's side of the counter. */}
             <p className="tabular text-4xl font-medium" data-testid="sale-total">
               ₹{paiseToRupees(totalPaise)}
@@ -168,50 +169,50 @@ export default function CounterSalePage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Counter sale</h1>
+      <PageHeader eyebrow="Pharmacy" title="Counter sale" />
 
       {flash ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {flash}
         </p>
       ) : null}
-      {error ? <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
       {soldAt && !queued ? (
-        <p className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <Notice tone="good">
           Sold. The ledger has been written and the stock is down.
-        </p>
+        </Notice>
       ) : null}
 
       {/* Never "sold". The tablet has it; the ledger does not, and saying
           otherwise is a lie in the direction that costs money (rule 6). */}
       {soldAt && queued ? (
-        <p className="mt-4 rounded-lg bg-ink/5 p-3">
+        <p className="mt-4 rounded-box bg-paper-2 p-3">
           Saved on this tablet. The network is not there, so the ledger has not
           been written yet — it goes in on its own when the connection returns.
         </p>
       ) : null}
 
       {basket.length === 0 && !pending ? (
-        <p className="mt-6 text-muted">Scan a strip, or search for the medicine.</p>
+        <p className="mt-6 text-ink-2">Scan a strip, or search for the medicine.</p>
       ) : null}
 
       <ul className="mt-6 max-w-2xl">
         {basket.map((line, index) => (
           <li
             key={`${line.drug.id}-${index}`}
-            className="flex items-center gap-4 border-b border-line py-3"
+            className="flex items-center gap-4 border-b border-rule py-3"
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate text-lg">
                 {line.drug.name}{' '}
-                <span className="text-sm text-muted">{line.drug.strength}</span>
+                <span className="text-sm text-ink-2">{line.drug.strength}</span>
                 {line.drug.schedule === 'H1' ? (
-                  <span className="ml-2 rounded bg-danger/10 px-1.5 py-0.5 text-xs text-danger">
+                  <span className="ml-2 rounded bg-stop-wash px-1.5 py-0.5 text-xs text-stop">
                     H1 — needs a prescription
                   </span>
                 ) : null}
               </span>
-              <span className="tabular block text-sm text-muted">{line.qtyBase} units</span>
+              <span className="tabular block text-sm text-ink-2">{line.qtyBase} units</span>
             </span>
             <span className="tabular shrink-0 text-lg">₹{paiseToRupees(line.amountPaise)}</span>
             {!soldAt ? (
@@ -219,7 +220,7 @@ export default function CounterSalePage() {
                 type="button"
                 aria-label={`Remove ${line.drug.name}`}
                 onClick={() => setBasket((c) => c.filter((_, i) => i !== index))}
-                className="h-11 w-11 shrink-0 rounded-lg border border-line text-muted active:bg-line"
+                className="h-11 w-11 shrink-0 rounded-box border border-rule text-ink-2 active:bg-paper-2"
               >
                 ✕
               </button>
@@ -231,10 +232,10 @@ export default function CounterSalePage() {
       {pending ? (
         <div className="mt-6 max-w-md">
           <p className="text-lg">
-            {pending.name} <span className="text-sm text-muted">{pending.strength}</span>{' '}
+            {pending.name} <span className="text-sm text-ink-2">{pending.strength}</span>{' '}
             <span
               className={`tabular text-sm ${
-                stockBadge(pending).out ? 'text-danger' : 'text-ok'
+                stockBadge(pending).out ? 'text-stop' : 'text-free'
               }`}
             >
               {stockBadge(pending).label}

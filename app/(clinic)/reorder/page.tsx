@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
 import {
   priceHistory,
@@ -110,20 +111,20 @@ export default function ReorderPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Reorder</h2>
+          <h2 className="eyebrow">Reorder</h2>
           <p className="mt-1 text-lg">{rows.length} suggested</p>
-          <p className="tabular mt-1 text-sm text-muted">
+          <p className="tabular mt-1 text-sm text-ink-2">
             about ₹{estimated.toFixed(2)} at the last prices paid
           </p>
 
-          <p className="mt-6 text-sm text-muted">
+          <p className="mt-6 text-sm text-ink-2">
             Every number here is a proposal. Change the quantity, drop the line,
             or ignore the screen entirely — nothing orders itself, and nothing on
             this screen reaches a supplier.
           </p>
 
           {suppliers.size > 0 ? (
-            <p className="mt-6 text-sm text-muted">
+            <p className="mt-6 text-sm text-ink-2">
               {suppliers.size} supplier{suppliers.size === 1 ? '' : 's'}, so{' '}
               {suppliers.size} draft order{suppliers.size === 1 ? '' : 's'}.
             </p>
@@ -145,19 +146,19 @@ export default function ReorderPage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Reorder</h1>
+      <PageHeader eyebrow="Purchasing" title="Reorder" />
 
       {error ? (
-        <p className="mt-4 rounded-lg bg-danger/15 p-3 text-danger">{error}</p>
+        <Notice tone="bad">{error}</Notice>
       ) : null}
       {notice ? (
-        <p role="status" className="mt-4 rounded-lg bg-ok/10 p-3 text-ok">
+        <p role="status" className="mt-4 rounded-box bg-free-wash p-3 text-free">
           {notice}
         </p>
       ) : null}
 
       {rows.length === 0 && !error ? (
-        <p className="mt-6 text-muted">
+        <p className="mt-6 text-ink-2">
           Nothing is below its reorder level, and nothing is running out sooner
           than the supplier can deliver.
         </p>
@@ -175,13 +176,13 @@ export default function ReorderPage() {
           return (
             <li
               key={row.drug_id}
-              className={`border-b border-line py-3 ${isDropped ? 'opacity-40' : ''}`}
+              className={`border-b border-rule py-3 ${isDropped ? 'opacity-40' : ''}`}
               data-testid={`reorder-${row.drug_name}`}
             >
               <div className="flex items-center gap-4">
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-lg">{row.drug_name}</span>
-                  <span className="tabular block text-sm text-muted">
+                  <span className="tabular block text-sm text-ink-2">
                     {row.qty_base_available} on hand ·{' '}
                     {row.days_of_cover_left === null
                       ? 'no movement recorded'
@@ -190,7 +191,7 @@ export default function ReorderPage() {
                       ? ` · ran out ${row.times_at_zero}× in 180 days`
                       : ''}
                   </span>
-                  <span className="block text-sm text-muted">
+                  <span className="block text-sm text-ink-2">
                     {row.supplier_name ?? 'no default supplier'} · {row.lead_days} day
                     lead ({SOURCE_NOTE[row.lead_time_source]})
                     {row.buffer_days > 0 ? ` + ${row.buffer_days} buffer` : ''}
@@ -203,7 +204,7 @@ export default function ReorderPage() {
                     setEditing(row);
                     setDigits('');
                   }}
-                  className="tabular h-14 w-32 shrink-0 rounded-xl border border-line px-3 text-right text-xl active:bg-line"
+                  className="tabular h-14 w-32 shrink-0 rounded-box border border-rule px-3 text-right text-xl active:bg-paper-2"
                 >
                   {qty[row.drug_id] ?? 0}
                 </button>
@@ -219,13 +220,13 @@ export default function ReorderPage() {
                       return next;
                     })
                   }
-                  className="h-11 w-11 shrink-0 rounded-lg border border-line text-muted active:bg-line"
+                  className="h-11 w-11 shrink-0 rounded-box border border-rule text-ink-2 active:bg-paper-2"
                 >
                   {isDropped ? '↺' : '✕'}
                 </button>
               </div>
 
-              <p className="mt-1 text-sm text-muted">
+              <p className="mt-1 text-sm text-ink-2">
                 {formatQty(qty[row.drug_id] ?? 0, pack, row.base_unit, { boxes: true })} ·{' '}
                 {row.basis}
               </p>
@@ -238,7 +239,7 @@ export default function ReorderPage() {
                     <span key={`${price.supplier_id}-${price.purchase_no}`}>
                       {index > 0 ? ' · ' : ''}₹{Number(price.cost_per_base_unit).toFixed(2)}{' '}
                       {price.supplier_name ?? 'unknown'}{' '}
-                      <span className="text-muted">
+                      <span className="text-ink-2">
                         {new Date(price.received_at).toLocaleDateString('en-IN', {
                           day: 'numeric',
                           month: 'short',
@@ -248,7 +249,7 @@ export default function ReorderPage() {
                   ))}
                 </p>
               ) : (
-                <p className="mt-1 text-sm text-muted">No purchase history yet.</p>
+                <p className="mt-1 text-sm text-ink-2">No purchase history yet.</p>
               )}
             </li>
           );
@@ -256,9 +257,9 @@ export default function ReorderPage() {
       </ul>
 
       {editing ? (
-        <div className="mt-6 max-w-md rounded-xl border border-line bg-white p-4">
+        <div className="mt-6 max-w-md rounded-box border border-rule bg-sheet p-4">
           <p className="text-lg">{editing.drug_name}</p>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-ink-2">
             Suggested {editing.suggested_qty_base} · {editing.basis}
           </p>
           <p className="tabular mt-3 text-4xl font-medium">{digits || '0'}</p>
@@ -278,14 +279,14 @@ export default function ReorderPage() {
                 }));
                 setEditing(null);
               }}
-              className="h-14 flex-1 rounded-xl border border-ink bg-ink px-4 font-medium text-white"
+              className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper"
             >
               Set quantity
             </button>
             <button
               type="button"
               onClick={() => setEditing(null)}
-              className="h-14 rounded-xl border border-line px-5 text-muted active:bg-line"
+              className="h-14 rounded-box border border-rule px-5 text-ink-2 active:bg-paper-2"
             >
               Cancel
             </button>

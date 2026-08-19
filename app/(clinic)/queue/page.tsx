@@ -3,14 +3,26 @@
 /**
  * The queue — the default screen on both tablets (TABLET.md §7).
  *
- * Big rows, token number dominant, one tap to open. Twelve rows at a tappable
- * height is the right density; if the list needs more it needs a filter, not
- * smaller rows.
+ * Big rows, token dominant, one tap to open. Twelve rows at a tappable height
+ * is the right density; if the list needs more it needs a filter, not smaller
+ * rows.
+ *
+ * The token box is the signature object of the system and this is where it is
+ * seen most: the number the patient is holding, the number called out, and the
+ * number the doctor opens. The row that is in consult is the one place on this
+ * screen that carries the accent, and there is at most one of them.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import {
+  Badge,
+  EmptyState,
+  Notice,
+  PageHeader,
+  Token,
+} from '@/components/ui';
 import { todaysQueue, type QueueEntry } from '@/lib/db/queue';
 import { setAppointmentStatus } from '@/lib/transitions/clinic';
 import { currentSession, lock } from '@/lib/auth';
@@ -21,6 +33,18 @@ const STATUS_LABEL: Record<QueueEntry['status'], string> = {
   in_consult: 'In consult',
   done: 'Done',
   no_show: 'No show',
+};
+
+/** Law 2: the tone is the meaning, and the word is always there beside it. */
+const STATUS_TONE: Record<
+  QueueEntry['status'],
+  'none' | 'attn' | 'live' | 'free' | 'stop'
+> = {
+  booked: 'none',
+  waiting: 'attn',
+  in_consult: 'live',
+  done: 'free',
+  no_show: 'stop',
 };
 
 export default function QueuePage() {
@@ -61,38 +85,42 @@ export default function QueuePage() {
   const done = queue.filter((entry) => entry.status === 'done').length;
   const session = currentSession();
 
+  const today = new Date().toLocaleDateString('en-IN', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+
   return (
     <ThreePane
       context={
-        <div>
-          <h2 className="text-sm uppercase tracking-wide text-muted">Today</h2>
-          <p className="mt-1 text-lg">
-            {new Date().toLocaleDateString('en-IN', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-            })}
-          </p>
+        <div className="flex flex-col gap-6">
+          <div>
+            <p className="eyebrow">Today</p>
+            <p className="mt-1 text-lg">{today}</p>
+          </div>
 
-          <dl className="mt-6 space-y-3">
-            <div className="flex justify-between">
-              <dt className="text-muted">Waiting</dt>
-              <dd className="tabular text-lg">{waiting}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted">Seen</dt>
-              <dd className="tabular text-lg">{done}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted">Tokens issued</dt>
-              <dd className="tabular text-lg">{queue.length}</dd>
-            </div>
+          <dl className="flex flex-col">
+            {[
+              ['Waiting', waiting],
+              ['Seen', done],
+              ['Tokens issued', queue.length],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="flex items-baseline justify-between border-b border-rule py-2 last:border-b-0"
+              >
+                <dt className="eyebrow">{label}</dt>
+                <dd className="tabular font-mono text-lg">{value}</dd>
+              </div>
+            ))}
           </dl>
 
           {session ? (
-            <p className="mt-8 text-sm text-muted">
-              Signed in as {session.staffName}
-            </p>
+            <div>
+              <p className="eyebrow">Signed in</p>
+              <p className="mt-1 text-sm">{session.staffName}</p>
+            </div>
           ) : null}
         </div>
       }
@@ -126,53 +154,61 @@ export default function QueuePage() {
         </>
       }
     >
-      <h1 className="text-2xl font-semibold">Queue</h1>
+      {/* No action here: "Register walk-in" already lives in the rail, and two
+          buttons with one name is an ambiguous target for a finger and for the
+          e2e suite alike. The rail is this app's action surface. */}
+      <PageHeader eyebrow="Consulting room" title="Queue" sub={today} />
 
-      {error ? <p className="mt-4 text-danger">{error}</p> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
 
       {queue.length === 0 && !error ? (
-        <p className="mt-6 text-muted">
-          Nobody has been given a token today. Register a walk-in to start.
-        </p>
+        <EmptyState
+          title="Nobody has a token yet"
+          direction="Register a walk-in from the rail on the right. The token appears here and on the counter's tablet at the same moment."
+        />
       ) : null}
 
-      <ul className="mt-4">
-        {queue.map((entry) => (
-          <li key={entry.appointment_id}>
-            <button
-              type="button"
-              onClick={() => void open(entry)}
-              disabled={busy}
-              className="flex h-20 w-full items-center gap-5 border-b border-line px-3 text-left active:bg-line disabled:opacity-50"
-            >
-              <span className="tabular w-16 shrink-0 text-3xl font-medium">
-                {entry.token_no}
-              </span>
+      {queue.length > 0 ? (
+        <ul className="rounded-box border border-rule bg-sheet">
+          {queue.map((entry) => (
+            <li key={entry.appointment_id} className="border-b border-rule last:border-b-0">
+              <button
+                type="button"
+                onClick={() => void open(entry)}
+                disabled={busy}
+                className={`hoverable flex h-20 w-full items-center gap-4 px-3 text-left active:bg-paper-2 disabled:opacity-50 ${
+                  entry.status === 'in_consult' ? 'bg-active-wash' : ''
+                }`}
+              >
+                <Token
+                  serial={entry.token_no}
+                  size="lg"
+                  active={entry.status === 'in_consult'}
+                />
 
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-lg">{entry.patient_name}</span>
-                <span className="block truncate text-sm text-muted">
-                  {[entry.age ? `${entry.age}` : null, entry.sex, entry.reason]
-                    .filter(Boolean)
-                    .join(' · ')}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-lg">{entry.patient_name}</span>
+                  <span className="block truncate text-sm text-ink-2">
+                    {[entry.age ? `${entry.age}` : null, entry.sex, entry.reason]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
                 </span>
-              </span>
 
-              {/* Allergies are the one thing that must be visible before the
-                  doctor opens the record, not inside it. */}
-              {entry.allergies ? (
-                <span className="shrink-0 rounded bg-danger/10 px-2 py-1 text-sm text-danger">
-                  {entry.allergies}
-                </span>
-              ) : null}
+                {/* Allergies are the one thing that must be visible before the
+                    doctor opens the record, not inside it. */}
+                {entry.allergies ? (
+                  <Badge tone="stop">{entry.allergies}</Badge>
+                ) : null}
 
-              <span className="w-28 shrink-0 text-right text-sm text-muted">
-                {STATUS_LABEL[entry.status]}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+                <Badge tone={STATUS_TONE[entry.status]}>
+                  {STATUS_LABEL[entry.status]}
+                </Badge>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </ThreePane>
   );
 }

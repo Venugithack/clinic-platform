@@ -69,7 +69,7 @@ export default function NowPage() {
     return (
       <main className="mx-auto max-w-md p-6">
         <h1 className="text-xl font-semibold">We cannot check right now</h1>
-        <p className="mt-2 text-muted">
+        <p className="mt-2 text-ink-2">
           Please call the clinic. This page will work again shortly.
         </p>
       </main>
@@ -79,7 +79,7 @@ export default function NowPage() {
   if (!now) {
     return (
       <main className="mx-auto max-w-md p-6">
-        <p className="text-muted">Checking…</p>
+        <p className="text-ink-2">Checking…</p>
       </main>
     );
   }
@@ -89,11 +89,11 @@ export default function NowPage() {
 
   return (
     <main className="mx-auto max-w-md p-6">
-      <h1 className="text-lg text-muted">{now.clinic_name}</h1>
+      <h1 className="text-lg text-ink-2">{now.clinic_name}</h1>
 
       <p
         className={`mt-4 text-3xl font-medium ${
-          here ? 'text-ok' : closed ? 'text-ink' : 'text-danger'
+          here ? 'text-free' : closed ? 'text-ink' : 'text-stop'
         }`}
         data-testid="status"
       >
@@ -103,7 +103,7 @@ export default function NowPage() {
       </p>
 
       {/* The half of the sentence that stops it being a promise. */}
-      <p className="tabular mt-2 text-muted" data-testid="as-of">
+      <p className="tabular mt-2 text-ink-2" data-testid="as-of">
         {closed ? 'Opening hours are on the door.' : asOf(now.as_of)}
       </p>
 
@@ -118,19 +118,19 @@ export default function NowPage() {
       ) : null}
 
       {now.status === 'away' && !closed ? (
-        <p className="mt-4 text-muted">
+        <p className="mt-4 text-ink-2">
           The clinic is open, but we have not heard from the doctor&rsquo;s
           tablet recently. Please call before travelling.
         </p>
       ) : null}
 
-      <p className="mt-10 text-sm text-muted">
+      <p className="mt-10 text-sm text-ink-2">
         This page is live. Refresh it any time — it is always the current
         answer, and it is never a booking.
       </p>
 
       {checked ? (
-        <p className="tabular mt-1 text-xs text-muted">
+        <p className="tabular mt-1 text-xs text-ink-2">
           checked {checked.toLocaleTimeString('en-IN')}
         </p>
       ) : null}

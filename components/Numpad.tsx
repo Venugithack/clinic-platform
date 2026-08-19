@@ -29,7 +29,7 @@ export function Numpad({ onDigit, onBackspace, disabled = false }: NumpadProps) 
           type="button"
           disabled={disabled}
           onClick={() => onDigit(key)}
-          className="tabular h-14 rounded-xl border border-line bg-white text-2xl font-medium text-ink active:bg-line disabled:opacity-40"
+          className="tabular h-14 rounded-box border border-rule bg-sheet text-2xl font-medium text-ink active:bg-paper-2 disabled:opacity-40"
         >
           {key}
         </button>
@@ -41,7 +41,7 @@ export function Numpad({ onDigit, onBackspace, disabled = false }: NumpadProps) 
         type="button"
         disabled={disabled}
         onClick={() => onDigit('0')}
-        className="tabular h-14 rounded-xl border border-line bg-white text-2xl font-medium text-ink active:bg-line disabled:opacity-40"
+        className="tabular h-14 rounded-box border border-rule bg-sheet text-2xl font-medium text-ink active:bg-paper-2 disabled:opacity-40"
       >
         0
       </button>
@@ -51,7 +51,7 @@ export function Numpad({ onDigit, onBackspace, disabled = false }: NumpadProps) 
         disabled={disabled}
         onClick={onBackspace}
         aria-label="Delete"
-        className="h-14 rounded-xl border border-line bg-white text-xl text-muted active:bg-line disabled:opacity-40"
+        className="h-14 rounded-box border border-rule bg-sheet text-xl text-ink-2 active:bg-paper-2 disabled:opacity-40"
       >
         ←
       </button>
