@@ -277,6 +277,15 @@ Against `PLAN.md` §8's M3 and M4:
 
 §1 is not optional — it is a correctness requirement, and building without it
 means rebuilding. The rest is the difference between inventory that records what
-happened and inventory the doctor runs his purchasing from. If the budget forces
-a cut, cut §8 and §4 first; they are the ones that can be added later without
-touching data already recorded.
+happened and inventory the doctor runs his purchasing from.
+
+**The 3.5-day escape hatch is closed.** §4 and §8 were the two to cut if the
+budget forced it — the only two addable later without touching data already
+recorded. Both shipped in M3: weighted-average cost per base unit, carried
+through dispense into the ledger (§4), and `consumption_velocity`,
+`supplier_lead_time`, `stockout_history`, `supplier_price_history` and
+`reorder_suggestions` (§8). Both are also sold to the client by name in
+`PROPOSAL.md` §4 — *"What your shelf is worth"* and *"Ordering that learns"*.
+Cutting either one now would not be a descope but a retraction: the code exists,
+and the sentence promising it is in the document he is about to be sent. If the
+budget has to move, it has to move somewhere else.

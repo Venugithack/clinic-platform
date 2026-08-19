@@ -104,7 +104,7 @@ Alerts you will get:
 | Alert | When |
 |---|---|
 | Low stock | on screen, live |
-| Expiring soon | 90 / 60 / 30 days before, so there is still time to return it |
+| Expiring soon | on screen, from 90 days out — and sooner when your supplier's return deadline falls first, so there is still time to send it back |
 | Expired | blocked from sale immediately, and listed for disposal |
 
 ### The stock system, in more detail
@@ -162,10 +162,10 @@ Nothing in this build depends on it.
 ### The availability problem
 
 You suggested that being logged in should mean you are in the clinic. That is
-the right idea, but on its own it goes wrong in ordinary ways: you close the
-laptop and go home without logging out, or you log in from home on a Sunday to
-check something. A patient who is told you are there and finds the clinic locked
-will not blame the software.
+the right idea, but on its own it goes wrong in ordinary ways: you leave the
+tablet on the desk and go home without logging out, or you log in from home on
+a Sunday to check something. A patient who is told you are there and finds the
+clinic locked will not blame the software.
 
 So it works like this:
 
@@ -175,7 +175,7 @@ So it works like this:
 | Only devices registered as *clinic devices* can show you as in | logging in from home changes nothing |
 | You can set it yourself | In clinic · With a patient · Back by 4:30 · Done for the day |
 | It closes itself at your closing time | regardless of whether you logged out |
-| One "leaving now" button | on your computer and on your phone |
+| One "leaving now" button | one tap on your tablet on the way out — or from your phone once you have already left |
 
 And the wording patients see is **"Dr [name] is in the clinic — as of 2 minutes
 ago"**, never a flat "available". A reading that might be a few minutes old
@@ -272,7 +272,7 @@ Nothing here is unusual, but the build genuinely cannot finish without it.
 | **2 tablets and stands**, and a Bluetooth keyboard for the counter | ~₹35,000–45,000. See §10 |
 | **A printer that connects over Wi-Fi or network** — not USB only | Please send me the model number of your current A4 printer. See §10 |
 | **A physical stock count** on one day, clinic closed | Everything after this depends on the opening numbers being right |
-| **Documents for Meta verification** — GST certificate or registration, address proof | Start day one |
+| **Documents for Meta verification** — address proof, and your GST registration certificate if you hold one | Start day one, and tell me **which of the two you have**. Setting GST billing aside (§11, Q4) is not the same as not being registered. If you are registered, this is the quick path. If you are not, Meta wants your drug licence, clinic registration and a utility bill instead, and that route is slower — which is why I need the answer in week one rather than week six |
 | **A privacy policy published on your website** | Meta has required this since January 2026 before any automated message can be sent. I draft it, you approve and publish |
 | **A new SIM** for WhatsApp | It cannot be a number already on WhatsApp or WhatsApp Business |
 | **A 4G backup on your internet router** | ~₹300/month. So a broadband failure never stops a consultation |
