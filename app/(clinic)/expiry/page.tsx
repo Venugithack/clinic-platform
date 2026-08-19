@@ -295,7 +295,7 @@ export default function ExpiryPage() {
                 )}
               </span>
 
-              <span className="tabular w-24 shrink-0 text-right text-lg">
+              <span className="tabular font-mono w-24 shrink-0 text-right text-lg">
                 {rupees(Number(row.value_at_cost))}
               </span>
             </button>
@@ -329,7 +329,7 @@ export default function ExpiryPage() {
                   {row.batch_no} · expired {asPrinted(row.expiry)} · {row.qty_base_on_hand} units
                 </span>
               </span>
-              <span className="tabular w-24 shrink-0 text-right text-lg text-stop">
+              <span className="tabular font-mono w-24 shrink-0 text-right text-lg text-stop">
                 {rupees(Number(row.value_at_cost))}
               </span>
             </button>

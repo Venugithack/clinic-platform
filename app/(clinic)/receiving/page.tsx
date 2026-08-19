@@ -366,7 +366,7 @@ function Receiving() {
             Invoice to follow
           </button>
 
-          <p className="tabular mt-6 text-lg">₹{total.toFixed(2)}</p>
+          <p className="tabular font-mono mt-6 text-lg">₹{total.toFixed(2)}</p>
           <p className="text-sm text-ink-2">
             {lines.length} line{lines.length === 1 ? '' : 's'} at cost
           </p>

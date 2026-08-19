@@ -312,8 +312,12 @@ export default function AdminPage() {
               </span>
             </span>
 
+            {/* Named after the person: three staff rows gave three buttons all
+                called "New PIN", which is ambiguous to a screen reader and to a
+                test alike. The PIN being reset belongs to somebody. */}
             <button
               type="button"
+              aria-label={`New PIN for ${row.name}`}
               disabled={!allowed || busy || !row.active}
               onClick={() => {
                 setResetting(row);

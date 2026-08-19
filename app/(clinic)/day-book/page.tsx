@@ -248,10 +248,10 @@ export default function DayBookPage() {
                 {new Date(till.opened_at).toLocaleTimeString('en-IN')}
               </td>
               <td className="text-sm">{till.opened_by_name ?? '—'}</td>
-              <td className="tabular text-right">{money(till.opening_float)}</td>
-              <td className="tabular text-right">{money(till.cash_sales)}</td>
-              <td className="tabular text-right">{money(till.expected_cash)}</td>
-              <td className="tabular text-right">
+              <td className="tabular font-mono text-right">{money(till.opening_float)}</td>
+              <td className="tabular font-mono text-right">{money(till.cash_sales)}</td>
+              <td className="tabular font-mono text-right">{money(till.expected_cash)}</td>
+              <td className="tabular font-mono text-right">
                 {till.counted_cash === null ? (
                   <span className="text-ink-2">open</span>
                 ) : (
@@ -295,11 +295,11 @@ export default function DayBookPage() {
               <td className="tabular py-3">
                 {new Date(day.day).toLocaleDateString('en-IN')}
               </td>
-              <td className="tabular text-right">{day.bills}</td>
-              <td className="tabular text-right">{money(day.consult_total)}</td>
-              <td className="tabular text-right">{money(day.medicines_total)}</td>
-              <td className="tabular text-right">{money(day.discount)}</td>
-              <td className="tabular text-right">{money(day.net_total)}</td>
+              <td className="tabular font-mono text-right">{day.bills}</td>
+              <td className="tabular font-mono text-right">{money(day.consult_total)}</td>
+              <td className="tabular font-mono text-right">{money(day.medicines_total)}</td>
+              <td className="tabular font-mono text-right">{money(day.discount)}</td>
+              <td className="tabular font-mono text-right">{money(day.net_total)}</td>
             </tr>
           ))}
         </tbody>
