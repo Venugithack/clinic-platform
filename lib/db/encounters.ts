@@ -54,6 +54,26 @@ export async function startEncounter(
   return data as Encounter;
 }
 
+/**
+ * The earliest encounter for an appointment, or null.
+ *
+ * `maybeSingle()` was `.single()`-shaped: it RAISES if the appointment has more
+ * than one encounter, with PostgREST's own words — "JSON object requested,
+ * multiple (or no) rows returned" — straight onto the consult screen. Once an
+ * appointment had two rows, that consult could never be opened again, by
+ * anybody, and the doctor was shown a database error instead of a patient.
+ *
+ * Two encounters is not hypothetical. `startEncounter` reads-then-inserts with
+ * no unique constraint behind it (encounters.appointment_id is a plain
+ * reference), so two overlapping calls both see nothing and both insert. React
+ * re-invoking an effect is enough to do it.
+ *
+ * Ordering and taking the first makes the screen survive the duplicate instead
+ * of being bricked by it. It is deliberately NOT the real fix: the real fix is
+ * `unique (appointment_id)` plus an upsert, which is a forward-only migration
+ * on clinical data and wants a decision, not a drive-by. Until then this keeps
+ * a doctor in front of a patient rather than in front of an error.
+ */
 export async function encounterForAppointment(
   appointmentId: string,
 ): Promise<Encounter | null> {
@@ -61,6 +81,8 @@ export async function encounterForAppointment(
     .from('encounters')
     .select('*')
     .eq('appointment_id', appointmentId)
+    .order('created_at', { ascending: true })
+    .limit(1)
     .maybeSingle();
 
   if (error) throw new Error(error.message);

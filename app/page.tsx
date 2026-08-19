@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Numpad } from '@/components/Numpad';
-import { Button, Notice } from '@/components/ui';
+import { Button, EmptyState, Notice } from '@/components/ui';
 import { firstRun } from '@/lib/transitions/admin';
 import {
   currentSession,
@@ -35,7 +35,10 @@ const PIN_LENGTH = 6;
 export default function LockScreen() {
   const router = useRouter();
   const [session, setSession] = useState<StaffSession | null>(null);
-  const [staff, setStaff] = useState<StaffOption[]>([]);
+  // `null` until the read lands, which is NOT the same as "the clinic has no
+  // staff" — and rendering the two identically is what produced a screen
+  // asking "Who is this?" above nothing at all.
+  const [staff, setStaff] = useState<StaffOption[] | null>(null);
   const [selected, setSelected] = useState<StaffOption | null>(null);
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -74,16 +77,33 @@ export default function LockScreen() {
 
   useEffect(() => {
     if (!registered) return;
+
+    // The timeout is not belt-and-braces, it is the bug that was found: a
+    // dynamic import whose chunk never arrives does not reject, it simply
+    // never settles, so neither the try nor the catch ever runs and the screen
+    // waits forever without saying so. Ten seconds, then tell the truth.
+    let settled = false;
+    const giveUp = setTimeout(() => {
+      if (!settled) setError('Cannot reach the clinic database.');
+    }, 10_000);
+
     void (async () => {
       try {
         // Read through the seam; lib/db is the only module that knows Supabase.
         const { listActiveStaff } = await import('@/lib/db/staff');
-        setStaff(await listActiveStaff());
+        const rows = await listActiveStaff();
+        settled = true;
+        setStaff(rows);
         setError(null);
       } catch {
+        settled = true;
         setError('Cannot reach the clinic database.');
+      } finally {
+        clearTimeout(giveUp);
       }
     })();
+
+    return () => clearTimeout(giveUp);
   }, [registered]);
 
   useEffect(() => {
@@ -290,19 +310,50 @@ export default function LockScreen() {
     return (
       <Centered>
         <h1 className="text-2xl font-semibold">Who is this?</h1>
-        <ul className="mt-6 w-full max-w-md space-y-3">
-          {staff.map((member) => (
-            <li key={member.id}>
-              <button
-                type="button"
-                onClick={() => setSelected(member)}
-                className="hoverable h-14 w-full rounded-box border border-ink bg-sheet px-5 text-left text-lg active:bg-paper-2"
-              >
-                {member.name}
-              </button>
-            </li>
-          ))}
-        </ul>
+
+        {/*
+          Three states, and they used to render as one.
+
+          A question with nothing under it is the worst screen in the product:
+          it is the first thing anybody sees, there is no way past it, and it
+          gives the person holding the tablet nothing to do and nothing to
+          report. It happened for real — a chunk failed to load, the staff read
+          never ran, and the screen sat there asking who you were with no
+          answers, no error and no clue.
+
+          So: while the read is outstanding, say so. When it lands empty, say
+          that differently, and say who can fix it. A failure keeps the notice
+          it always had.
+        */}
+        {staff === null && !error ? (
+          <p className="mt-6 text-ink-2">Reading the staff list…</p>
+        ) : null}
+
+        {staff !== null && staff.length === 0 && !error ? (
+          <div className="mt-6 w-full max-w-md">
+            <EmptyState
+              title="Nobody can sign in on this tablet yet"
+              direction="An administrator adds people under People and tablets, on a tablet that is already signed in. If this is a brand new clinic, the very first administrator is created on this screen when the database is empty."
+            />
+          </div>
+        ) : null}
+
+        {staff !== null && staff.length > 0 ? (
+          <ul className="mt-6 w-full max-w-md space-y-3">
+            {staff.map((member) => (
+              <li key={member.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelected(member)}
+                  className="hoverable h-14 w-full rounded-box border border-ink bg-sheet px-5 text-left text-lg active:bg-paper-2"
+                >
+                  {member.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         {error ? <Notice tone="bad">{error}</Notice> : null}
       </Centered>
     );

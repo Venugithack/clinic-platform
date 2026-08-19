@@ -342,7 +342,7 @@ export default function SettingsPage() {
               value={form.hours[day] ?? ''}
               onChange={(event) => setDay(day, event.target.value)}
               placeholder="closed"
-              className="tabular h-14 flex-1 rounded-box border border-rule bg-sheet px-3 text-lg"
+              className="blank tabular h-14 min-w-0 flex-1 px-3 text-lg"
             />
           </label>
         ))}
