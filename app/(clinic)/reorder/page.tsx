@@ -198,15 +198,23 @@ export default function ReorderPage() {
                   </span>
                 </span>
 
-                {/* Named after the drug, like the Drop button below it. Without
-                    this the accessible name is the bare number, and suggested
-                    quantities repeat across the list — four rows offering 450
-                    gave four buttons all called "450", which tells a screen
-                    reader nothing about which medicine is being ordered and
-                    makes the control ambiguous to address in a test. */}
+                {/* Named after the drug AND carrying the number, like the Drop
+                    button below it. Without the drug the accessible name is a
+                    bare quantity, and suggested quantities repeat across the
+                    list — four rows offering 450 gave four buttons all called
+                    "450", which tells a screen reader nothing about which
+                    medicine is being ordered.
+
+                    The quantity stays in the name rather than being replaced by
+                    it, because the number is the thing being announced and the
+                    thing being changed: m3-purchasing.spec.ts finds this button
+                    by the value and then asserts the value again after editing
+                    it. Dropping the digits would have made that assertion
+                    unwritable — a label is not allowed to hide the value it
+                    labels. */}
                 <button
                   type="button"
-                  aria-label={`Order quantity for ${row.drug_name}`}
+                  aria-label={`Order quantity for ${row.drug_name}: ${qty[row.drug_id] ?? 0}`}
                   onClick={() => {
                     setEditing(row);
                     setDigits('');
