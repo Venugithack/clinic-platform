@@ -79,7 +79,12 @@ export default function NowPage() {
   if (!now) {
     return (
       <main className="mx-auto max-w-md p-6">
-        <p className="text-ink-2">Checking…</p>
+        {/* A heading, not a bare line: this is the one page a patient opens
+            from a message, and a document with no heading gives a screen
+            reader nothing to land on. The clinic name cannot appear yet — it
+            arrives with the reading — so the heading says what is happening
+            instead of inventing a name. A sentence, never a spinner. */}
+        <h1 className="text-lg text-ink-2">Checking with the clinic…</h1>
       </main>
     );
   }

@@ -53,7 +53,7 @@ export function ScanField({
 
   return (
     <div className="rounded-box border border-rule bg-sheet p-4" data-testid="scanfield">
-      <p className="text-sm text-ink-2">{label}</p>
+      <p className="eyebrow">{label}</p>
 
       {supported ? (
         <video
@@ -73,14 +73,32 @@ export function ScanField({
 
       {notice ? <p className="mt-2 text-sm text-stop">{notice}</p> : null}
 
-      <div className="mt-3 flex gap-3">
+      {/*
+        `min-w-0` and `flex-wrap` are both load-bearing, and this is the same
+        failure the shell grid had, one level down.
+
+        An <input> carries an intrinsic width from its `size` attribute —
+        twenty characters, about 248px here. `flex-1` is `flex: 1 1 0%`, but a
+        flex item's `min-width` defaults to `auto`, which is that intrinsic
+        width. So the input refused to shrink, and in the 200px action rail it
+        pushed "Check" 186px past the right-hand edge — off the screen, on the
+        two screens where a pharmacist scans a strip.
+
+        Caught at 1024px AND at 1280px, which is the tablet the clinic actually
+        uses and the viewport the e2e suite runs at.
+
+        With `min-w-0` the input can shrink, and `basis-32` + `flex-wrap` puts
+        the button on its own line rather than crushing both: in the rail they
+        stack, and in a wide work pane they sit side by side.
+      */}
+      <div className="mt-3 flex flex-wrap gap-3">
         <input
           value={typed}
           onChange={(event) => setTyped(event.target.value)}
           aria-label="Barcode"
           inputMode="numeric"
-          placeholder="Or type the code"
-          className="tabular h-14 flex-1 rounded-box border border-rule px-4 text-lg"
+          placeholder="Code"
+          className="blank tabular h-14 min-w-0 flex-1 basis-32 px-4 text-lg"
         />
         <button
           type="button"
@@ -89,7 +107,7 @@ export function ScanField({
             onCode(typed.trim());
             setTyped('');
           }}
-          className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40"
+          className="h-14 shrink-0 grow rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:border-rule disabled:bg-transparent disabled:text-ink-3"
         >
           Check
         </button>

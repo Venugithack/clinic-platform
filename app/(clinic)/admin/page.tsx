@@ -146,7 +146,7 @@ export default function AdminPage() {
 
   const pinPad = (onDone: () => void, label: string) => (
     <div className="mt-4 max-w-xs">
-      <p className="text-sm text-ink-2">Six-digit PIN</p>
+      <p className="eyebrow">Six-digit PIN</p>
       <div className="mt-2 flex gap-3" role="status" aria-label="PIN entry">
         {Array.from({ length: 6 }, (_, index) => (
           <span

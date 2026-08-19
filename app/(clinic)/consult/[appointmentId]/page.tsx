@@ -209,7 +209,7 @@ export default function ConsultPage() {
       rail={
         <>
           <div className="rounded-box border border-rule bg-sheet p-3 text-center">
-            <p className="text-sm text-ink-2">Token</p>
+            <p className="eyebrow">Token</p>
             <p className="tabular text-3xl font-medium">{entry?.token_no ?? '—'}</p>
           </div>
 

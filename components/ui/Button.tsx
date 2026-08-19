@@ -13,11 +13,22 @@
  * There is no hover state. There is no cursor (TABLET.md §2 rule 1); the
  * feedback is `active:`, which a finger does trigger.
  */
+/*
+ * Note the disabled treatment on `primary`: it loses the fill rather than
+ * merely fading it.
+ *
+ * A 40%-opacity ink fill is still a solid slab, and in the action rail it
+ * outweighed the enabled outline buttons beside it — the heaviest thing on the
+ * screen was the one action you could not take, which is exactly backwards.
+ * Dropping to an outline puts a disabled primary below an enabled secondary in
+ * the visual order, where it belongs.
+ */
 const VARIANTS = {
-  primary: 'border-ink bg-ink text-paper',
-  default: 'border-ink bg-transparent text-ink',
-  ghost: 'border-transparent bg-transparent text-ink-2',
-  danger: 'border-stop bg-transparent text-stop',
+  primary:
+    'border-ink bg-ink text-paper disabled:border-rule disabled:bg-transparent disabled:text-ink-3',
+  default: 'border-ink bg-transparent text-ink disabled:opacity-40',
+  ghost: 'border-transparent bg-transparent text-ink-2 disabled:opacity-40',
+  danger: 'border-stop bg-transparent text-stop disabled:opacity-40',
 } as const;
 
 export function Button({
@@ -39,7 +50,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-box border px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80 disabled:opacity-40 ${height} ${VARIANTS[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-box border px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80 ${height} ${VARIANTS[variant]} ${className}`}
       {...rest}
     >
       {children}
