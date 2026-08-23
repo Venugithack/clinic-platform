@@ -43,7 +43,7 @@ create or replace function app.first_run(
 ) returns jsonb
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_clinic clinic;

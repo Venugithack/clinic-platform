@@ -83,7 +83,7 @@ create or replace function app.current_device_id() returns uuid
 language sql
 stable
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
   select s.device_id
   from staff_sessions s
@@ -106,7 +106,7 @@ returns boolean
 language plpgsql
 stable
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_clinic clinic%rowtype;
@@ -159,7 +159,7 @@ create or replace function app.presence_ping()
 returns presence
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_staff_id  uuid;
@@ -210,7 +210,7 @@ create or replace function app.set_presence(
 ) returns presence
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_staff_id  uuid;
@@ -274,7 +274,7 @@ create or replace function app.close_clinic_today(p_reason text)
 returns int
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_staff_id uuid;
@@ -315,7 +315,7 @@ create or replace function app.reopen_clinic_today()
 returns void
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_staff_id uuid;

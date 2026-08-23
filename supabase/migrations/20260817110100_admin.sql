@@ -47,7 +47,7 @@ create or replace function app.add_staff(
 ) returns staff
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_first boolean;
@@ -109,7 +109,7 @@ create or replace function app.update_staff(
 ) returns staff
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_before jsonb;
@@ -180,7 +180,7 @@ create or replace function app.register_device(
 ) returns jsonb
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_device devices;
@@ -234,7 +234,7 @@ create or replace function app.revoke_device(p_device_id uuid)
 returns int
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_device devices;
