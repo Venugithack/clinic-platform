@@ -289,18 +289,26 @@ export default function LockScreen() {
   }
 
   if (session) {
+    // The line and the button have to agree about which room this is.
+    //
+    // The line below has always named the right one. The button under it always
+    // went to `/queue`, so the pharmacist read "Pharmacy counter", pressed the
+    // only button on the screen and arrived in the consulting room — every
+    // shift, on the tablet that never leaves the counter. One test, used twice.
+    const isDoctor = session.role === 'doctor';
+
     return (
       <Centered>
         <h1 className="text-2xl font-semibold">Signed in as {session.staffName}</h1>
         <p className="mt-3 text-ink-2">
-          {session.role === 'doctor' ? 'Consulting room' : 'Pharmacy counter'}
+          {isDoctor ? 'Consulting room' : 'Pharmacy counter'}
         </p>
         <Button
           variant="primary"
-          onClick={() => router.replace('/queue')}
+          onClick={() => router.replace(isDoctor ? '/queue' : '/counter')}
           className="mt-8 px-8"
         >
-          Open the queue
+          {isDoctor ? 'Open the queue' : 'Open the counter'}
         </Button>
       </Centered>
     );
