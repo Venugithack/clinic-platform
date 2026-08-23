@@ -59,9 +59,12 @@ test('a signed prescription reaches the counter, and the answer comes back', asy
   await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
   await signIn(counterPage, 'seed-device-counter', 'Counter');
 
-  // The pharmacist is watching the queue before anything is signed.
-  await counterPage.getByRole('button', { name: 'Open the queue' }).click();
-  await counterPage.goto('/counter');
+  // The pharmacist is watching the counter before anything is signed — and
+  // gets there the way she actually does, by pressing the one button on her
+  // lock screen. That button used to say "Open the queue" and go to the
+  // doctor's room; this spec asserted the wrong destination along with it, and
+  // the `goto('/counter')` underneath was what hid the bug from the suite.
+  await counterPage.getByRole('button', { name: 'Open the counter' }).click();
   await expect(counterPage.getByRole('heading', { name: 'Counter', exact: true }))
     .toBeVisible();
 
