@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
-import { Notice, PageHeader } from '@/components/ui';
+import { Button, Modal, Notice, PageHeader } from '@/components/ui';
 import { ScanField } from '@/components/ScanField';
 import {
   counterHeader,
@@ -59,6 +59,18 @@ export default function CounterPrescriptionPage() {
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
 
   const [asking, setAsking] = useState<PrescriptionItem | null>(null);
+  /**
+   * The line whose scan check is being set aside, while the counter confirms.
+   *
+   * This was a window.confirm(). It read as the cheapest possible way to spend
+   * rule 8's second gesture, and it was the wrong one: a native dialog is the
+   * only thing in this product that is not the clinic's own furniture, and on
+   * an installed PWA or a kiosk browser with dialogs suppressed confirm()
+   * returns false without drawing anything — so "No barcode" would do nothing
+   * at all, silently, on the one control whose whole purpose is to be
+   * deliberate.
+   */
+  const [confirming, setConfirming] = useState<PrescriptionItem | null>(null);
   const [options, setOptions] = useState<DrugRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -388,15 +400,7 @@ export default function CounterPrescriptionPage() {
                     type="button"
                     // Rule 8: a deliberate second gesture, because this is the
                     // one place the scan check is being set aside.
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `No barcode scanned for ${item.name}. Confirm by name that this is the right pack?`,
-                        )
-                      ) {
-                        setVerified((c) => new Map(c).set(item.drug_id, 'confirmed'));
-                      }
-                    }}
+                    onClick={() => setConfirming(item)}
                     className="h-11 shrink-0 rounded-box border border-rule px-4 text-sm active:bg-paper-2"
                   >
                     No barcode
@@ -519,6 +523,39 @@ export default function CounterPrescriptionPage() {
           );
         })}
       </ul>
+
+      <Modal
+        open={confirming !== null}
+        onClose={() => setConfirming(null)}
+        title="No barcode scanned"
+        sub={confirming ? `${confirming.name} ${confirming.strength ?? ''}`.trim() : undefined}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (confirming) {
+                  setVerified((c) => new Map(c).set(confirming.drug_id, 'confirmed'));
+                }
+                setConfirming(null);
+              }}
+            >
+              Confirm by name
+            </Button>
+          </>
+        }
+      >
+        <p>
+          Read the name off the pack in your hand and check it against{' '}
+          <strong>
+            {confirming?.name} {confirming?.strength}
+          </strong>
+          . Confirming records that you checked it by name rather than by scan.
+        </p>
+      </Modal>
     </ThreePane>
   );
 }

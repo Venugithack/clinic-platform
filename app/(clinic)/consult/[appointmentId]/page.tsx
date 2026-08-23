@@ -87,7 +87,7 @@ export default function ConsultPage() {
           setSignedAt(existing.signed_at);
         }
 
-        setVisits(await recentVisits(found.patient_id));
+        setVisits(await recentVisits(found.patient_id, 5, started.id));
       } catch (cause) {
         setError((cause as Error).message);
       }
@@ -127,6 +127,31 @@ export default function ConsultPage() {
       setBusy(false);
     }
   };
+
+  /**
+   * What the course on screen actually comes to.
+   *
+   * "1 · 1-0-1 · 10 days" is twenty tablets; a strip of fifteen is not that.
+   * Nothing used to say so, and both numbers print on the prescription the
+   * patient carries to the counter, where the shortfall becomes real.
+   *
+   * Frequency is the Indian morning-noon-night notation, so the doses in a day
+   * are its parts added up. Anything that will not parse — an SOS, a taper,
+   * a frequency typed as words — yields undefined and no claim is made.
+   */
+  const dosesPerDay = freq
+    .split('-')
+    .map(Number)
+    .reduce((sum, part) => sum + part, 0);
+  const doseUnits = Number(dose);
+  const expectedQtyBase =
+    Number.isFinite(dosesPerDay) &&
+    Number.isFinite(doseUnits) &&
+    dosesPerDay > 0 &&
+    doseUnits > 0 &&
+    days > 0
+      ? Math.round(doseUnits * dosesPerDay * days)
+      : undefined;
 
   const addLine = (qtyBase: number) => {
     if (!pending) return;
@@ -432,6 +457,7 @@ export default function ConsultPage() {
                   stripsPerBox: pending.default_strips_per_box ?? 1,
                 }}
                 baseUnitLabel={pending.base_unit === 'tablet' ? 'tablets' : pending.base_unit}
+                expected={expectedQtyBase}
                 onCommit={addLine}
                 onCancel={() => setPending(null)}
               />

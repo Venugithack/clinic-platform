@@ -239,22 +239,66 @@ proxy.on('upgrade', (request, socket, head) => {
   });
 });
 
-const listener = new pg.Client({
-  host: '127.0.0.1',
-  port: Number(PG_PORT),
-  user: PG_USER,
-  database: PG_DB,
-});
+// The LISTEN connection, and why it reconnects.
+//
+// db-reset.sh drops the database `with (force)`, which terminates every
+// backend on it — this one included. Nothing about that is visible from the
+// app: the screens keep loading, PostgREST reconnects on its own, and the only
+// thing that stops working is the doctor-to-counter link, silently. A signed
+// prescription simply never appears at the counter, which looks exactly like a
+// quiet afternoon.
+//
+// dev-stack.sh restarts this process on every reset, so the sanctioned path
+// never met it. Running the pgTAP suite against a live stack does: `pnpm
+// test:db` resets underneath it, and the next thing to fail is a live-link
+// test with a timeout and no explanation.
+let listener = null;
+let shuttingDown = false;
 
-await listener.connect();
-await listener.query('listen clinic_changes');
+async function listen() {
+  listener = new pg.Client({
+    host: '127.0.0.1',
+    port: Number(PG_PORT),
+    user: PG_USER,
+    database: PG_DB,
+  });
 
-listener.on('notification', (message) => {
-  if (!message.payload) return;
-  for (const client of realtime.clients) {
-    if (client.readyState === 1) client.send(message.payload);
-  }
-});
+  // A dropped LISTEN is the expected case here, not an exception. Without a
+  // handler the 'error' event is an unhandled rejection that takes the whole
+  // dev API down with it.
+  listener.on('error', () => {});
+  listener.on('end', reconnect);
+
+  listener.on('notification', (message) => {
+    if (!message.payload) return;
+    for (const client of realtime.clients) {
+      if (client.readyState === 1) client.send(message.payload);
+    }
+  });
+
+  await listener.connect();
+  await listener.query('listen clinic_changes');
+}
+
+let reconnecting = false;
+
+function reconnect() {
+  if (reconnecting || shuttingDown) return;
+  reconnecting = true;
+  // Half a second is long enough for db-reset.sh to finish rebuilding the
+  // schema and short enough that a developer does not notice the gap.
+  setTimeout(async () => {
+    reconnecting = false;
+    try {
+      await listen();
+      console.log('realtime: reconnected to the database');
+    } catch {
+      reconnect();
+    }
+  }, 500);
+}
+
+await listen();
 
 proxy.listen(PUBLIC_PORT, '127.0.0.1', () => {
   console.log(`dev API   http://127.0.0.1:${PUBLIC_PORT}`);
@@ -268,8 +312,9 @@ proxy.listen(PUBLIC_PORT, '127.0.0.1', () => {
 });
 
 const shutdown = () => {
+  shuttingDown = true;
   pgrst.kill();
-  void listener.end();
+  if (listener) void listener.end();
   proxy.close();
   process.exit(0);
 };

@@ -73,3 +73,10 @@ blob-report/
 # churn in a diff nobody wrote.
 /AGENTS.md
 /CLAUDE.md
+
+# Also generated, and it flip-flops: `next dev` writes a reference to
+# .next/dev/types/, `next build` writes .next/types/. Committing it means every
+# build dirties the tree with a one-line diff nobody made — including the build
+# `pnpm test:e2e` runs. Nothing needs it in git: it is rewritten from the
+# installed Next version, and `tsc --noEmit` passes without it.
+/next-env.d.ts

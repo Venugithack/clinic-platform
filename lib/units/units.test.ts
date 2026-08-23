@@ -82,6 +82,16 @@ describe('the MRP ceiling', () => {
     expect(lineAmountPaise(1, 66700, pack, 'strip')).toBe(333);
   });
 
+  it('prices off the four-place unit price, exactly as app.dispense() does', () => {
+    // 100.00 across a pack of 7 is 14.285714... a unit, which the database
+    // stores as 14.2857. Seven hundred of them come to 9999.99 at that price,
+    // not the 10000.00 the exact division suggests — and the bill the clinic
+    // raises is the former. Computing the exact figure in one step here made
+    // this screen disagree with the database by a paise.
+    const pack = { unitsPerStrip: 7, stripsPerBox: 1 };
+    expect(lineAmountPaise(700, 10000, pack, 'strip')).toBe(999999);
+  });
+
   it('never exceeds MRP x packs, at any quantity', () => {
     const pack = { unitsPerStrip: 200, stripsPerBox: 1 };
     const mrp = 66700;

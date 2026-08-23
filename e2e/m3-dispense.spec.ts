@@ -150,7 +150,6 @@ test('the patient stays named after the medicine is handed over', async ({ brows
   const counter = await browser.newContext();
   const doctorPage = await cabin.newPage();
   const counterPage = await counter.newPage();
-  counterPage.on('dialog', (dialog) => void dialog.accept());
 
   await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
   await signIn(counterPage, 'seed-device-counter', 'Counter');
@@ -165,9 +164,12 @@ test('the patient stays named after the medicine is handed over', async ({ brows
   const pane = counterPage.locator('[data-pane="context"]');
   await expect(pane).toContainText(patient);
 
+  // "Confirm by name" is the clinic's own modal, not a window.confirm — so the
+  // second gesture is a button on the page rather than a dialog handler.
   const noBarcode = counterPage.getByRole('button', { name: 'No barcode' });
   for (let left = await noBarcode.count(); left > 0; left = await noBarcode.count()) {
     await noBarcode.first().click();
+    await counterPage.getByRole('button', { name: 'Confirm by name' }).click();
   }
   await counterPage.getByRole('button', { name: 'Dispense', exact: true }).click();
   await expect(counterPage.getByText(/Dispensed\./)).toBeVisible();

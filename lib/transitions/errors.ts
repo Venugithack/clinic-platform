@@ -33,6 +33,7 @@ export type TransitionErrorCode =
   | 'NOT_REPLAYABLE'
   | 'IMPORT_REFUSED'
   | 'BAD_SETTING'
+  | 'WOULD_LOCK_OUT'
   | 'ALREADY_DISPENSED'
   | 'UNKNOWN';
 
@@ -63,6 +64,7 @@ const BY_SQLSTATE: Record<string, TransitionErrorCode> = {
   CL024: 'NOT_REPLAYABLE',
   CL025: 'IMPORT_REFUSED',
   CL026: 'BAD_SETTING',
+  CL027: 'WOULD_LOCK_OUT',
   CL028: 'ALREADY_DISPENSED',
 };
 
@@ -99,15 +101,4 @@ export function toTransitionError(error: PostgrestLikeError): TransitionError {
     error.message ?? 'the transition was refused',
     sqlstate,
   );
-}
-
-/**
- * Whether the counter can fix this itself.
- *
- * A short dispense has a route out — the inline quick-GRN in INVENTORY.md §3,
- * for stock that is physically on the shelf but not yet entered. An H1 refusal
- * does not; that one is legal and the answer is a prescription.
- */
-export function isRecoverableAtCounter(error: TransitionError): boolean {
-  return error.code === 'INSUFFICIENT_STOCK' || error.code === 'NO_USABLE_BATCH';
 }

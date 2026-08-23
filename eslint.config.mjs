@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import reactHooks from 'eslint-plugin-react-hooks';
 import tablet from './eslint-rules/index.mjs';
 
 export default tseslint.config(
@@ -57,6 +58,25 @@ export default tseslint.config(
   },
 
   // -------------------------------------------------------------------------
+  // The rules of hooks, and the dependency list.
+  //
+  // Every screen in this app is a client component reading through lib/db, and
+  // the failure these rules catch is specific: an effect that closes over a
+  // stale `selected`, `pin` or session and quietly acts on last render's value.
+  // Nothing else in this repository looks for it — typecheck cannot see it, and
+  // the E2E suite drives the happy path where the stale value and the fresh one
+  // happen to agree.
+  // -------------------------------------------------------------------------
+  {
+    files: ['app/**/*.{ts,tsx}', 'components/**/*.{ts,tsx}', 'lib/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
+    },
+  },
+
+  // -------------------------------------------------------------------------
   // The two tablet rules from TABLET.md §8.
   // -------------------------------------------------------------------------
   {
@@ -78,8 +98,21 @@ export default tseslint.config(
   {
     files: ['app/p/**/*.{ts,tsx}', 'app/now/**/*.{ts,tsx}'],
     rules: {
+      // Rule 2 is repeated here on purpose.
+      //
+      // These files also match the `app/**` block above, and both blocks set
+      // `no-restricted-syntax`. Flat config REPLACES a rule's options rather
+      // than merging them, so whichever block comes last is the only one that
+      // applies — and without this entry the patient surfaces would be the one
+      // place in the app where a direct .rpc() goes uncaught. That is exactly
+      // backwards: they are the surfaces where an unaudited write matters most.
       'no-restricted-syntax': [
         'error',
+        {
+          selector: "CallExpression[callee.property.name='rpc']",
+          message:
+            'Call a wrapper in lib/transitions rather than .rpc() directly (PLAN.md §5.3 rule 2).',
+        },
         {
           selector: "Literal[value=/\\b(findings|notes)\\b/]",
           message:
@@ -105,7 +138,13 @@ export default tseslint.config(
   {
     files: ['scripts/**/*.mjs', '*.config.{ts,mts,mjs}', 'eslint-rules/**/*.mjs'],
     languageOptions: {
-      globals: { console: 'readonly', process: 'readonly', Buffer: 'readonly' },
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
     },
   },
 );
