@@ -50,7 +50,7 @@ create or replace function app.set_staff_pin(p_staff_id uuid, p_pin text)
 returns void
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_actor uuid;
@@ -96,7 +96,7 @@ create or replace function app.unlock(
 ) returns text
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_device  devices%rowtype;
@@ -154,7 +154,7 @@ create or replace function app.touch_session(p_token text)
 returns boolean
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 declare
   v_ok boolean;
@@ -180,7 +180,7 @@ create or replace function app.lock(p_token text)
 returns void
 language plpgsql
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
 begin
   update staff_sessions
@@ -209,7 +209,7 @@ create or replace function app.current_staff_id() returns uuid
 language sql
 stable
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
   select coalesce(
     (
@@ -233,7 +233,7 @@ create or replace function app.current_staff_role() returns staff_role
 language sql
 stable
 security definer
-set search_path = public, pg_catalog
+set search_path = public, extensions, pg_catalog
 as $$
   select st.role from staff st where st.id = app.current_staff_id()
 $$;

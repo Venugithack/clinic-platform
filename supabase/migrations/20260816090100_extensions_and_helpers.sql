@@ -6,6 +6,19 @@
 -- roles) are created only when absent, so this migration is a no-op against a
 -- real Supabase project and a full setup against a bare cluster.
 
+-- `if not exists` is what makes this file safe to re-run. It is also what makes
+-- the schema pgcrypto lands in depend on the cluster, which is not obvious and
+-- has bitten once. Supabase preinstalls pgcrypto into `extensions`, so the line
+-- below short-circuits and digest/crypt/gen_salt/gen_random_bytes stay there; a
+-- bare cluster has no such install, so they are created in `public`.
+--
+-- Every function that calls one of them therefore pins
+-- `search_path = public, extensions, pg_catalog` — both schemas, because only
+-- one of them is right and which one depends on the host. Postgres ignores a
+-- missing schema in search_path, so naming `extensions` costs a bare cluster
+-- nothing. Drop it and `supabase db push` to a hosted project fails with
+-- "function digest(text, unknown) does not exist"; CI will not catch it,
+-- because CI is a bare cluster.
 create extension if not exists pgcrypto;
 create extension if not exists citext;
 
