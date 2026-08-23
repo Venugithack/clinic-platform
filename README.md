@@ -74,20 +74,100 @@ lib/
                     account at all (WHATSAPP.md §0)
   barcode/          BarcodeDetector, with manual entry beside it
 supabase/
-  migrations/       30 forward-only migrations — the schema
-  tests/            490 pgTAP assertions
+  migrations/       33 forward-only migrations — the schema
+  tests/            509 pgTAP assertions
   seed.sql          22-drug development seed
 e2e/                Playwright, 1280×800 with touch, no desktop project
 scripts/            local stack, migrations, backup, restore drill,
                     first-run drill, LAN HTTPS
 ```
 
+There are two ways to bring the stack up, and which one you get is decided by
+your operating system rather than by preference.
+
+**Docker — macOS, Windows, and any Linux with a daemon.** The real thing:
+Postgres 17, PostgREST, Realtime, Auth and Studio, in the same images a hosted
+project runs. This is the path `BUILD.md` §1.2 intends.
+
 ```
 pnpm install
-./scripts/dev-stack.sh --reset    # Postgres, migrations, seed, API, .env.local
+docker info                        # Docker Desktop must already be running
+./node_modules/.bin/supabase start # all 33 migrations, then seed.sql
 pnpm dev                           # then open the app
+```
+
+| | |
+|---|---|
+| App | http://localhost:3000 |
+| REST API | http://127.0.0.1:54321 |
+| Postgres | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
+| Studio | http://127.0.0.1:54323 |
+
+`supabase start` is idempotent; `supabase stop` when you are finished, and
+`supabase db reset` to get back to a clean seed.
+
+**The bare-cluster scripts — Linux and CI only.** `scripts/dev-stack.sh` drives
+a plain Postgres 17 cluster with a downloaded PostgREST binary, for CI and for
+machines with no Docker daemon. It downloads a `linux-static-x64` build and uses
+`pgrep`/`pkill`/`setpriv`, so it **cannot run on Windows or macOS** — on those,
+use Docker above.
+
+```
+./scripts/dev-stack.sh --reset    # Postgres, migrations, seed, API, .env.local
+```
+
+Either way:
+
+```
 pnpm test                          # typecheck · lint · unit · pgTAP · e2e
 ```
+
+`pnpm test:e2e` and `pnpm test:db` shell out to the bare-cluster scripts, so on
+Docker run `supabase db reset` first and then `pnpm exec playwright test`
+directly — the reset is not optional, and `playwright.config.ts` explains at
+length why the suite only tells the truth on a fresh seed.
+
+### `.env.local`, and the part that is not obvious
+
+`.env.*` is gitignored, so this is rebuilt on any fresh checkout — and **the
+Supabase anon key is the wrong value to put in it.** `lib/db/index.ts` never
+calls `signIn`: the key itself is the device's session (TABLET.md §5), and every
+grant in `20260816270200_tighten_grants.sql` targets `authenticated`. Hand it a
+key with role `anon` and you get `permission denied for table staff`.
+
+So mint an `authenticated` JWT against the local stack's secret, put it in
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, set
+`NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321`, and leave
+`NEXT_PUBLIC_REALTIME_WS_URL` unset so `lib/realtime` uses Supabase Realtime
+rather than the `dev-api.mjs` stand-in.
+
+```
+node -e "
+const {createHmac}=require('crypto');
+const b=(o)=>Buffer.from(JSON.stringify(o)).toString('base64url');
+const secret='super-secret-jwt-token-with-at-least-32-characters-long';
+const h=b({alg:'HS256',typ:'JWT'});
+const p=b({iss:'supabase-demo',role:'authenticated',
+           sub:'a5ed0000-0000-0000-0000-000000000001',
+           iat:Math.floor(Date.now()/1000),exp:2000000000});
+console.log(h+'.'+p+'.'+createHmac('sha256',secret).update(h+'.'+p).digest('base64url'));
+"
+```
+
+This is a local-development shape and not a production one: no code path yet
+obtains a real `authenticated` session on a hosted project.
+
+### Signing in
+
+The app looks for a registered device before it will show the PIN pad, and a
+fresh browser has none. In DevTools on the app:
+
+```js
+localStorage.setItem('clinic.deviceToken', 'seed-device-cabin')   // or -counter
+```
+
+Reload, pick a staff member, PIN `481920` — all three seeded staff share it, and
+`supabase/seed.sql` says why.
 
 **The two tests that matter most** are in
 `supabase/tests/20_transition_grants.sql`: a direct write to the stock ledger is
