@@ -3,13 +3,17 @@
 #
 # HOSTING.md §1a: build local first. Supabase in Docker on the dev machine is
 # the intended local stack, and `supabase start` is what the clinic dev machine
-# runs. These scripts drive a plain Postgres 16 cluster instead, for CI and for
+# runs. These scripts drive a plain Postgres 17 cluster instead, for CI and for
 # any environment without a Docker daemon — the migrations are identical and
 # stay `supabase db push`-compatible either way, because nothing in them is
 # Supabase-proprietary (HOSTING.md §7).
+#
+# 17 and not some other number: it is the major supabase/config.toml pins, and
+# these two stacks have to agree. When they do not, this one can go green over a
+# schema the stack the clinic actually runs would reject.
 set -euo pipefail
 
-PG_VERSION="${PG_VERSION:-16}"
+PG_VERSION="${PG_VERSION:-17}"
 PG_BIN="${PG_BIN:-/usr/lib/postgresql/${PG_VERSION}/bin}"
 PGPORT="${PGPORT:-54329}"
 PGHOST="${PGHOST:-127.0.0.1}"

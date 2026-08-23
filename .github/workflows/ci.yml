@@ -59,14 +59,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Postgres 16 and pgTAP
+      - name: Install Postgres 17 and pgTAP
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-16 postgresql-16-pgtap
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-17 postgresql-17-pgtap
 
       - name: Migrations, forward-only
         run: |
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
           ./scripts/db-start.sh
           ./scripts/db-migrate.sh
 
@@ -103,14 +103,14 @@ jobs:
       # against a fiction — and the two bugs this suite has already caught (a
       # build-time env inlining failure, and a plpgsql DEFAULT that does not
       # apply to an explicit null) were both invisible to every other layer.
-      - name: Install Postgres 16
+      - name: Install Postgres 17
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-16
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-17
 
       - name: Database, seed and API
         run: |
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
           ./scripts/dev-stack.sh --reset
 
       - name: Install Chromium

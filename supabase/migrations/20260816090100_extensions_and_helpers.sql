@@ -1,7 +1,7 @@
 -- Extensions, roles, and the `app` helper schema.
 --
 -- Everything here is standard Postgres (HOSTING.md §7): no Supabase-proprietary
--- SQL, so a pg_dump restores onto a plain Postgres 16 anywhere. The Supabase
+-- SQL, so a pg_dump restores onto a plain Postgres 17 anywhere. The Supabase
 -- objects we depend on (the `auth` schema, the anon/authenticated/service_role
 -- roles) are created only when absent, so this migration is a no-op against a
 -- real Supabase project and a full setup against a bare cluster.
