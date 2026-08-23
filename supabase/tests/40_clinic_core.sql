@@ -133,6 +133,44 @@ select is(
 );
 
 -- ---------------------------------------------------------------------------
+-- One appointment is one row, whatever encounters holds (20260824090100).
+--
+-- `startEncounter` reads-then-inserts with no unique constraint behind it, so
+-- an appointment can carry two encounters — reproduced live at 0.7 ms apart,
+-- from React strict mode's double effect. Under the old plain join that became
+-- two rows on the board, and because `ahead` is a window function over these
+-- rows it also moved a real number on a real patient's screen.
+--
+-- Same created_at on both, deliberately: 0.7 ms apart is close enough to a tie
+-- that the view cannot depend on the timestamp alone to separate them.
+-- ---------------------------------------------------------------------------
+insert into encounters (id, patient_id, doctor_id, appointment_id, created_at) values
+  ('e0000000-0000-0000-0000-0000000000d2', '60000000-0000-0000-0000-00000000001c',
+   '50000000-0000-0000-0000-00000000001a',
+   (select id from t_tokens where token_no = 3), '2026-08-24 09:00:00+05:30'),
+  ('e0000000-0000-0000-0000-0000000000d1', '60000000-0000-0000-0000-00000000001c',
+   '50000000-0000-0000-0000-00000000001a',
+   (select id from t_tokens where token_no = 3), '2026-08-24 09:00:00+05:30');
+
+select is(
+  (select count(*)::int from queue_today where token_no = 3),
+  1,
+  'an appointment with two encounters is still one row on the board'
+);
+
+select is(
+  (select encounter_id from queue_today where token_no = 3),
+  'e0000000-0000-0000-0000-0000000000d1'::uuid,
+  'and the row carries the earliest encounter — id breaks a tied timestamp, as lib/db/encounters.ts does'
+);
+
+select is(
+  (select ahead::int from queue_today where token_no = 3),
+  1,
+  'and the duplicate does not inflate the count ahead'
+);
+
+-- ---------------------------------------------------------------------------
 -- The state machine.
 -- ---------------------------------------------------------------------------
 select lives_ok(

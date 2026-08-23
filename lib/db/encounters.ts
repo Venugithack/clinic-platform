@@ -69,10 +69,15 @@ export async function startEncounter(
  * re-invoking an effect is enough to do it.
  *
  * Ordering and taking the first makes the screen survive the duplicate instead
- * of being bricked by it. It is deliberately NOT the real fix: the real fix is
- * `unique (appointment_id)` plus an upsert, which is a forward-only migration
- * on clinical data and wants a decision, not a drive-by. Until then this keeps
- * a doctor in front of a patient rather than in front of an error.
+ * of being bricked by it. `queue_today` takes the earliest the same way, since
+ * 20260824090100 — the two have to agree, or the board and this screen can hold
+ * different encounters for one appointment. `id` breaks the tie because the two
+ * rows this exists to survive were 0.7 ms apart and a timestamp can tie.
+ *
+ * It is deliberately NOT the real fix: the real fix is `unique (appointment_id)`
+ * plus an upsert, which is a forward-only migration on clinical data and wants a
+ * decision, not a drive-by. Until then this keeps a doctor in front of a patient
+ * rather than in front of an error.
  */
 export async function encounterForAppointment(
   appointmentId: string,
@@ -82,6 +87,7 @@ export async function encounterForAppointment(
     .select('*')
     .eq('appointment_id', appointmentId)
     .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
     .limit(1)
     .maybeSingle();
 
