@@ -90,6 +90,10 @@ export default function CounterPage() {
             Counter sale
           </RailButton>
           <RailButton onClick={() => router.push('/billing')}>Billing</RailButton>
+          {/* Above the task screens on purpose. This is the one that answers a
+              question instead of starting a job, and it is the one most often
+              wanted with a customer standing there. */}
+          <RailButton onClick={() => router.push('/inventory')}>Inventory</RailButton>
           <RailButton onClick={() => router.push('/receiving')}>Receiving</RailButton>
           <RailButton onClick={() => router.push('/stock-take')}>Stock-take</RailButton>
           <RailButton onClick={() => router.push('/expiry')}>Expiry</RailButton>
