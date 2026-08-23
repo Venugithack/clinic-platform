@@ -45,9 +45,12 @@ async function openAndVerify(page: Page, patient: string, drug: string) {
   await expect(page.getByText(drug).first()).toBeVisible();
 
   // The seed carries no barcodes, so this is the "confirm by name" path.
+  // The second gesture is the clinic's own modal, so it is confirmed on the
+  // page rather than through a dialog handler.
   const noBarcode = page.getByRole('button', { name: 'No barcode' });
   for (let remaining = await noBarcode.count(); remaining > 0; remaining = await noBarcode.count()) {
     await noBarcode.first().click();
+    await page.getByRole('button', { name: 'Confirm by name' }).click();
   }
 
   const dispense = page.getByRole('button', { name: 'Dispense', exact: true });
@@ -61,10 +64,8 @@ test('two tablets reaching for one prescription dispense it once', async ({ brow
 
   const cabin = await browser.newContext();
   const counter = await browser.newContext();
-  // The "confirm by name" gesture is a window.confirm.
   const doctorPage = await cabin.newPage();
   const counterPage = await counter.newPage();
-  for (const page of [doctorPage, counterPage]) page.on('dialog', (d) => void d.accept());
 
   await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
   await signIn(counterPage, 'seed-device-counter', 'Counter');

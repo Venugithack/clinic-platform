@@ -22,11 +22,19 @@ import { decompose, toBaseUnits, type PackBasis, type PackConfig } from '@/lib/u
 export function QtyPad({
   pack,
   baseUnitLabel,
+  expected,
   onCommit,
   onCancel,
 }: {
   pack: PackConfig;
   baseUnitLabel: string;
+  /**
+   * What the regimen written above this pad comes to, when it can be worked
+   * out from dose x frequency x days. Undefined when it cannot — an SOS or a
+   * tapering dose has no arithmetic, and a number invented for one of those
+   * would be worse than no number at all.
+   */
+  expected?: number;
   onCommit: (qtyBase: number) => void;
   onCancel: () => void;
 }) {
@@ -96,6 +104,23 @@ export function QtyPad({
             }`
           : ''}
       </p>
+
+      {/* The course and the quantity, checked against each other.
+          
+          Said, not enforced. Dispensing a round strip against an odd course is
+          ordinary — the patient has some at home, the pack does not divide, the
+          doctor means to review on day three. What is not ordinary is doing it
+          without noticing, and a short antibiotic course is the case that
+          matters. So this states both numbers and leaves the decision where it
+          belongs. */}
+      {expected !== undefined && expected > 0 && qtyBase > 0 && qtyBase !== expected ? (
+        <p className="mt-2 text-sm text-attn" data-testid="qty-mismatch">
+          The course as written needs {expected} {baseUnitLabel}
+          {qtyBase < expected
+            ? ` — this is ${expected - qtyBase} short.`
+            : ` — this is ${qtyBase - expected} more.`}
+        </p>
+      ) : null}
 
       <div className="mt-4 w-64">
         <Numpad

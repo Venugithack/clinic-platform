@@ -82,6 +82,10 @@ export default function QueuePage() {
   };
 
   const waiting = queue.filter((entry) => entry.status === 'waiting').length;
+  // The state between the two ends, which the summary used to skip. With it
+  // missing the rail could read "Waiting 0 · Seen 0" over a list of people who
+  // were all mid-consult — true of both numbers, and wrong about the room.
+  const inConsult = queue.filter((entry) => entry.status === 'in_consult').length;
   const done = queue.filter((entry) => entry.status === 'done').length;
   const session = currentSession();
 
@@ -103,6 +107,7 @@ export default function QueuePage() {
           <dl className="flex flex-col">
             {[
               ['Waiting', waiting],
+              ['In consult', inConsult],
               ['Seen', done],
               ['Tokens issued', queue.length],
             ].map(([label, value]) => (

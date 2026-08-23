@@ -133,9 +133,34 @@ export function lineAmountPaise(
   basis: PackBasis,
 ): number {
   const perPack = unitsInPack(pack, basis);
-  const exact = (mrpPaise * qtyBase) / perPack;
-  const cap = Math.floor(exact);
-  return Math.min(Math.round(exact), cap);
+
+  // Step for step, app.dispense():
+  //
+  //   v_unit_price := round(mrp / units_in_pack, 4)
+  //   v_cap        := trunc(mrp * take / units_in_pack, 2)
+  //   v_amount     := least(round(take * v_unit_price, 2), v_cap)
+  //
+  // The two-step rounding is the part that matters. Pricing off a unit price
+  // that was itself rounded to four places is NOT the same as pricing off the
+  // exact figure: on a non-terminating unit price the fourth-place trim
+  // compounds, and past roughly a hundred units it moves the paise. Computing
+  // `exact` in one step here read as tidier and put this screen a paise above
+  // the bill the database actually raised.
+  //
+  // Integer arithmetic throughout, because the point of the exercise is to
+  // agree with numeric(12,2) rather than to be close to it.
+
+  // unit_price counted in ten-thousandths of a rupee — numeric(_, 4)'s scale.
+  const unitPriceTenThousandths = Math.round((mrpPaise * 100) / perPack);
+
+  // round(take * v_unit_price, 2), in whole paise.
+  const atUnitPrice = Math.round((qtyBase * unitPriceTenThousandths) / 100);
+
+  // The MRP ceiling: trunc(mrp * take / units_in_pack, 2), in whole paise.
+  // Selling above the printed MRP is illegal, so this one truncates.
+  const cap = Math.floor((mrpPaise * qtyBase) / perPack);
+
+  return Math.min(atUnitPrice, cap);
 }
 
 /**

@@ -145,11 +145,28 @@ export interface VisitSummary {
  * this data reaches a screen the patient can see over the doctor's shoulder,
  * and rule 7's spirit is that clinician shorthand does not travel by default.
  */
-export async function recentVisits(patientId: string, limit = 5): Promise<VisitSummary[]> {
-  const { data, error } = await db()
+export async function recentVisits(
+  patientId: string,
+  limit = 5,
+  /**
+   * The encounter being written right now, if there is one.
+   *
+   * The consult screen opens an encounter before it renders, so without this
+   * the visit in progress appears in its own history — dated today, with an
+   * em-dash where the diagnosis has not been typed yet. Excluded in the query
+   * rather than filtered afterwards, so `limit` still returns five previous
+   * visits rather than four and a gap.
+   */
+  excludeEncounterId?: string,
+): Promise<VisitSummary[]> {
+  let query = db()
     .from('encounters')
     .select('id, created_at, diagnoses, advice, follow_up_date')
-    .eq('patient_id', patientId)
+    .eq('patient_id', patientId);
+
+  if (excludeEncounterId) query = query.neq('id', excludeEncounterId);
+
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(limit);
 
