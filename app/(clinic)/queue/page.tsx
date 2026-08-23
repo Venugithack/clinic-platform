@@ -67,6 +67,22 @@ export default function QueuePage() {
 
   const open = async (entry: QueueEntry) => {
     if (busy) return;
+
+    // This screen is the default on BOTH tablets (TABLET.md §7), so this row is
+    // under the pharmacist's thumb as often as the doctor's — and opening a
+    // consult is the one thing only the consulting room may do.
+    //
+    // Unguarded it did both halves wrongly: it moved the token to `in_consult`
+    // and then showed the counter the doctor's consult form. The board then
+    // announced a consult that had not started, on the doctor's own screen,
+    // with the counter's name against it in the audit log. Recoverable —
+    // `in_consult` can go back to `waiting` — but only by someone who works out
+    // what happened.
+    if (currentSession()?.role !== 'doctor') {
+      router.push('/counter');
+      return;
+    }
+
     setBusy(true);
     try {
       // Only move the state machine forward when there is somewhere to go.
@@ -134,6 +150,13 @@ export default function QueuePage() {
           <RailButton tone="primary" onClick={() => router.push('/queue/new')}>
             Register walk-in
           </RailButton>
+          {/* The counter's way back to its own room. Without it the pharmacy
+              tablet lands on this screen and the rail offers no route to the
+              pharmacy queue at all — the URL bar was the only way across, on a
+              tablet whose whole point is that nobody types. */}
+          {session && session.role !== 'doctor' ? (
+            <RailButton onClick={() => router.push('/counter')}>Counter</RailButton>
+          ) : null}
           <RailButton onClick={() => router.push('/presence')}>Presence</RailButton>
           <RailButton onClick={() => router.push('/reports')}>Reports</RailButton>
           {/* Doctor and admin only — it is where the drug master comes from,
@@ -162,7 +185,14 @@ export default function QueuePage() {
       {/* No action here: "Register walk-in" already lives in the rail, and two
           buttons with one name is an ambiguous target for a finger and for the
           e2e suite alike. The rail is this app's action surface. */}
-      <PageHeader eyebrow="Consulting room" title="Queue" sub={today} />
+      {/* Shared screen, so the eyebrow names the room the reader is standing
+          in. Hard-coded it told the pharmacist she was in the consulting room
+          — the same wrong answer the button on the lock screen used to give. */}
+      <PageHeader
+        eyebrow={session?.role === 'doctor' ? 'Consulting room' : 'Pharmacy'}
+        title="Queue"
+        sub={today}
+      />
 
       {error ? <Notice tone="bad">{error}</Notice> : null}
 
