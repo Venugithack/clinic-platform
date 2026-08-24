@@ -135,6 +135,36 @@ const proxy = createServer((clientReq, clientRes) => {
   // issued, no error, a button stuck on "Selling…". Answering the way a real
   // auth server answers an anonymous client makes it give up immediately.
   if (path.startsWith('/auth/') || clientReq.url.startsWith('/auth/')) {
+    /**
+     * CORS, which this branch needs and the REST branch does not.
+     *
+     * The app is served from :3000 and the API lives on :54321, so every call
+     * is cross-origin. Requests forwarded to PostgREST come back with its own
+     * CORS headers; anything answered HERE has only the headers written here,
+     * and until now that did not matter — every answer was a refusal, and a
+     * refusal that the browser blocks looks the same to supabase-js as one it
+     * delivers.
+     *
+     * It matters the moment one of them succeeds. A cross-origin POST with a
+     * JSON content-type is preflighted, so the browser sends OPTIONS first;
+     * without these headers the preflight fails and the POST is never made.
+     * The sign-in then cannot happen, every read runs unauthenticated, and the
+     * whole E2E suite fails with an empty staff list — 28 specs, none of whose
+     * messages mention CORS.
+     */
+    const cors = {
+      'access-control-allow-origin': clientReq.headers.origin ?? '*',
+      'access-control-allow-headers':
+        'authorization, apikey, content-type, x-client-info, x-supabase-api-version, x-staff-session',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-max-age': '86400',
+    };
+
+    if (clientReq.method === 'OPTIONS') {
+      clientRes.writeHead(204, cors);
+      clientRes.end();
+      return;
+    }
     // Anonymous sign-in, which lib/db now performs before its first request.
     //
     // This one endpoint DOES get a real answer, because refusing it would make
@@ -151,7 +181,7 @@ const proxy = createServer((clientReq, clientRes) => {
     // role. That difference is precisely what hid the hosted bug for four
     // milestones.
     if (clientReq.method === 'POST' && clientReq.url.includes('/signup')) {
-      clientRes.writeHead(200, { 'content-type': 'application/json' });
+      clientRes.writeHead(200, { ...cors, 'content-type': 'application/json' });
       clientRes.end(
         JSON.stringify({
           access_token: anonKey,
@@ -176,7 +206,7 @@ const proxy = createServer((clientReq, clientRes) => {
     }
 
     const isToken = clientReq.url.includes('/token');
-    clientRes.writeHead(isToken ? 400 : 401, { 'content-type': 'application/json' });
+    clientRes.writeHead(isToken ? 400 : 401, { ...cors, 'content-type': 'application/json' });
     clientRes.end(
       isToken
         ? '{"error":"invalid_grant","error_description":"no local auth server; the anon key is the device session"}'
