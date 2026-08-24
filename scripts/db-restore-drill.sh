@@ -38,6 +38,27 @@ else
   COMPARE=0
 fi
 
+# A THIRD case, added when this started running against the hosted clinic.
+#
+# BACKUP_DB_URL means the dump above came from the real database in Mumbai
+# while the restore lands in a throwaway cluster on this runner. The comparison
+# still happens and still means something — it is just that `before` has to
+# come from Mumbai rather than from a local database that has no tables in it
+# at all.
+#
+# Note what this does NOT do, deliberately: fall back to "the archive is not
+# empty". That heuristic is wrong twice. It passes a schema-only dump, which is
+# precisely the restore failure worth catching, and it fails every night
+# between now and go-live, because a clinic that has not been set up yet
+# genuinely has no staff and no drugs. Counting both sides is correct on an
+# empty database and on a full one.
+#
+# The residual risk is the one the header warns about: a consult landing
+# between the dump and the count reads as a failure. The nightly schedule is
+# 22:00 IST, after the clinic closes, and the diff printed on failure makes a
+# one-row drift obvious for what it is.
+REMOTE_SOURCE="${BACKUP_DB_URL:-}"
+
 if [ -z "${BACKUP_FILE}" ] || [ ! -f "${BACKUP_FILE}" ]; then
   echo "no backup to restore — is BACKUP_AGE_RECIPIENT set? an encrypted archive has to be decrypted first" >&2
   exit 1
@@ -49,16 +70,27 @@ echo "restoring ${BACKUP_FILE} → ${SCRATCH_DB}"
 # PLAN.md §15.2 are the legal retention obligation, so they lead the list.
 TABLES="audit_log stock_movements stock_batches dispenses dispense_lines prescriptions encounters patients drugs staff"
 
-counts_of() {
-  local database="$1"
+# Takes a psql connection spec rather than a database name, so the same
+# function counts a local scratch database and a hosted project over TLS.
+counts_at() {
   for table in ${TABLES}; do
     printf '%s=' "${table}"
-    psql -tA -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${database}" \
-      -c "select count(*) from ${table}"
+    psql -tA "$@" -c "select count(*) from ${table}"
   done
 }
 
-before="$(counts_of "${PGDATABASE}")"
+counts_of() {
+  counts_at -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "$1"
+}
+
+before=""
+if [ "${COMPARE}" -eq 1 ]; then
+  if [ -n "${REMOTE_SOURCE}" ]; then
+    before="$(counts_at "${REMOTE_SOURCE}")"
+  else
+    before="$(counts_of "${PGDATABASE}")"
+  fi
+fi
 
 psql -q -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d postgres \
   -c "drop database if exists ${SCRATCH_DB} with (force)" \
