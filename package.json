@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/serve-out.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && node scripts/lint-css-hover.mjs",
     "test:unit": "vitest run",

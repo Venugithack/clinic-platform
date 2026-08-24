@@ -135,6 +135,46 @@ const proxy = createServer((clientReq, clientRes) => {
   // issued, no error, a button stuck on "Selling…". Answering the way a real
   // auth server answers an anonymous client makes it give up immediately.
   if (path.startsWith('/auth/') || clientReq.url.startsWith('/auth/')) {
+    // Anonymous sign-in, which lib/db now performs before its first request.
+    //
+    // This one endpoint DOES get a real answer, because refusing it would make
+    // the E2E suite prove the wrong thing. ensureDeviceSession() awaits this
+    // call on every request path; a 401 here fails every .from() and .rpc() in
+    // the suite, and — worse if it had been made to pass some other way — a
+    // stand-in that forces the app down a different branch from production is
+    // a stand-in this file's own header says it must not be ("nothing in the
+    // app is written against a stand-in").
+    //
+    // The token handed back is the same `authenticated` JWT this stack has
+    // always minted. What changes is only where the app gets it: from a
+    // sign-in, as in Mumbai, rather than from a key that secretly carried the
+    // role. That difference is precisely what hid the hosted bug for four
+    // milestones.
+    if (clientReq.method === 'POST' && clientReq.url.includes('/signup')) {
+      clientRes.writeHead(200, { 'content-type': 'application/json' });
+      clientRes.end(
+        JSON.stringify({
+          access_token: anonKey,
+          token_type: 'bearer',
+          // A year, so autoRefreshToken never fires mid-suite and lands on the
+          // /token refusal below.
+          expires_in: 31_536_000,
+          expires_at: Math.floor(Date.now() / 1000) + 31_536_000,
+          refresh_token: 'local-development-no-refresh',
+          user: {
+            id: doctorAuthUid,
+            aud: 'authenticated',
+            role: 'authenticated',
+            is_anonymous: true,
+            app_metadata: {},
+            user_metadata: {},
+            created_at: new Date().toISOString(),
+          },
+        }),
+      );
+      return;
+    }
+
     const isToken = clientReq.url.includes('/token');
     clientRes.writeHead(isToken ? 400 : 401, { 'content-type': 'application/json' });
     clientRes.end(
