@@ -373,7 +373,7 @@ export default function BillingPage() {
           <div className="mt-4 flex gap-3">
             <button
               type="button"
-              onClick={() => router.push(`/bill/${raised.id}/print` as Route)}
+              onClick={() => router.push(`/bill/print?bill=${raised.id}` as Route)}
               className="h-14 flex-1 rounded-box border border-rule px-4 active:bg-paper-2"
             >
               Print
@@ -494,7 +494,7 @@ export default function BillingPage() {
           <li key={bill.id} className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => router.push(`/bill/${bill.id}/print` as Route)}
+              onClick={() => router.push(`/bill/print?bill=${bill.id}` as Route)}
               className="flex h-14 min-w-0 flex-1 items-center gap-4 border-b border-rule px-3 text-left active:bg-paper-2"
             >
               <span className="tabular w-32 shrink-0 text-sm text-ink-2">

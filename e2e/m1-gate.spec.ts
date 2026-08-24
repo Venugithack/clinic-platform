@@ -105,7 +105,7 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   await page.getByRole('button', { name: 'Sign Rx' }).click();
 
   // ---- print -------------------------------------------------------------
-  await expect(page).toHaveURL(/\/rx\/[0-9a-f-]+\/print$/);
+  await expect(page).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
   await expect(page.getByText(patient)).toBeVisible();
   await expect(page.getByText('Acute pharyngitis')).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Dolo 650');
@@ -141,7 +141,7 @@ test('a signed prescription cannot be edited from the consult screen', async ({ 
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
   await page.getByRole('button', { name: 'Sign Rx' }).click();
 
-  await expect(page).toHaveURL(/\/rx\/[0-9a-f-]+\/print$/);
+  await expect(page).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
   await page.goBack();
 
   // Back on the consult, the composer is closed: no add, no remove, no re-sign.

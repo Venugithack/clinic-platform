@@ -12,6 +12,14 @@ import type { MetadataRoute } from 'next';
  * BUILD.md §1.3. A service worker will not register over http://192.168.x.x,
  * and neither will the camera, so barcode scanning fails silently too.
  */
+/**
+ * A metadata route is still a route, and `output: 'export'` will not guess.
+ *
+ * Nothing below depends on a request — it is the same bytes for every device —
+ * so it is emitted once at build time into `out/manifest.webmanifest`.
+ */
+export const dynamic = 'force-static';
+
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Jayamurugan Clinic',

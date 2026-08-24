@@ -87,7 +87,7 @@ test('a signed prescription reaches the counter, and the answer comes back', asy
 
   const signedAt = Date.now();
   await doctorPage.getByRole('button', { name: 'Sign Rx' }).click();
-  await expect(doctorPage).toHaveURL(/\/rx\/[0-9a-f-]+\/print$/);
+  await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
   // ---- and it is at the counter, without the counter doing anything ------
   const row = counterPage.getByRole('button', { name: new RegExp(patient) });
@@ -153,7 +153,7 @@ test('the counter cannot propose a drug that is not an equivalent', async ({ bro
   await qtypad.getByRole('button', { name: '1 strip' }).click();
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
   await doctorPage.getByRole('button', { name: 'Sign Rx' }).click();
-  await expect(doctorPage).toHaveURL(/\/rx\/[0-9a-f-]+\/print$/);
+  await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
   await signIn(counterPage, 'seed-device-counter', 'Counter');
   await counterPage.goto('/counter');

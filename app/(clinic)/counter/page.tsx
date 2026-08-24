@@ -129,7 +129,7 @@ export default function CounterPage() {
             <button
               type="button"
               onClick={() =>
-                router.push(`/counter/${entry.prescription_id}` as Route)
+                router.push(`/counter/dispense?prescription=${entry.prescription_id}` as Route)
               }
               className="flex h-20 w-full items-center gap-5 border-b border-rule px-3 text-left active:bg-paper-2"
             >

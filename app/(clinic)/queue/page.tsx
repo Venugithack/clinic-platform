@@ -90,7 +90,7 @@ export default function QueuePage() {
       if (entry.status === 'waiting' || entry.status === 'booked') {
         await setAppointmentStatus(entry.appointment_id, 'in_consult');
       }
-      router.push(`/consult/${entry.appointment_id}` as Route);
+      router.push(`/consult?appointment=${entry.appointment_id}` as Route);
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);

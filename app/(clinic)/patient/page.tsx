@@ -22,8 +22,8 @@
  * allergy that can change with nobody's name on it is the failure that made
  * the trigger worth adding.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
@@ -37,10 +37,9 @@ import {
 
 type NumericField = 'phone' | 'age' | null;
 
-export default function PatientPage() {
+function PatientScreen() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
-  const id = params.id;
+  const id = useSearchParams().get('patient') ?? '';
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [visits, setVisits] = useState<VisitSummary[]>([]);
@@ -308,5 +307,26 @@ export default function PatientPage() {
         record of what was given to whom.
       </p>
     </ThreePane>
+  );
+}
+
+/**
+ * The screen reads its id from the query string, not from a path segment.
+ *
+ * A path segment would make this a dynamic route, and Next refuses to static-
+ * export a dynamic route without generateStaticParams() — which cannot exist
+ * here, because the ids are rows in a database that has not been written yet.
+ * HOSTING.md §3: the static export is what keeps the whole app off a Worker's
+ * 10 ms CPU budget and 3 MB bundle ceiling, so the query string is the cheaper
+ * side of the trade.
+ *
+ * useSearchParams() forces everything up to the nearest Suspense boundary to be
+ * client-rendered, and the build errors without one.
+ */
+export default function PatientPage() {
+  return (
+    <Suspense fallback={<p className="p-8 text-ink-2">Loading…</p>}>
+      <PatientScreen />
+    </Suspense>
   );
 }

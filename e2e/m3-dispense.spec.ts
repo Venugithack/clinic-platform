@@ -52,7 +52,7 @@ async function prescribe(page: Page, patient: string, drug: string, chip: string
   await qtypad.getByRole('button', { name: chip, exact: true }).click();
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
   await page.getByRole('button', { name: 'Sign Rx' }).click();
-  await expect(page).toHaveURL(/\/rx\/[0-9a-f-]+\/print$/);
+  await expect(page).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 }
 
 test('FEFO takes the earlier expiry, and the scan stops the wrong box', async ({

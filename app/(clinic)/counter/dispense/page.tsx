@@ -22,8 +22,8 @@
  * deliberate second gesture (rule 8). Blocking the counter because a strip is
  * unlabelled would teach everyone to distrust the check.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Button, Modal, Notice, PageHeader } from '@/components/ui';
 import { ScanField } from '@/components/ScanField';
@@ -44,9 +44,9 @@ import { subscribe } from '@/lib/realtime';
 
 type Verification = 'scanned' | 'confirmed';
 
-export default function CounterPrescriptionPage() {
+function CounterPrescriptionScreen() {
   const router = useRouter();
-  const { prescriptionId } = useParams<{ prescriptionId: string }>();
+  const prescriptionId = useSearchParams().get('prescription') ?? '';
 
   const [header, setHeader] = useState<CounterHeader | null>(null);
   const [items, setItems] = useState<PrescriptionItem[]>([]);
@@ -557,5 +557,26 @@ export default function CounterPrescriptionPage() {
         </p>
       </Modal>
     </ThreePane>
+  );
+}
+
+/**
+ * The screen reads its id from the query string, not from a path segment.
+ *
+ * A path segment would make this a dynamic route, and Next refuses to static-
+ * export a dynamic route without generateStaticParams() — which cannot exist
+ * here, because the ids are rows in a database that has not been written yet.
+ * HOSTING.md §3: the static export is what keeps the whole app off a Worker's
+ * 10 ms CPU budget and 3 MB bundle ceiling, so the query string is the cheaper
+ * side of the trade.
+ *
+ * useSearchParams() forces everything up to the nearest Suspense boundary to be
+ * client-rendered, and the build errors without one.
+ */
+export default function CounterPrescriptionPage() {
+  return (
+    <Suspense fallback={<p className="p-8 text-ink-2">Loading…</p>}>
+      <CounterPrescriptionScreen />
+    </Suspense>
   );
 }

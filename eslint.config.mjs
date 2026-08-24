@@ -5,7 +5,9 @@ import tablet from './eslint-rules/index.mjs';
 
 export default tseslint.config(
   {
-    ignores: ['.next/**', 'node_modules/**', 'next-env.d.ts', 'supabase/**'],
+    // `out/**` is the static export (next.config.ts `output: 'export'`) — the
+    // same generated bundles as `.next/**`, just in their shippable form.
+    ignores: ['.next/**', 'out/**', 'node_modules/**', 'next-env.d.ts', 'supabase/**'],
   },
 
   js.configs.recommended,
