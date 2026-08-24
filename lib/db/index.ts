@@ -58,10 +58,83 @@ function required(name: string, value: string | undefined): string {
  */
 const REQUEST_TIMEOUT_MS = 12_000;
 
-function fetchWithStaffSession(
+/**
+ * How the tablet becomes `authenticated`.
+ *
+ * Every grant in the schema targets the `authenticated` role, and every RLS
+ * policy is written `to authenticated`. Locally this was papered over by
+ * handing the client a hand-minted JWT that already carried the role and
+ * calling it "the anon key" — which worked, and hid the fact that on a hosted
+ * project the real publishable key carries `anon` and reaches nothing. The
+ * first request on the lock screen came back `permission denied for table
+ * staff`, or worse, an empty staff list with no error at all.
+ *
+ * So the device signs in anonymously. The JWT that comes back carries
+ * `authenticated`, exactly like the local hack did, but it is minted by the
+ * project rather than by a shell command in a README — one code path, the same
+ * on the Docker stack and in Mumbai.
+ *
+ * What that exposes to somebody who simply loads the URL is worth stating,
+ * because "anyone can sign in" reads alarming and the detail is what makes it
+ * fine. An anonymous session with no PIN behind it reaches exactly three
+ * things: `lock_screen_staff` (first names, so the lock screen can offer them),
+ * `clinic_is_open` (already public on /now by design, PLAN.md §13.3), and
+ * `app.unlock` — which fails on an unknown device token before it ever looks at
+ * a PIN. Everything else is gated on `app.current_staff_id() is not null`,
+ * which needs a PIN unlock against a registered tablet. The device token is the
+ * secret; it always was (TABLET.md §5).
+ *
+ * This is the session, not the identity. The identity is the PIN, and it
+ * travels in the header below.
+ */
+let deviceSession: Promise<void> | null = null;
+
+/**
+ * Supabase Auth's own endpoints, which must NOT wait for the session they are
+ * in the middle of minting.
+ *
+ * Without this the wrapper deadlocks against itself: signInAnonymously() issues
+ * a fetch, the fetch awaits ensureDeviceSession(), and that is the very promise
+ * the sign-in has not resolved yet. The same applies to the background token
+ * refresh that autoRefreshToken schedules.
+ */
+function isAuthRequest(input: RequestInfo | URL): boolean {
+  const url =
+    typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  return url.includes('/auth/v1/');
+}
+
+function ensureDeviceSession(): Promise<void> {
+  deviceSession ??= (async () => {
+    const auth = db().auth;
+
+    // Local read, no network: persistSession means a tablet that signed in
+    // last week still holds a refresh token, and re-signing in would mint a
+    // second anonymous user for no reason.
+    const { data } = await auth.getSession();
+    if (data.session) return;
+
+    const { error } = await auth.signInAnonymously();
+    if (error) {
+      // Forget the failure. A tablet that was offline when it first woke up
+      // must be able to try again on the next request rather than holding a
+      // rejected promise for the rest of the day.
+      deviceSession = null;
+      throw new Error(`This tablet could not reach the clinic database. ${error.message}`);
+    }
+  })();
+
+  return deviceSession;
+}
+
+async function fetchWithStaffSession(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ): Promise<Response> {
+  if (!isAuthRequest(input)) await ensureDeviceSession();
+
+  // Started after the sign-in, deliberately: the 12 seconds are this request's
+  // budget, not the budget for waking the tablet up.
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
 
@@ -111,6 +184,9 @@ export function appSchema() {
 /** Test seam: drop the memoised client so a test can install its own. */
 export function resetDb(): void {
   client = null;
+  // The device session is memoised against the old client and would otherwise
+  // resolve instantly for the new one, skipping the sign-in a test is asserting.
+  deviceSession = null;
 }
 
 export type { SupabaseClient };
