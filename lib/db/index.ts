@@ -131,14 +131,42 @@ async function fetchWithStaffSession(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ): Promise<Response> {
-  if (!isAuthRequest(input)) await ensureDeviceSession();
+  const headers = new Headers(init.headers);
+
+  if (!isAuthRequest(input)) {
+    await ensureDeviceSession();
+
+    /**
+     * Re-stamp Authorization, because supabase-js already stamped it and did
+     * so too early.
+     *
+     * Its own wrapper (fetchWithAuth) awaits getAccessToken() and only THEN
+     * calls this function. On the very first request of a cold load there is
+     * no session yet, so that lookup returns null and it falls back to the
+     * publishable key — role `anon`. Awaiting the sign-in above is therefore
+     * necessary and, on its own, useless: the header for THIS request was
+     * decided before we ran.
+     *
+     * The consequence was not an error. `lock_screen_staff` is granted to
+     * `authenticated`, so an `anon` caller gets a clean, empty list — the lock
+     * screen renders "Who is this?" above nobody, which is the exact failure
+     * that view's comment was written to prevent, and it took the E2E suite to
+     * find it because a curl passing the JWT by hand never takes this path.
+     *
+     * Read from getSession() each time rather than caching the token: it is a
+     * local read, and autoRefreshToken rotates the value underneath us.
+     */
+    const { data } = await db().auth.getSession();
+    if (data.session) {
+      headers.set('Authorization', `Bearer ${data.session.access_token}`);
+    }
+  }
 
   // Started after the sign-in, deliberately: the 12 seconds are this request's
   // budget, not the budget for waking the tablet up.
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
 
-  const headers = new Headers(init.headers);
   const session = readStoredSession();
   if (session) headers.set(STAFF_SESSION_HEADER, session.token);
 
