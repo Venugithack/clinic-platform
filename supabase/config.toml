@@ -35,5 +35,18 @@ jwt_expiry = 3600
 enable_refresh_token_rotation = true
 enable_signup = false
 
+# How the tablet obtains the `authenticated` role that every grant targets.
+#
+# On here so that local development and a hosted project run the SAME code
+# path. Before this, local dev was handed a hand-minted JWT that already
+# carried the role, which worked locally and failed on the first hosted request
+# — the bug stayed invisible precisely because the two environments differed.
+# On the hosted project this is Auth → Providers → Anonymous sign-ins.
+#
+# `enable_signup = false` above still stands: there is no public registration.
+# See lib/db/index.ts for what an anonymous session without a PIN can actually
+# reach, which is three read-only things and an unlock that refuses.
+enable_anonymous_sign_ins = true
+
 [analytics]
 enabled = false
