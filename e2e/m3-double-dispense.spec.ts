@@ -85,7 +85,7 @@ test('two tablets reaching for one prescription dispense it once', async ({ brow
   await qtypad.getByRole('button', { name: '1 strip', exact: true }).click();
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
   await doctorPage.getByRole('button', { name: 'Sign Rx' }).click();
-  await expect(doctorPage).toHaveURL(/\/rx\/[0-9a-f-]+\/print$/);
+  await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
   // ---- both tablets get as far as a live Dispense button --------------------
   const fromCounter = await openAndVerify(counterPage, patient, drug);

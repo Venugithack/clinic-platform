@@ -11,8 +11,8 @@
  * clinical liability, and it is the kind of thing that arrives by accident as
  * an "autocomplete improvement".
  */
-import { useCallback, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader, Token } from '@/components/ui';
@@ -34,10 +34,9 @@ import { setAppointmentStatus, signPrescription } from '@/lib/transitions/clinic
 
 const DAY_CHIPS = [3, 5, 7, 10, 15];
 
-export default function ConsultPage() {
+function ConsultScreen() {
   const router = useRouter();
-  const params = useParams<{ appointmentId: string }>();
-  const appointmentId = params.appointmentId;
+  const appointmentId = useSearchParams().get('appointment') ?? '';
 
   const [entry, setEntry] = useState<QueueEntry | null>(null);
   const [encounter, setEncounter] = useState<Encounter | null>(null);
@@ -121,7 +120,7 @@ export default function ConsultPage() {
       const signed = await signPrescription(rx.id);
       setPrescriptionId(rx.id);
       setSignedAt(signed.signed_at);
-      router.push(`/rx/${rx.id}/print` as Route);
+      router.push(`/rx/print?rx=${rx.id}` as Route);
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);
@@ -265,7 +264,7 @@ export default function ConsultPage() {
           </RailButton>
 
           {signedAt && prescriptionId ? (
-            <RailButton onClick={() => router.push(`/rx/${prescriptionId}/print` as Route)}>
+            <RailButton onClick={() => router.push(`/rx/print?rx=${prescriptionId}` as Route)}>
               Print
             </RailButton>
           ) : null}
@@ -490,5 +489,26 @@ export default function ConsultPage() {
         </label>
       </section>
     </ThreePane>
+  );
+}
+
+/**
+ * The screen reads its id from the query string, not from a path segment.
+ *
+ * A path segment would make this a dynamic route, and Next refuses to static-
+ * export a dynamic route without generateStaticParams() — which cannot exist
+ * here, because the ids are rows in a database that has not been written yet.
+ * HOSTING.md §3: the static export is what keeps the whole app off a Worker's
+ * 10 ms CPU budget and 3 MB bundle ceiling, so the query string is the cheaper
+ * side of the trade.
+ *
+ * useSearchParams() forces everything up to the nearest Suspense boundary to be
+ * client-rendered, and the build errors without one.
+ */
+export default function ConsultPage() {
+  return (
+    <Suspense fallback={<p className="p-8 text-ink-2">Loading…</p>}>
+      <ConsultScreen />
+    </Suspense>
   );
 }

@@ -12,8 +12,8 @@
  * A cancelled bill still prints, stamped. It keeps its number — the series has
  * to be unbroken — so it has to be explainable on paper too.
  */
-import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   clinicSettings,
   getBill,
@@ -22,18 +22,22 @@ import {
 } from '@/lib/db/billing';
 import './bill-print.css';
 
-export default function PrintBillPage() {
+function PrintBill() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
+  const billId = useSearchParams().get('bill') ?? '';
   const [bill, setBill] = useState<Bill | null>(null);
   const [clinic, setClinic] = useState<ClinicSettings | null>(null);
   const [roll, setRoll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!billId) {
+      setError('No bill number in the link.');
+      return;
+    }
     void (async () => {
       try {
-        const found = await getBill(params.id);
+        const found = await getBill(billId);
         if (!found) setError('No bill with that number.');
         setBill(found);
         setClinic(await clinicSettings());
@@ -41,7 +45,7 @@ export default function PrintBillPage() {
         setError((cause as Error).message);
       }
     })();
-  }, [params.id]);
+  }, [billId]);
 
   if (error) return <p className="p-8 text-stop">{error}</p>;
   if (!bill) return <p className="p-8 text-ink-2">Loading…</p>;
@@ -204,5 +208,26 @@ export default function PrintBillPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The screen reads its id from the query string, not from a path segment.
+ *
+ * A path segment would make this a dynamic route, and Next refuses to static-
+ * export a dynamic route without generateStaticParams() — which cannot exist
+ * here, because the ids are rows in a database that has not been written yet.
+ * HOSTING.md §3: the static export is what keeps the whole app off a Worker's
+ * 10 ms CPU budget and 3 MB bundle ceiling, so the query string is the cheaper
+ * side of the trade.
+ *
+ * useSearchParams() forces everything up to the nearest Suspense boundary to be
+ * client-rendered, and the build errors without one.
+ */
+export default function PrintBillPage() {
+  return (
+    <Suspense fallback={<p className="p-8 text-ink-2">Loading…</p>}>
+      <PrintBill />
+    </Suspense>
   );
 }

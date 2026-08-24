@@ -18,25 +18,29 @@
  * server, and that is a purchase decision, not a go-live discovery
  * (TABLET.md §1).
  */
-import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { prescriptionForPrint, type PrescriptionForPrint } from '@/lib/db/encounters';
 import './print.css';
 
-export default function PrintPrescriptionPage() {
+function PrintPrescription() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
+  const rxId = useSearchParams().get('rx') ?? '';
   const [rx, setRx] = useState<PrescriptionForPrint | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void prescriptionForPrint(params.id)
+    if (!rxId) {
+      setError('No prescription number in the link.');
+      return;
+    }
+    void prescriptionForPrint(rxId)
       .then((found) => {
         if (!found) setError('No prescription with that number.');
         setRx(found);
       })
       .catch((cause: Error) => setError(cause.message));
-  }, [params.id]);
+  }, [rxId]);
 
   if (error) return <p className="p-8 text-stop">{error}</p>;
   if (!rx) return <p className="p-8 text-ink-2">Loading…</p>;
@@ -172,5 +176,26 @@ export default function PrintPrescriptionPage() {
         </footer>
       </article>
     </div>
+  );
+}
+
+/**
+ * The screen reads its id from the query string, not from a path segment.
+ *
+ * A path segment would make this a dynamic route, and Next refuses to static-
+ * export a dynamic route without generateStaticParams() — which cannot exist
+ * here, because the ids are rows in a database that has not been written yet.
+ * HOSTING.md §3: the static export is what keeps the whole app off a Worker's
+ * 10 ms CPU budget and 3 MB bundle ceiling, so the query string is the cheaper
+ * side of the trade.
+ *
+ * useSearchParams() forces everything up to the nearest Suspense boundary to be
+ * client-rendered, and the build errors without one.
+ */
+export default function PrintPrescriptionPage() {
+  return (
+    <Suspense fallback={<p className="p-8 text-ink-2">Loading…</p>}>
+      <PrintPrescription />
+    </Suspense>
   );
 }

@@ -159,7 +159,7 @@ test('a bill for a consult and medicines across two batches, and it prints', asy
   ).toBeVisible();
 
   await page.getByRole('button', { name: 'Print' }).click();
-  await expect(page).toHaveURL(/\/bill\/[0-9a-f-]+\/print$/);
+  await expect(page).toHaveURL(/\/bill\/print\?bill=[0-9a-f-]+$/);
 
   // The printed sheet: the total, and the batch traceability §15.2 needs.
   await expect(page.getByTestId('bill-total')).toHaveText(total);

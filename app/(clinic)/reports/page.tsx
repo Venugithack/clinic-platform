@@ -378,7 +378,7 @@ export default function ReportsPage() {
                     {row.address_missing && row.patient_id ? (
                       <button
                         type="button"
-                        onClick={() => router.push(`/patient/${String(row.patient_id)}` as Route)}
+                        onClick={() => router.push(`/patient?patient=${String(row.patient_id)}` as Route)}
                         className="h-11 rounded-box border border-stop px-3 text-sm text-stop active:bg-paper-2"
                       >
                         Add address
