@@ -1,0 +1,122 @@
+name: Backup
+
+# HOSTING.md §5 — the part we build because free removes it.
+#
+# Supabase free has no PITR and no downloadable backups. That is the one
+# serious gap in running a clinic for ₹0/month, and this workflow is the whole
+# of the fix: pg_dump of the clinic's schemas, gzipped, age-encrypted to a key
+# GitHub does not hold, pushed to Cloudflare R2, pruned to a fixed retention.
+#
+#   Hourly   09:00–21:00 IST, clinic hours     keep 24
+#   Nightly  22:00 IST                         keep 30
+#   Monthly  1st, 23:00 IST                    keep 12
+#   Worst case loss: <= 1 hour of consults and dispenses.
+#
+# It is also the keep-alive. Supabase free pauses a project after 7 days with
+# no database request, and HOSTING.md §5 wants that window never approached —
+# a run every single day, Diwali included, means it never is.
+#
+# Cron is UTC and the clinic is IST (+5:30), which is why every schedule here
+# is at :30 past.
+
+on:
+  schedule:
+    - cron: '30 3-15 * * *'   # hourly, 09:00–21:00 IST
+    - cron: '30 16 * * *'     # nightly full, 22:00 IST
+    - cron: '30 17 1 * *'     # monthly, 23:00 IST on the 1st
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Which retention bucket to write to
+        type: choice
+        options: [hourly, daily, monthly]
+        default: hourly
+
+concurrency:
+  # Never two dumps at once. They would race on the same R2 prefix and the
+  # prune could delete an archive the other run had just written.
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: pg_dump · age · R2
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Postgres 17 client, age, rclone
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-client-17 age rclone
+
+      # The three schedules land in three retention buckets. `github.event.
+      # schedule` is the literal cron string that fired, which is the only
+      # thing distinguishing them.
+      - name: Which backup is this
+        id: kind
+        run: |
+          case "${{ github.event.schedule }}" in
+            '30 16 * * *')   echo "kind=daily"   >> "$GITHUB_OUTPUT" ;;
+            '30 17 1 * *')   echo "kind=monthly" >> "$GITHUB_OUTPUT" ;;
+            '30 3-15 * * *') echo "kind=hourly"  >> "$GITHUB_OUTPUT" ;;
+            *)               echo "kind=${{ inputs.kind || 'hourly' }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Dump, encrypt, upload, prune
+        env:
+          # Session-mode pooler, port 5432. See scripts/db-backup.sh for why
+          # the direct connection cannot be used from a runner.
+          BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
+          # The PUBLIC half of the age key. The private half is not here, is
+          # not in this repository, and is not recoverable from anything
+          # GitHub holds — so this job can write backups it cannot itself read.
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+          R2_BUCKET: r2:${{ secrets.R2_BUCKET }}
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_NO_CHECK_BUCKET: 'true'
+        run: |
+          test -n "${BACKUP_DB_URL}"         || { echo "BACKUP_DB_URL is not set"         >&2; exit 1; }
+          test -n "${BACKUP_AGE_RECIPIENT}"  || { echo "BACKUP_AGE_RECIPIENT is not set"  >&2; exit 1; }
+          ./scripts/db-backup.sh "${{ steps.kind.outputs.kind }}"
+
+  # A backup nobody has restored is a belief, not a backup. HOSTING.md §5.
+  #
+  # This proves the round trip end to end EXCEPT the age layer: it dumps the
+  # live clinic database, restores it into a throwaway Postgres 17 on the
+  # runner, and asserts the row counts came back. It runs on the nightly
+  # schedule so a schema change that breaks restorability is caught within a
+  # day rather than at the moment somebody needs it.
+  #
+  # What it deliberately does NOT do is decrypt an archive out of R2, because
+  # that would require the private key to live in GitHub — and the property
+  # worth more than this drill is that a compromise of the CI account cannot
+  # read a single patient record. Verifying the age layer is a human job with
+  # the offline key, and belongs in the runbook, not here.
+  restore-drill:
+    name: restore drill
+    if: github.event.schedule == '30 16 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Postgres 17
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Dump the live clinic, restore it, compare counts
+        env:
+          BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
+          PGPORT: '54329'
+          PGHOST: '127.0.0.1'
+          PGDATABASE: clinic
+        run: |
+          test -n "${BACKUP_DB_URL}" || { echo "BACKUP_DB_URL is not set" >&2; exit 1; }
+          ./scripts/db-start.sh
+          ./scripts/db-restore-drill.sh
