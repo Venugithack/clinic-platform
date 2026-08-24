@@ -71,7 +71,11 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: 'pnpm build && pnpm start',
+        // Not `pnpm start`. `next start` refuses outright under
+        // `output: 'export'` — there is no server build for it to run — and
+        // scripts/serve-out.mjs resolves paths by wrangler.jsonc's rules, so
+        // the suite exercises the export the way Cloudflare will serve it.
+        command: 'pnpm build && node scripts/serve-out.mjs',
         url: 'http://127.0.0.1:3000',
         reuseExistingServer: !process.env.CI,
         timeout: 180_000,
