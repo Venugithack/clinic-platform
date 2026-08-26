@@ -230,6 +230,52 @@ select is(
 );
 
 -- ---------------------------------------------------------------------------
+-- A closure has to be written on the day it will be read back on.
+--
+-- app.clinic_is_open resolves the clinic's LOCAL day, because opening hours are
+-- a time of day in Asia/Kolkata. close_clinic_today used to write the SERVER's
+-- date, which is UTC. Those agree for eighteen and a half hours out of every
+-- twenty-four — which is why this suite passed at 23:57 IST and failed the same
+-- commit at 00:04, when the IST date had rolled over and the UTC one had not.
+-- ---------------------------------------------------------------------------
+select is(
+  (select app.clinic_today()),
+  (select (now() at time zone 'Asia/Kolkata')::date),
+  'today is the clinic''s day, not the server''s'
+);
+
+-- A clinic fourteen hours ahead of UTC, so the two dates differ for most of the
+-- day rather than for five and a half hours of it. Under the old code this
+-- closure was simply unfindable whenever they diverged, and the page patients
+-- drive in on stayed open.
+update clinic set timezone = 'Pacific/Kiritimati';
+
+select is(
+  (select app.close_clinic_today('shut, in another timezone')),
+  1,
+  'the closure is accepted wherever the clinic keeps its clock'
+);
+
+select is(
+  (select status from clinic_now),
+  'closed',
+  'and the page finds it, on whichever day the clinic calls today'
+);
+
+select lives_ok(
+  $$ select app.reopen_clinic_today() $$,
+  'and reopening removes that day''s closure, not the day before''s'
+);
+
+select is(
+  (select status from clinic_now),
+  'in_clinic',
+  'so the page comes back'
+);
+
+update clinic set timezone = 'Asia/Kolkata';
+
+-- ---------------------------------------------------------------------------
 -- The public surface, which is the one thing anon may read.
 -- ---------------------------------------------------------------------------
 set local role anon;
