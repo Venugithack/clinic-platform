@@ -128,9 +128,12 @@ SQL
 # archive is bringing its own — a local dump carries no such line, and dropping
 # it there would leave the restore with nowhere to put the tables.
 #
-# Deliberately no `-m1` on the grep: it would close the pipe early, gunzip would
-# take SIGPIPE, and `pipefail` would report the whole test as false.
-if gunzip -c "${BACKUP_FILE}" | grep -q '^CREATE SCHEMA public;'; then
+# The grep is `-c` and not `-q` for a reason that cost a CI run. Both `-q` and
+# `-m1` stop reading the instant they match, which closes the pipe, hands gunzip
+# a SIGPIPE, and — under the `set -o pipefail` at the top of this file — reports
+# the whole test as FALSE precisely when it is true. `-c` has to read the entire
+# stream to produce a count, so gunzip always exits cleanly.
+if gunzip -c "${BACKUP_FILE}" | grep -c '^CREATE SCHEMA public;' >/dev/null; then
   psql -q -v ON_ERROR_STOP=1 -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${SCRATCH_DB}" \
     -c "drop schema public cascade"
 fi
