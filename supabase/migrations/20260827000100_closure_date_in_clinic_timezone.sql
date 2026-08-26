@@ -29,8 +29,36 @@
 -- "today" is a real latent issue and it is recorded in NEXT.md; it has never
 -- bitten because the clinic is shut between midnight and half past five.
 
+-- While here: the fallback in app.clinic_day was spelled with a BACKSLASH —
+-- `coalesce((select timezone from clinic limit 1), 'Asia\Kolkata')` at
+-- 20260816230200_till_and_daybook.sql:25. Postgres knows no zone by that name,
+-- so the branch meant to keep the daybook working when no clinic row exists
+-- would instead raise `time zone "Asia\Kolkata" not recognized`.
+--
+-- It has never fired, because clinic.timezone is `not null default
+-- 'Asia/Kolkata'` and the coalesce therefore never reaches its second argument
+-- while a clinic row exists. A safety net that throws instead of catching is
+-- worth the one character it costs to correct. Body otherwise identical.
+create or replace function app.clinic_day(p_at timestamptz)
+returns date
+language sql
+stable
+as $$
+  -- A clinic day is a local day. The counter closes at 21:00 IST, which is
+  -- 15:30 UTC — grouping bills by UTC date would split every evening in half.
+  select (p_at at time zone coalesce(
+            (select timezone from clinic limit 1), 'Asia/Kolkata'))::date
+$$;
+
 -- One expression, in one place, so the write and the read cannot drift apart
--- again. It is the same conversion clinic_is_open does inline.
+-- again.
+--
+-- app.clinic_day(timestamptz) already exists and already does this conversion
+-- (20260816230200_till_and_daybook.sql:17) — the daybook has grouped bills by
+-- the clinic's local day since M4, for the same reason clinic_is_open converts:
+-- "the counter closes at 21:00 IST, which is 15:30 UTC — grouping bills by UTC
+-- date would split every evening in half". This is that function applied to
+-- now(), not a second copy of its body.
 create or replace function app.clinic_today()
 returns date
 language sql
@@ -38,8 +66,7 @@ stable
 security definer
 set search_path = public, extensions, pg_catalog
 as $$
-  select (now() at time zone
-          coalesce((select timezone from clinic limit 1), 'Asia/Kolkata'))::date;
+  select app.clinic_day(now());
 $$;
 
 comment on function app.clinic_today() is
