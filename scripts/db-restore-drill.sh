@@ -96,6 +96,45 @@ psql -q -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d postgres \
   -c "drop database if exists ${SCRATCH_DB} with (force)" \
   -c "create database ${SCRATCH_DB}"
 
+# TWO THINGS THE HOSTED ARCHIVE NEEDS THAT A BARE CLUSTER DOES NOT HAVE.
+#
+# Both were invisible until the rig first ran against Mumbai, because both are
+# consequences of the `--schema` flags that db-backup.sh adds on the hosted path
+# and only there. CI restored local dumps for weeks without meeting either.
+#
+# Roles first. They are cluster-level, so no dump of a single database has ever
+# contained them, and 44 of this schema's RLS policies say `to authenticated`,
+# `to anon` or `to service_role`. Migration 20260816090100 creates them in
+# exactly this shape and for exactly this reason: Supabase ships them, a bare
+# cluster does not.
+psql -q -v ON_ERROR_STOP=1 -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${SCRATCH_DB}" <<'SQL'
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin noinherit bypassrls;
+  end if;
+end $$;
+SQL
+
+# Then the public schema. `--schema=public` makes pg_dump emit its own
+# `CREATE SCHEMA public`, and `create database` above has already supplied one,
+# so the restore dies on the first statement it reads. Drop ours only when the
+# archive is bringing its own — a local dump carries no such line, and dropping
+# it there would leave the restore with nowhere to put the tables.
+#
+# Deliberately no `-m1` on the grep: it would close the pipe early, gunzip would
+# take SIGPIPE, and `pipefail` would report the whole test as false.
+if gunzip -c "${BACKUP_FILE}" | grep -q '^CREATE SCHEMA public;'; then
+  psql -q -v ON_ERROR_STOP=1 -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${SCRATCH_DB}" \
+    -c "drop schema public cascade"
+fi
+
 gunzip -c "${BACKUP_FILE}" \
   | psql -q -v ON_ERROR_STOP=1 -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${SCRATCH_DB}" \
   > /dev/null
