@@ -51,8 +51,13 @@ async function typePin(page: import('@playwright/test').Page, pin: string) {
 test('while it is still asking, it waits rather than accusing the tablet', async ({
   page,
 }) => {
+  let releaseSetupState!: () => void;
+  const setupStateGate = new Promise<void>((resolve) => {
+    releaseSetupState = resolve;
+  });
+
   await page.route('**/rest/v1/clinic_setup_state*', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    await setupStateGate;
     await route.continue();
   });
 
@@ -63,11 +68,14 @@ test('while it is still asking, it waits rather than accusing the tablet', async
     page.getByRole('heading', { name: 'This tablet is not registered' }),
   ).toHaveCount(0);
 
-  // And when the answer lands, the screen that has something to offer.
-  await page.unroute('**/rest/v1/clinic_setup_state*');
+  // Let the exact request being observed finish before removing the route.
+  // Unrouting while its delayed handler was still alive could make Playwright
+  // report "Route is already handled!" depending on CI timing.
+  releaseSetupState();
   await expect(page.getByRole('heading', { name: 'Set this clinic up' })).toBeVisible({
     timeout: 15_000,
   });
+  await page.unroute('**/rest/v1/clinic_setup_state*');
 });
 
 test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
@@ -94,12 +102,18 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
   ).toBeVisible();
 
   // And the person who set it up is an admin, so the rest of go-live — the
-  // settings, the second tablet, the drug master — is reachable from here
+  // settings, the second tablet and the drug master — is reachable from here
   // without anybody touching a database.
   await page.getByRole('button', { name: 'Open the queue' }).click();
-  await expect(page.getByRole('button', { name: 'People' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Admin', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Import' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Clinic control center', level: 1 }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /People & tablets/ })).toBeVisible();
 
   // Then lock it and come back in the ordinary way. This is the assertion that
   // setup was a real sign-in on a real device registration, rather than a
