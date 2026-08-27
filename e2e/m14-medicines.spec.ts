@@ -23,7 +23,7 @@ test('admin adds a medicine and configures its reorder threshold', async ({ page
 
   await signIn(page, 'seed-device-cabin', 'Admin');
   await page.getByRole('button', { name: 'Open the queue' }).click();
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await page.getByRole('button', { name: 'Administration', exact: true }).click();
   await page.getByRole('button', { name: /Medicines/ }).first().click();
 
   await expect(page.getByRole('heading', { name: 'Medicines', level: 1 })).toBeVisible();

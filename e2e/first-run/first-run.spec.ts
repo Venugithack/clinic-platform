@@ -14,11 +14,6 @@ import { expect, test } from '@playwright/test';
  * It cannot run beside the rest of the suite — it needs the database to be
  * empty, and the rest of the suite needs it seeded. `scripts/first-run-drill.sh`
  * owns that: reset to migrations only, run this file alone, put the seed back.
- *
- * It is a drill in the same sense as `db-restore-drill.sh`. Standing the system
- * up from nothing is a thing that happens exactly once, in a clinic, with
- * somebody waiting — which is the worst possible moment to discover it was
- * never tried.
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -32,17 +27,6 @@ async function typePin(page: import('@playwright/test').Page, pin: string) {
   }
 }
 
-/**
- * First, because it is the first second.
- *
- * Serial mode means this runs before the clinic below exists, which is the only
- * state it can be asked in.
- *
- * Delaying the setup-state request turns an otherwise invisible network wait
- * into a state the test can inspect: the app must say it is waiting, not accuse
- * a brand-new tablet of being unregistered before it knows whether a clinic
- * exists at all.
- */
 test('while it is still asking, it waits rather than accusing the tablet', async ({
   page,
 }) => {
@@ -58,8 +42,6 @@ test('while it is still asking, it waits rather than accusing the tablet', async
     page.getByRole('heading', { name: 'This tablet is not registered' }),
   ).toHaveCount(0);
 
-  // Keep the route installed until its delayed request has actually completed;
-  // removing it while the handler is sleeping is what made the old test race.
   await expect(page.getByRole('heading', { name: 'Set this clinic up' })).toBeVisible({
     timeout: 15_000,
   });
@@ -71,9 +53,6 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
 }) => {
   await page.goto('/');
 
-  // Not "this tablet is not registered" — there is nothing to be registered
-  // WITH. The screen has to tell those two situations apart, and it does it by
-  // asking whether the clinic has any staff at all.
   await expect(page.getByRole('heading', { name: 'Set this clinic up' })).toBeVisible();
 
   await page.getByLabel('Clinic name').fill(CLINIC);
@@ -86,23 +65,23 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
     page.getByRole('heading', { name: new RegExp(`Signed in as ${DOCTOR}`) }),
   ).toBeVisible();
 
-  // The first person is the administrator, so the rest of go-live is reachable
-  // from one control-center entry rather than several implementation-era links.
+  // The first person is the administrator. The operational queue exposes one
+  // back-office door instead of duplicating Settings / Import / Admin actions.
   await page.getByRole('button', { name: 'Open the queue' }).click();
-  await expect(page.getByRole('button', { name: 'Admin', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Import' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Administration', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Import', exact: true })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await page.getByRole('button', { name: 'Administration', exact: true }).click();
   await expect(
     page.getByRole('heading', { name: 'Clinic control center', level: 1 }),
   ).toBeVisible();
   await expect(
     page.getByRole('button', { name: 'People & tablets', exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole('button', { name: /Import medicine master/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clinic settings', exact: true })).toBeVisible();
 
-  // Then lock it and come back in the ordinary way. Setup was a real sign-in on
-  // a real device registration; the PIN chosen above is the PIN that works.
   await page.goto('/');
   await page.evaluate(() => window.sessionStorage.clear());
   await page.reload();
