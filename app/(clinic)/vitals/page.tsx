@@ -46,12 +46,13 @@ export default function VitalsPage() {
     value.trim() === '' ? undefined : Number(value);
 
   const save = async () => {
-    if (!entry || !session || !allowed || !hasAnyValue) return;
+    if (!entry || !appointmentId || !session || !allowed || !hasAnyValue) return;
     setBusy(true);
     setError(null);
     try {
       await recordVitals({
         patientId: entry.patient_id,
+        appointmentId,
         recordedBy: session.staffId,
         bp: bp || undefined,
         pulse: numberOrUndefined(pulse),
@@ -94,7 +95,7 @@ export default function VitalsPage() {
           </div>
           {previous ? (
             <div>
-              <p className="eyebrow">Previous vitals</p>
+              <p className="eyebrow">Latest recorded vitals</p>
               <p className="mt-2 text-sm text-ink-2">
                 {[
                   previous.bp && `BP ${previous.bp}`,
