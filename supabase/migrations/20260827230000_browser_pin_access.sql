@@ -15,10 +15,12 @@ create table if not exists app.bootstrap_owner (
   email text primary key,
   created_at timestamptz not null default now()
 );
+alter table app.bootstrap_owner enable row level security;
 revoke all on table app.bootstrap_owner from public, anon, authenticated;
 
--- Daily PIN unlock from any browser. Five consecutive failures lock that staff
--- account for ten minutes. Successful unlock resets the failure counter.
+-- Daily PIN unlock from any browser. Credential failures are returned, not
+-- raised: raising would roll back the failure counter in the same transaction.
+-- Five consecutive failures lock that staff account for ten minutes.
 create or replace function app.unlock_staff(
   p_staff_id uuid,
   p_pin text
@@ -35,11 +37,11 @@ begin
   select * into v_staff from staff where id = p_staff_id and active;
 
   if not found or v_staff.pin_hash is null then
-    raise exception 'incorrect PIN' using errcode = 'CL005';
+    return jsonb_build_object('ok', false, 'reason', 'incorrect');
   end if;
 
   if v_staff.pin_locked_until is not null and v_staff.pin_locked_until > now() then
-    raise exception 'too many incorrect attempts; try again later' using errcode = 'CL005';
+    return jsonb_build_object('ok', false, 'reason', 'locked');
   end if;
 
   if v_staff.pin_hash <> crypt(p_pin, v_staff.pin_hash) then
@@ -54,7 +56,11 @@ begin
       jsonb_build_object('browser_access', true, 'locked', v_failures >= 5),
       'system'
     );
-    raise exception 'incorrect PIN' using errcode = 'CL005';
+
+    return jsonb_build_object(
+      'ok', false,
+      'reason', case when v_failures >= 5 then 'locked' else 'incorrect' end
+    );
   end if;
 
   update staff
@@ -76,6 +82,7 @@ begin
   );
 
   return jsonb_build_object(
+    'ok', true,
     'session_token', v_token,
     'staff_id', v_staff.id,
     'staff_name', v_staff.name,
@@ -95,7 +102,7 @@ security definer
 set search_path = public, extensions, pg_catalog
 as $$
 declare
-  v_ok boolean;
+  v_rows int;
 begin
   update staff_sessions s
   set last_seen_at = now(),
@@ -104,8 +111,8 @@ begin
     and s.ended_at is null
     and s.expires_at > now();
 
-  get diagnostics v_ok = row_count;
-  return v_ok;
+  get diagnostics v_rows = row_count;
+  return v_rows > 0;
 end
 $$;
 
