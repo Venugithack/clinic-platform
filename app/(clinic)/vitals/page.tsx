@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Field, Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
@@ -15,6 +16,7 @@ export default function VitalsPage() {
   const session = currentSession();
   const allowed =
     session?.role === 'doctor' || session?.role === 'nurse' || session?.role === 'admin';
+  const canConsult = session?.role === 'doctor' || session?.role === 'admin';
 
   const [entry, setEntry] = useState<QueueEntry | null>(null);
   const [previous, setPrevious] = useState<VitalRecord | null>(null);
@@ -45,7 +47,7 @@ export default function VitalsPage() {
   const numberOrUndefined = (value: string) =>
     value.trim() === '' ? undefined : Number(value);
 
-  const save = async () => {
+  const save = async (next: 'queue' | 'consult') => {
     if (!entry || !appointmentId || !session || !allowed || !hasAnyValue) return;
     setBusy(true);
     setError(null);
@@ -61,7 +63,12 @@ export default function VitalsPage() {
         weight: numberOrUndefined(weight),
         height: numberOrUndefined(height),
       });
-      router.push('/queue');
+
+      if (next === 'consult' && canConsult) {
+        router.push(`/consult?appointment=${appointmentId}` as Route);
+      } else {
+        router.push('/queue');
+      }
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);
@@ -80,70 +87,165 @@ export default function VitalsPage() {
     );
   }
 
+  const previousItems = previous
+    ? [
+        previous.bp && ['BP', previous.bp],
+        previous.pulse && ['Pulse', `${previous.pulse} bpm`],
+        previous.temp && ['Temp', `${previous.temp} °F`],
+        previous.spo2 && ['SpO₂', `${previous.spo2}%`],
+        previous.weight && ['Weight', `${previous.weight} kg`],
+        previous.height && ['Height', `${previous.height} cm`],
+      ].filter(Boolean) as [string, string][]
+    : [];
+
   return (
     <ThreePane
       context={
         <div className="space-y-6">
           <div>
             <p className="eyebrow">Patient</p>
-            <p className="mt-1 text-lg">{entry?.patient_name ?? 'Loading…'}</p>
+            <p className="mt-1 text-lg font-medium">{entry?.patient_name ?? 'Loading…'}</p>
             {entry ? (
               <p className="mt-1 text-sm text-ink-2">
-                Token {entry.token_no} · {[entry.age, entry.sex].filter(Boolean).join(' · ')}
-              </p>
-            ) : null}
-          </div>
-          {previous ? (
-            <div>
-              <p className="eyebrow">Latest recorded vitals</p>
-              <p className="mt-2 text-sm text-ink-2">
-                {[
-                  previous.bp && `BP ${previous.bp}`,
-                  previous.pulse && `Pulse ${previous.pulse}`,
-                  previous.temp && `Temp ${previous.temp}`,
-                  previous.spo2 && `SpO₂ ${previous.spo2}%`,
-                  previous.weight && `Wt ${previous.weight} kg`,
-                ]
+                Token {entry.token_no} · {[entry.age ? `${entry.age} yrs` : null, entry.sex]
                   .filter(Boolean)
                   .join(' · ')}
               </p>
+            ) : null}
+          </div>
+
+          {entry?.reason ? (
+            <div>
+              <p className="eyebrow">Reason for visit</p>
+              <p className="mt-1 text-sm leading-6">{entry.reason}</p>
             </div>
           ) : null}
+
+          {previousItems.length > 0 ? (
+            <div>
+              <p className="eyebrow">Previous measurement</p>
+              <p className="mt-1 text-xs text-ink-2">
+                {previous
+                  ? new Date(previous.recorded_at).toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })
+                  : null}
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2">
+                {previousItems.map(([label, value]) => (
+                  <div key={label} className="rounded-box border border-rule bg-sheet p-2">
+                    <dt className="eyebrow">{label}</dt>
+                    <dd className="tabular mt-1 text-sm font-medium">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-2">No previous vitals are recorded for this patient.</p>
+          )}
         </div>
       }
       rail={
         <>
-          <RailButton
-            tone="primary"
-            disabled={!entry || !hasAnyValue || busy}
-            onClick={() => void save()}
-          >
-            {busy ? 'Saving…' : 'Save vitals'}
-          </RailButton>
-          <RailButton onClick={() => router.push('/queue')}>Skip / back to queue</RailButton>
+          {canConsult ? (
+            <RailButton
+              tone="primary"
+              disabled={!entry || !hasAnyValue || busy}
+              onClick={() => void save('consult')}
+            >
+              {busy ? 'Saving…' : 'Save & consult'}
+            </RailButton>
+          ) : (
+            <RailButton
+              tone="primary"
+              disabled={!entry || !hasAnyValue || busy}
+              onClick={() => void save('queue')}
+            >
+              {busy ? 'Saving…' : 'Save vitals'}
+            </RailButton>
+          )}
+
+          {canConsult ? (
+            <RailButton
+              disabled={!entry || !hasAnyValue || busy}
+              onClick={() => void save('queue')}
+            >
+              Save vitals
+            </RailButton>
+          ) : null}
+
+          <RailButton onClick={() => router.push('/queue')}>Back without saving</RailButton>
         </>
       }
     >
-      <PageHeader eyebrow="Patient intake" title="Vitals" sub={session?.staffName} />
+      <PageHeader
+        eyebrow="Patient intake"
+        title="Record vitals"
+        sub={canConsult ? 'Save and continue directly into consultation' : 'Record what was measured, then return to the queue'}
+      />
       {error ? <Notice tone="bad">{error}</Notice> : null}
+
       <div className="mt-6 grid max-w-2xl grid-cols-2 gap-5">
         <Field label="Blood pressure">
-          <input value={bp} onChange={(e) => setBp(e.target.value)} placeholder="120/80" aria-label="Blood pressure" className="blank h-14 w-full px-4 text-lg" />
+          <input
+            value={bp}
+            onChange={(e) => setBp(e.target.value.slice(0, 9))}
+            placeholder="120/80"
+            aria-label="Blood pressure"
+            className="blank h-14 w-full px-4 text-lg"
+          />
         </Field>
         <Field label="Pulse (bpm)">
-          <input inputMode="numeric" value={pulse} onChange={(e) => setPulse(e.target.value)} aria-label="Pulse" className="blank h-14 w-full px-4 text-lg" />
+          <input
+            inputMode="numeric"
+            value={pulse}
+            onChange={(e) => setPulse(e.target.value.slice(0, 3))}
+            aria-label="Pulse"
+            placeholder="72"
+            className="blank h-14 w-full px-4 text-lg"
+          />
         </Field>
         <Field label="Temperature (°F)">
-          <input inputMode="decimal" value={temp} onChange={(e) => setTemp(e.target.value)} aria-label="Temperature" className="blank h-14 w-full px-4 text-lg" />
+          <input
+            inputMode="decimal"
+            value={temp}
+            onChange={(e) => setTemp(e.target.value.slice(0, 5))}
+            aria-label="Temperature"
+            placeholder="98.6"
+            className="blank h-14 w-full px-4 text-lg"
+          />
         </Field>
         <Field label="SpO₂ (%)">
-          <input inputMode="numeric" value={spo2} onChange={(e) => setSpo2(e.target.value)} aria-label="SpO2" className="blank h-14 w-full px-4 text-lg" />
+          <input
+            inputMode="numeric"
+            value={spo2}
+            onChange={(e) => setSpo2(e.target.value.slice(0, 3))}
+            aria-label="SpO2"
+            placeholder="99"
+            className="blank h-14 w-full px-4 text-lg"
+          />
         </Field>
         <Field label="Weight (kg)">
-          <input inputMode="decimal" value={weight} onChange={(e) => setWeight(e.target.value)} aria-label="Weight" className="blank h-14 w-full px-4 text-lg" />
+          <input
+            inputMode="decimal"
+            value={weight}
+            onChange={(e) => setWeight(e.target.value.slice(0, 6))}
+            aria-label="Weight"
+            placeholder="65"
+            className="blank h-14 w-full px-4 text-lg"
+          />
         </Field>
         <Field label="Height (cm)">
-          <input inputMode="decimal" value={height} onChange={(e) => setHeight(e.target.value)} aria-label="Height" className="blank h-14 w-full px-4 text-lg" />
+          <input
+            inputMode="decimal"
+            value={height}
+            onChange={(e) => setHeight(e.target.value.slice(0, 6))}
+            aria-label="Height"
+            placeholder="170"
+            className="blank h-14 w-full px-4 text-lg"
+          />
         </Field>
       </div>
     </ThreePane>
