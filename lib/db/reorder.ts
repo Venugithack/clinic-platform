@@ -54,6 +54,38 @@ export async function reorderSuggestions(): Promise<ReorderSuggestion[]> {
   });
 }
 
+/**
+ * What is already covered by an order that has not closed yet.
+ *
+ * Reorder intelligence is shelf-based, so a low shelf can correctly remain a
+ * suggestion while 300 tablets are already on the way. This second read is the
+ * operational guard: show that fact to the person and do not invite them to
+ * draft the same medicine again. The transition enforces the same rule so two
+ * tablets racing cannot create duplicate commitments.
+ */
+export async function openOrderQuantities(
+  drugIds: string[],
+): Promise<Map<string, number>> {
+  if (drugIds.length === 0) return new Map();
+
+  const { data, error } = await db()
+    .from('purchase_order_lines')
+    .select('drug_id, outstanding_qty_base, status')
+    .in('drug_id', drugIds)
+    .in('status', ['draft', 'sent', 'acknowledged', 'partial']);
+
+  if (error) throw new Error(error.message);
+
+  const byDrug = new Map<string, number>();
+  for (const row of data ?? []) {
+    const outstanding = Number(row.outstanding_qty_base ?? 0);
+    if (outstanding <= 0) continue;
+    const drugId = row.drug_id as string;
+    byDrug.set(drugId, (byDrug.get(drugId) ?? 0) + outstanding);
+  }
+  return byDrug;
+}
+
 export interface PurchasePrice {
   drug_id: string;
   supplier_id: string | null;
