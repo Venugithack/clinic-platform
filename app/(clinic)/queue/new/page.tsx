@@ -3,18 +3,16 @@
 /**
  * Register a walk-in, and hand out a token.
  *
- * The numpad lives in the rail rather than in a popover: rule 5 forbids stacked
- * modals, and the rail is already the place where the fixed controls live. Tap
- * a numeric field and the pad appears there.
- *
- * Consent is a deliberate, recorded step (DPDP §15.1) — it is stored with a
- * timestamp and a source, and it is revocable. Not a pre-ticked box.
+ * Registration is shared clinical intake in this clinic: doctors and nurses
+ * can both create/find the patient, issue today's token and record vitals.
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Field, Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
+import { currentSession } from '@/lib/auth';
 import { createPatient, searchPatients, type Patient } from '@/lib/db/patients';
 import { bookAppointment } from '@/lib/transitions/clinic';
 
@@ -22,6 +20,9 @@ type NumericField = 'phone' | 'age' | null;
 
 export default function RegisterWalkInPage() {
   const router = useRouter();
+  const session = currentSession();
+  const canIntake =
+    session?.role === 'doctor' || session?.role === 'nurse' || session?.role === 'admin';
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -37,7 +38,7 @@ export default function RegisterWalkInPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const canRegister = existing !== null || (name.trim().length > 1 && consent);
+  const canRegister = canIntake && (existing !== null || (name.trim().length > 1 && consent));
 
   const lookUp = (value: string) => {
     setPhone(value);
@@ -49,6 +50,7 @@ export default function RegisterWalkInPage() {
   };
 
   const submit = async () => {
+    if (!canIntake) return;
     setBusy(true);
     setError(null);
     try {
@@ -61,8 +63,8 @@ export default function RegisterWalkInPage() {
         allergies: allergies || undefined,
       }));
 
-      await bookAppointment({ patientId: patient.id, source: 'walkin' });
-      router.push('/queue');
+      const appointment = await bookAppointment({ patientId: patient.id, source: 'walkin' });
+      router.push(`/vitals?appointment=${appointment.id}` as Route);
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);
@@ -74,6 +76,18 @@ export default function RegisterWalkInPage() {
     if (active === 'age') setAge(updater(age).slice(0, 3));
   };
 
+  if (!canIntake) {
+    return (
+      <ThreePane
+        context={<div />}
+        rail={<RailButton onClick={() => router.push('/counter')}>Back to counter</RailButton>}
+      >
+        <PageHeader eyebrow="Patient intake" title="Register walk-in" />
+        <Notice tone="bad">Patient registration is available to doctors and nurses.</Notice>
+      </ThreePane>
+    );
+  }
+
   return (
     <ThreePane
       context={
@@ -81,8 +95,6 @@ export default function RegisterWalkInPage() {
           <h2 className="eyebrow">Registering</h2>
           <p className="mt-1 text-lg">{existing?.name || name || 'New patient'}</p>
 
-          {/* Families share one handset constantly, so a phone match is a
-              chooser rather than an answer (PLAN.md §14). */}
           {matches.length > 0 && !existing ? (
             <div className="mt-6">
               <p className="text-sm text-ink-2">
@@ -131,20 +143,21 @@ export default function RegisterWalkInPage() {
         ) : (
           <>
             <RailButton tone="primary" disabled={!canRegister || busy} onClick={() => void submit()}>
-              {busy ? 'Registering…' : 'Register & get token'}
+              {busy ? 'Registering…' : 'Register & take vitals'}
             </RailButton>
             <RailButton onClick={() => router.push('/queue')}>Cancel</RailButton>
           </>
         )
       }
     >
-      <PageHeader eyebrow="Consulting room" title="Register walk-in" />
+      <PageHeader eyebrow="Patient intake" title="Register walk-in" sub={session?.staffName} />
 
       {error ? <Notice tone="bad">{error}</Notice> : null}
 
       {existing ? (
         <p className="mt-6 text-ink-2">
-          {existing.name} is already registered. Registering will give them today&apos;s next token.
+          {existing.name} is already registered. Continuing will give them today&apos;s next token,
+          then open vitals.
         </p>
       ) : (
         <div className="mt-6 max-w-xl space-y-5">
@@ -185,10 +198,6 @@ export default function RegisterWalkInPage() {
               </button>
             </Field>
 
-            {/* A group of buttons is not a labelled control: wrapping them in a
-                <label> makes the first button's accessible name swallow the
-                other two. role="group" with a label is the correct shape, and
-                screen-reader users get three distinct buttons. */}
             <div role="group" aria-label="Sex">
               <span className="eyebrow mb-1 block">Sex</span>
               <div className="flex gap-2">
@@ -210,12 +219,6 @@ export default function RegisterWalkInPage() {
             </div>
           </div>
 
-          {/* The Schedule H1 register legally requires the patient's address
-              (PLAN.md §15.2), and a register with blanks in it is not one. It
-              is optional here on purpose — holding up a queue for an address
-              nobody needs is worse — and the register flags every row that ends
-              up without one, so the gap is visible rather than discovered
-              during an inspection. */}
           <Field label="Address">
             <input
               value={address}
@@ -261,4 +264,3 @@ export default function RegisterWalkInPage() {
     </ThreePane>
   );
 }
-
