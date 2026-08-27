@@ -17,8 +17,6 @@ comment on column staff.pin_failed_attempts is
 comment on column staff.pin_locked_until is
   'Temporary server-side lock after repeated wrong PINs.';
 
--- Any active member can be picked on the public lock screen; the PIN remains
--- the credential and all sensitive tables continue to rely on current_staff_id.
 create or replace function app.unlock_pin(
   p_staff_id uuid,
   p_pin text
@@ -50,7 +48,6 @@ begin
     );
   end if;
 
-  -- An expired lock starts a fresh counter.
   if v_staff.pin_locked_until is not null and v_staff.pin_locked_until <= now() then
     update staff
     set pin_failed_attempts = 0,
@@ -75,11 +72,7 @@ begin
     );
 
     if v_locked_until is not null then
-      return jsonb_build_object(
-        'ok', false,
-        'code', 'locked',
-        'retry_after_seconds', 600
-      );
+      return jsonb_build_object('ok', false, 'code', 'locked', 'retry_after_seconds', 600);
     end if;
 
     return jsonb_build_object(
@@ -120,7 +113,6 @@ $$;
 revoke all on function app.unlock_pin(uuid, text) from public;
 grant execute on function app.unlock_pin(uuid, text) to authenticated, service_role;
 
--- Device-free staff sessions use one consistent ten-minute idle window.
 create or replace function app.touch_session(p_token text)
 returns boolean
 language plpgsql
@@ -145,8 +137,6 @@ $$;
 revoke all on function app.touch_session(text) from public;
 grant execute on function app.touch_session(text) to authenticated, service_role;
 
--- Resetting a PIN also clears a brute-force lock and ends every existing PIN
--- session for that person so the old credential cannot retain access.
 create or replace function app.set_staff_pin(p_staff_id uuid, p_pin text)
 returns void
 language plpgsql
@@ -187,8 +177,6 @@ $$;
 revoke all on function app.set_staff_pin(uuid, text) from public;
 grant execute on function app.set_staff_pin(uuid, text) to authenticated, service_role;
 
--- First-run owner creation. The clinic is fixed because this is a single-clinic
--- product, and no device record/session is created.
 create or replace function app.first_run_owner(
   p_staff_name text,
   p_pin text
@@ -248,8 +236,6 @@ $$;
 revoke all on function app.first_run_owner(text, text) from public;
 grant execute on function app.first_run_owner(text, text) to authenticated, service_role;
 
--- Only the verified administrator email is an owner identity. This is used by
--- the OTP screen to build the control-panel session after verification.
 create or replace function app.owner_profile()
 returns jsonb
 language plpgsql
@@ -290,14 +276,11 @@ $$;
 revoke all on function app.owner_profile() from public;
 grant execute on function app.owner_profile() to authenticated, service_role;
 
--- The old device enrollment surface is intentionally closed. Historical
--- functions/tables remain for migration compatibility but normal browsers can
--- no longer establish device trust or use the device-bound unlock.
 revoke execute on function app.unlock(text, uuid, text) from authenticated;
 revoke execute on function app.trust_device_by_email(text, boolean, int) from authenticated;
 revoke execute on function app.first_run_email(text, text, text, text) from authenticated;
 revoke execute on function app.claim_legacy_admin_by_email(text, text, text, text) from authenticated;
-revoke execute on function app.register_device(text, text) from authenticated;
+revoke execute on function app.register_device(text, boolean, int) from authenticated;
 revoke execute on function app.recover_admin_device(text, text, text, text) from authenticated;
 
 comment on table staff_sessions is
