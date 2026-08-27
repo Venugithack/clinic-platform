@@ -45,7 +45,8 @@ import {
 } from '@/lib/transitions/admin';
 
 const ROLES: Array<{ value: StaffRole; label: string; hint: string }> = [
-  { value: 'doctor', label: 'Doctor', hint: 'Consults, signs prescriptions' },
+  { value: 'doctor', label: 'Doctor', hint: 'Registers patients, takes vitals, consults and prescribes' },
+  { value: 'nurse', label: 'Nurse', hint: 'Registers patients, takes vitals and manages intake' },
   { value: 'counter', label: 'Counter', hint: 'Dispenses, sells, takes cash' },
   { value: 'admin', label: 'Admin', hint: 'All of that, plus this screen' },
 ];
@@ -73,7 +74,7 @@ export default function AdminPage() {
   // Adding somebody.
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
-  const [role, setRole] = useState<StaffRole>('counter');
+  const [role, setRole] = useState<StaffRole>('nurse');
   const [phone, setPhone] = useState('');
   const [pin, setPin] = useState('');
 
@@ -123,7 +124,7 @@ export default function AdminPage() {
       setName('');
       setPhone('');
       setPin('');
-      setRole('counter');
+      setRole('nurse');
       return `${added.name} can sign in now.`;
     });
 
@@ -312,9 +313,6 @@ export default function AdminPage() {
               </span>
             </span>
 
-            {/* Named after the person: three staff rows gave three buttons all
-                called "New PIN", which is ambiguous to a screen reader and to a
-                test alike. The PIN being reset belongs to somebody. */}
             <button
               type="button"
               aria-label={`New PIN for ${row.name}`}
