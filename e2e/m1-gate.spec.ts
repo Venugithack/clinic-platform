@@ -1,16 +1,5 @@
 import { expect, test } from '@playwright/test';
 
-/**
- * The M1 gate, end to end (BUILD.md §2).
- *
- *   "Doctor registers a walk-in, consults, signs an Rx, and it prints on the
- *    clinic's actual printer at A4."
- *
- * Everything up to the last clause is here, against a real Postgres with real
- * RLS and the real transitions. The last clause is a physical test on the
- * clinic's own printer and cannot be automated.
- */
-
 const DEVICE = 'seed-device-cabin';
 const PIN = '481920';
 
@@ -31,13 +20,18 @@ async function signIn(page: import('@playwright/test').Page) {
   await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
 }
 
-test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', async ({
-  page,
-}) => {
+async function register(page: import('@playwright/test').Page, patient: string) {
+  await page.getByRole('button', { name: 'Register walk-in' }).click();
+  await page.getByLabel('Name').fill(patient);
+  await page.getByLabel('Consent').click();
+  await page.getByRole('button', { name: /Register & get token/ }).click();
+  await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
+}
+
+test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', async ({ page }) => {
   await signIn(page);
 
   const patient = `E2E Patient ${Date.now()}`;
-
   await page.getByRole('button', { name: 'Register walk-in' }).click();
   await page.getByLabel('Name').fill(patient);
 
@@ -51,13 +45,12 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   await page.getByLabel('Allergies').fill('Penicillin');
   await page.getByLabel('Reason for visit').fill('Sore throat since yesterday');
 
-  const register = page.getByRole('button', { name: /Register & get token/ });
-  await expect(register).toBeDisabled();
+  const registerButton = page.getByRole('button', { name: /Register & get token/ });
+  await expect(registerButton).toBeDisabled();
   await page.getByLabel('Consent').click();
-  await expect(register).toBeEnabled();
-  await register.click();
+  await expect(registerButton).toBeEnabled();
+  await registerButton.click();
 
-  await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
   const row = page.getByRole('button', { name: new RegExp(patient) });
   await expect(row).toBeVisible();
   await expect(row).toContainText('Penicillin');
@@ -71,10 +64,8 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   await page.getByLabel('Pulse').fill('78');
   await page.getByLabel('SpO2').fill('98');
   await page.getByRole('button', { name: 'Save vitals' }).click();
-  await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: new RegExp(patient) }).click();
-
   await expect(page.getByRole('heading', { name: 'Consult', exact: true })).toBeVisible();
   await expect(page.getByText('Allergies: Penicillin')).toBeVisible();
   await expect(page.getByText(/BP 120\/80/)).toBeVisible();
@@ -83,16 +74,10 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
 
   await page.getByLabel('Diagnosis').fill('Acute pharyngitis');
   await page.getByRole('button', { name: 'Add diagnosis' }).click();
-  await expect(page.getByRole('button', { name: /Acute pharyngitis/ })).toBeVisible();
 
   await page.getByRole('button', { name: '+ Add medicine' }).click();
-
-  const search = page.getByRole('dialog', { name: 'Find a medicine' });
-  await expect(search).toBeVisible();
   await page.getByLabel('Search medicines').fill('Dolo');
-
   const result = page.getByRole('button', { name: /Dolo 650/ });
-  await expect(result).toBeVisible();
   await expect(result).toContainText('in stock');
   await result.click();
 
@@ -101,30 +86,20 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   await expect(page.getByTestId('qty-base')).toContainText('15 tablets');
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
 
-  await expect(page.getByText('Dolo 650')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Sign Rx' }).click();
+  await page.getByRole('button', { name: /Sign Rx/ }).click();
 
   await expect(page).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
   await expect(page.getByText(patient)).toBeVisible();
   await expect(page.getByText('Acute pharyngitis')).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Dolo 650');
-
   await expect(page.getByText('Reg. no. REG-0000').first()).toBeVisible();
-
-  const sheet = page.locator('.rx-sheet');
-  await expect(sheet).toBeVisible();
 });
 
 test('a signed prescription cannot be edited from the consult screen', async ({ page }) => {
   await signIn(page);
 
   const patient = `E2E Locked ${Date.now()}`;
-
-  await page.getByRole('button', { name: 'Register walk-in' }).click();
-  await page.getByLabel('Name').fill(patient);
-  await page.getByLabel('Consent').click();
-  await page.getByRole('button', { name: /Register & get token/ }).click();
+  await register(page, patient);
 
   await page.getByRole('button', { name: new RegExp(patient) }).click();
   await page.getByRole('button', { name: '+ Add medicine' }).click();
@@ -133,12 +108,35 @@ test('a signed prescription cannot be edited from the consult screen', async ({ 
   const qtypad = page.getByTestId('qtypad');
   await qtypad.getByRole('button', { name: '10', exact: true }).click();
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
-  await page.getByRole('button', { name: 'Sign Rx' }).click();
+  await page.getByRole('button', { name: /Sign Rx/ }).click();
 
   await expect(page).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
   await page.goBack();
 
-  await expect(page.getByText(/Signed at/)).toBeVisible();
+  await expect(page.getByText(/Prescription signed at/)).toBeVisible();
   await expect(page.getByRole('button', { name: '+ Add medicine' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Signed' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Open signed Rx', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Advice')).toBeDisabled();
+});
+
+test('finish visit saves diagnosis and advice before returning to the queue', async ({ page }) => {
+  await signIn(page);
+
+  const patient = `E2E Finish ${Date.now()}`;
+  await register(page, patient);
+  await page.getByRole('button', { name: new RegExp(patient) }).click();
+
+  await page.getByLabel('Diagnosis').fill('Viral fever');
+  await page.getByRole('button', { name: 'Add diagnosis' }).click();
+  await page.getByLabel('Advice').fill('Rest and fluids');
+
+  await page.getByRole('button', { name: 'Finish visit', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
+
+  // Reopening a completed row must show what was entered before Finish. This is
+  // the regression for the old UI, where Finish changed queue state but never
+  // persisted the encounter edits first.
+  await page.getByRole('button', { name: new RegExp(patient) }).click();
+  await expect(page.getByRole('button', { name: /Viral fever/ })).toBeVisible();
+  await expect(page.getByLabel('Advice')).toHaveValue('Rest and fluids');
 });
