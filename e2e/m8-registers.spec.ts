@@ -4,16 +4,6 @@ import { expect, test, type Page } from '@playwright/test';
  * The M8 gate (PLAN.md §8, §15.2).
  *
  *   "H1 register exports for a date range in a form an inspector accepts."
- *
- * The word doing the work is **exports**. The register being right in the
- * database is `A3_registers.sql`; what this suite proves is that a person can
- * get it out — a real file, with the columns the rule names, downloaded from a
- * tablet by somebody who is being asked for it right now.
- *
- * It also drives the recall query, which is the same data read the other way
- * round and the reason every dispense line carries a batch.
- *
- * Serial: it dispenses a controlled drug and then looks for it.
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -34,9 +24,7 @@ async function signIn(page: Page, device: string, staffName: string) {
   ).toBeVisible();
 }
 
-test('a Schedule H1 medicine reaches a patient, with an address on file', async ({
-  browser,
-}) => {
+test('a Schedule H1 medicine reaches a patient, with an address on file', async ({ browser }) => {
   const cabin = await browser.newContext();
   const counter = await browser.newContext();
   const doctorPage = await cabin.newPage();
@@ -46,9 +34,10 @@ test('a Schedule H1 medicine reaches a patient, with an address on file', async 
 
   await doctorPage.getByRole('button', { name: 'Open the queue' }).click();
   await doctorPage.getByRole('button', { name: 'Register walk-in' }).click();
-  await doctorPage.getByLabel('Name').fill(PATIENT);
-  // The field M8 added. The H1 register legally requires it, and a register
-  // with blanks in it is not one.
+  await expect(
+    doctorPage.getByRole('heading', { name: 'Register walk-in', exact: true }),
+  ).toBeVisible();
+  await doctorPage.getByLabel('Name', { exact: true }).fill(PATIENT);
   await doctorPage.getByLabel('Address').fill('12 Nehru Street, Kadapa');
   await doctorPage.getByLabel('Consent').click();
   await doctorPage.getByRole('button', { name: /Register & get token/ }).click();
@@ -61,16 +50,13 @@ test('a Schedule H1 medicine reaches a patient, with an address on file', async 
   const qtypad = doctorPage.getByTestId('qtypad');
   await qtypad.getByRole('button', { name: '10', exact: true }).click();
   await qtypad.getByRole('button', { name: 'Add to prescription' }).click();
-  await doctorPage.getByRole('button', { name: 'Sign Rx' }).click();
+  await doctorPage.getByRole('button', { name: /Sign Rx/ }).click();
   await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
   await signIn(counterPage, 'seed-device-counter', 'Counter');
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(PATIENT) }).click();
 
-  // Scan-to-verify (M3): the counter cannot dispense a line it has not matched
-  // against the box in its hand, and a controlled drug is the last place to
-  // make an exception. This code is unknown, so the screen asks once.
   const scan = counterPage.getByTestId('scanfield');
   await scan.getByLabel('Barcode').fill('8900000000777');
   await scan.getByRole('button', { name: 'Check' }).click();
@@ -87,22 +73,18 @@ test('a Schedule H1 medicine reaches a patient, with an address on file', async 
   await counter.close();
 });
 
-test('the register carries every column the rule names, and downloads', async ({
-  page,
-}) => {
+test('the register carries every column the rule names, and downloads', async ({ page }) => {
   await signIn(page, 'seed-device-counter', 'Counter');
   await page.goto('/reports');
 
   const register = page.getByTestId('register');
   await expect(register).toBeVisible();
 
-  // Date, patient, address, drug, quantity, prescriber. All six, on one row.
   const row = register.locator('tbody tr', { hasText: PATIENT });
   await expect(row).toContainText('12 Nehru Street, Kadapa');
   await expect(row).toContainText('Alprax 0.25');
   await expect(row).toContainText('Dr Seed');
 
-  // The export. A real file, off a tablet, while somebody waits for it.
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.getByRole('button', { name: 'Download CSV' }).click(),
@@ -113,14 +95,10 @@ test('the register carries every column the rule names, and downloads', async ({
   const path = await download.path();
   const csv = await (await import('node:fs/promises')).readFile(path, 'utf8');
 
-  // The header an inspector reads, and the row underneath it.
   expect(csv).toContain('Date,Patient,Address,Drug,Strength,Quantity,Batch');
   expect(csv).toContain(PATIENT);
   expect(csv).toContain('12 Nehru Street');
   expect(csv).toContain('Dr Seed');
-
-  // And a BOM, because Excel on Windows reads a UTF-8 file without one as
-  // Latin-1 and turns every ₹ and every Indian name into mojibake.
   expect(csv.charCodeAt(0)).toBe(0xfeff);
 });
 
@@ -128,8 +106,6 @@ test('a recall finds everyone who was given a batch', async ({ page }) => {
   await signIn(page, 'seed-device-counter', 'Counter');
   await page.goto('/reports');
 
-  // Read the batch off the H1 register, then ask the question a manufacturer's
-  // recall notice asks: who is holding this?
   const row = page.getByTestId('register').locator('tbody tr', { hasText: PATIENT });
   const batch = (await row.locator('td').nth(6).innerText()).trim();
   expect(batch.length).toBeGreaterThan(2);
