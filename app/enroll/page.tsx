@@ -6,35 +6,23 @@ import { Numpad } from '@/components/Numpad';
 import { Button, Notice } from '@/components/ui';
 import {
   emailIdentity,
-  registerDeviceLocally,
+  firstRunOwner,
   signOutEmailIdentity,
-  writeStoredSession,
-  type StaffSession,
 } from '@/lib/auth';
-import { hasEmailOwner, needsSetup } from '@/lib/db/settings';
-import {
-  claimLegacyAdminByEmail,
-  firstRunEmail,
-  trustDeviceByEmail,
-  type EmailTrustedDevice,
-} from '@/lib/transitions/admin';
+import { needsSetup } from '@/lib/db/settings';
 
 const PIN_LENGTH = 6;
-const CLINIC_NAME = 'Jayamurugan Clinic';
 
-type Mode = 'loading' | 'setup' | 'trust' | 'legacy' | 'no-email';
+type Mode = 'loading' | 'setup' | 'invalid';
 
-export default function EnrollDevicePage() {
+export default function FirstSetupPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('loading');
   const [email, setEmail] = useState('');
-  const [clinicName, setClinicName] = useState(CLINIC_NAME);
   const [adminName, setAdminName] = useState('');
-  const [deviceLabel, setDeviceLabel] = useState('Cabin tablet');
-  const [isClinicDevice, setIsClinicDevice] = useState(true);
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
-  const [confirmingPin, setConfirmingPin] = useState(false);
+  const [step, setStep] = useState<'pin' | 'confirm'>('pin');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,238 +30,121 @@ export default function EnrollDevicePage() {
     void (async () => {
       const identity = await emailIdentity();
       if (!identity) {
-        setMode('no-email');
+        setMode('invalid');
         return;
       }
       setEmail(identity.email);
 
       const setup = await needsSetup();
-      if (setup === true) {
-        setMode('setup');
-        return;
-      }
-      if (setup === undefined) {
+      if (setup === true) setMode('setup');
+      else if (setup === false) router.replace('/access');
+      else {
         setError('Cannot reach the clinic database.');
-        setMode('no-email');
-        return;
+        setMode('invalid');
       }
-
-      const owner = await hasEmailOwner();
-      setMode(owner === false ? 'legacy' : 'trust');
     })();
-  }, []);
+  }, [router]);
 
-  const finish = async (trusted: EmailTrustedDevice) => {
-    registerDeviceLocally(trusted.device_token);
-    const session: StaffSession = {
-      token: trusted.session_token,
-      staffId: trusted.staff_id,
-      staffName: trusted.staff_name,
-      role: trusted.staff_role,
-    };
-    writeStoredSession(session);
-    await signOutEmailIdentity();
-    router.replace(trusted.staff_role === 'counter' ? '/counter' : '/queue');
-  };
+  const activePin = step === 'pin' ? pin : confirmPin;
+  const mismatch = confirmPin.length === PIN_LENGTH && confirmPin !== pin;
+  const ready = adminName.trim() !== '' && pin.length === PIN_LENGTH && confirmPin === pin;
 
-  const run = async () => {
-    if (busy) return;
+  const finish = async () => {
+    if (!ready || busy) return;
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'setup') {
-        if (!adminName.trim() || pin.length !== PIN_LENGTH || confirmPin !== pin) return;
-        await finish(
-          await firstRunEmail({
-            clinicName: CLINIC_NAME,
-            staffName: adminName,
-            pin,
-            deviceLabel,
-          }),
-        );
-      } else if (mode === 'legacy') {
-        if (!clinicName.trim() || !adminName.trim() || pin.length !== PIN_LENGTH) return;
-        await finish(
-          await claimLegacyAdminByEmail({ clinicName, adminName, pin, deviceLabel }),
-        );
-      } else if (mode === 'trust') {
-        await finish(await trustDeviceByEmail({ deviceLabel, isClinicDevice }));
-      }
+      await firstRunOwner(adminName.trim(), pin);
+      await signOutEmailIdentity();
+      router.replace('/admin/home');
     } catch (cause) {
       setError((cause as Error).message);
       setPin('');
       setConfirmPin('');
-      setConfirmingPin(false);
+      setStep('pin');
     } finally {
       setBusy(false);
     }
   };
 
   if (mode === 'loading') {
-    return <Centered><h1 className="text-2xl font-semibold">Checking your email sign-in…</h1></Centered>;
+    return <Centered><h1 className="text-2xl font-semibold">Preparing clinic setup…</h1></Centered>;
   }
 
-  if (mode === 'no-email') {
+  if (mode === 'invalid') {
     return (
       <Centered>
-        <h1 className="text-2xl font-semibold">Open the link from your email</h1>
-        <p className="mt-3 max-w-md text-center text-ink-2">
-          This browser does not have a verified email session yet.
-        </p>
-        {error ? <Notice tone="bad">{error}</Notice> : null}
-        <Button variant="primary" className="mt-6" onClick={() => router.replace('/access')}>
-          Send another link
-        </Button>
+        <div className="w-full max-w-md text-center">
+          <h1 className="text-2xl font-semibold">Verify the owner email first</h1>
+          <p className="mt-3 text-ink-2">Clinic setup starts with the 6-digit email OTP.</p>
+          {error ? <Notice tone="bad">{error}</Notice> : null}
+          <Button variant="primary" className="mt-6 w-full" onClick={() => router.replace('/access')}>
+            Go to owner sign in
+          </Button>
+        </div>
       </Centered>
     );
   }
 
-  const setupPinReady = pin.length === PIN_LENGTH && confirmPin === pin;
-  const needsPin = mode === 'setup' || mode === 'legacy';
-  const ready =
-    deviceLabel.trim() !== '' &&
-    (mode === 'setup'
-      ? adminName.trim() !== '' && setupPinReady
-      : !needsPin || (clinicName.trim() !== '' && adminName.trim() !== '' && pin.length === PIN_LENGTH));
-
-  const activePin = mode === 'setup' && confirmingPin ? confirmPin : pin;
-  const pinMismatch = mode === 'setup' && confirmPin.length === PIN_LENGTH && confirmPin !== pin;
-
   return (
     <Centered>
       <div className="w-full max-w-md">
-        <p className="eyebrow">Verified email</p>
-        <p className="mt-1 break-all text-sm text-ink-2">{email}</p>
-
-        <h1 className="mt-4 text-2xl font-semibold">
-          {mode === 'setup'
-            ? 'Set up Jayamurugan Clinic'
-            : mode === 'legacy'
-              ? 'Move this clinic to email access'
-              : 'Trust this device'}
-        </h1>
-
-        <p className="mt-3 text-sm leading-6 text-ink-2">
-          {mode === 'setup'
-            ? 'Create the first administrator and choose a 6-digit PIN. You will enter the PIN twice so it cannot be saved by mistake.'
-            : mode === 'legacy'
-              ? 'Confirm the existing administrator once; old device trust is replaced and this email becomes the owner.'
-              : 'This email is authorized. Name this device once; staff then use name + PIN as usual.'}
+        <p className="eyebrow">First setup</p>
+        <h1 className="mt-1 text-2xl font-semibold">Jayamurugan Clinic</h1>
+        <p className="mt-2 text-sm text-ink-2">Owner verified: {email}</p>
+        <p className="mt-4 text-sm leading-6 text-ink-2">
+          Create the first administrator. After this, use the control panel to add doctors, nurses and pharmacy staff with their own PINs.
         </p>
 
-        {mode === 'setup' ? (
-          <div className="mt-6 space-y-4">
-            <label className="block">
-              <span className="block text-sm text-ink-2">Administrator name</span>
-              <input value={adminName} onChange={(event) => setAdminName(event.target.value)} aria-label="Administrator name" className="blank mt-1 h-14 w-full px-3 text-lg" />
-            </label>
-          </div>
-        ) : null}
-
-        {mode === 'legacy' ? (
-          <div className="mt-6 space-y-4">
-            <label className="block">
-              <span className="block text-sm text-ink-2">Clinic name</span>
-              <input value={clinicName} onChange={(event) => setClinicName(event.target.value)} aria-label="Clinic name" className="blank mt-1 h-14 w-full px-3 text-lg" />
-            </label>
-            <label className="block">
-              <span className="block text-sm text-ink-2">Administrator name</span>
-              <input value={adminName} onChange={(event) => setAdminName(event.target.value)} aria-label="Administrator name" className="blank mt-1 h-14 w-full px-3 text-lg" />
-            </label>
-          </div>
-        ) : null}
-
-        <label className="mt-4 block">
-          <span className="block text-sm text-ink-2">This device</span>
-          <input value={deviceLabel} onChange={(event) => setDeviceLabel(event.target.value)} aria-label="This device" className="blank mt-1 h-14 w-full px-3 text-lg" />
+        <label className="mt-6 block">
+          <span className="block text-sm text-ink-2">Administrator name</span>
+          <input
+            value={adminName}
+            onChange={(event) => setAdminName(event.target.value)}
+            aria-label="Administrator name"
+            className="blank mt-1 h-14 w-full px-3 text-lg"
+          />
         </label>
 
-        {mode === 'trust' ? (
-          <button
-            type="button"
-            aria-pressed={isClinicDevice}
-            onClick={() => setIsClinicDevice((value) => !value)}
-            className={`mt-3 h-14 w-full rounded-box border px-4 text-left ${isClinicDevice ? 'border-ink bg-paper-2' : 'border-rule bg-sheet'}`}
-          >
-            <span className="block">{isClinicDevice ? 'In the clinic' : 'Outside the clinic'}</span>
-            <span className="block text-xs text-ink-2">{isClinicDevice ? '3-minute idle lock · can set presence' : '10-minute idle lock · no clinic presence'}</span>
-          </button>
+        <p className="mt-6 text-sm text-ink-2">
+          {step === 'pin' ? 'Create a 6-digit PIN' : 'Enter the same PIN again'}
+        </p>
+        <div className="mt-3 flex gap-3" aria-label="PIN entry" role="status">
+          {Array.from({ length: PIN_LENGTH }, (_, index) => (
+            <span key={index} className={`h-4 w-4 rounded-full border border-rule ${index < activePin.length ? 'bg-ink' : 'bg-transparent'}`} />
+          ))}
+        </div>
+        <div className="mt-4 w-64">
+          <Numpad
+            disabled={busy}
+            onDigit={(digit) => {
+              if (step === 'pin') setPin((current) => (current + digit).slice(0, PIN_LENGTH));
+              else setConfirmPin((current) => (current + digit).slice(0, PIN_LENGTH));
+            }}
+            onBackspace={() => {
+              if (step === 'pin') setPin((current) => current.slice(0, -1));
+              else setConfirmPin((current) => current.slice(0, -1));
+            }}
+          />
+        </div>
+
+        {step === 'pin' && pin.length === PIN_LENGTH ? (
+          <Button variant="secondary" className="mt-4 w-full" onClick={() => { setConfirmPin(''); setStep('confirm'); }}>
+            Confirm this PIN
+          </Button>
         ) : null}
 
-        {needsPin ? (
-          <>
-            <p className="mt-6 text-sm text-ink-2">
-              {mode === 'setup'
-                ? confirmingPin
-                  ? 'Enter the same 6-digit PIN again'
-                  : 'Create administrator 6-digit PIN'
-                : 'Existing administrator 6-digit PIN'}
-            </p>
-            <div className="mt-3 flex gap-3" aria-label="PIN entry" role="status">
-              {Array.from({ length: PIN_LENGTH }, (_, index) => (
-                <span key={index} className={`h-4 w-4 rounded-full border border-rule ${index < activePin.length ? 'bg-ink' : 'bg-transparent'}`} />
-              ))}
-            </div>
-            <div className="mt-4 w-64">
-              <Numpad
-                disabled={busy}
-                onDigit={(digit) => {
-                  if (mode === 'setup' && confirmingPin) {
-                    setConfirmPin((current) => (current.length < PIN_LENGTH ? current + digit : current));
-                  } else {
-                    setPin((current) => (current.length < PIN_LENGTH ? current + digit : current));
-                  }
-                }}
-                onBackspace={() => {
-                  if (mode === 'setup' && confirmingPin) {
-                    setConfirmPin((current) => current.slice(0, -1));
-                  } else {
-                    setPin((current) => current.slice(0, -1));
-                  }
-                }}
-              />
-            </div>
-
-            {mode === 'setup' && !confirmingPin && pin.length === PIN_LENGTH ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setConfirmPin('');
-                  setConfirmingPin(true);
-                }}
-                className="mt-4 w-full"
-              >
-                Re-enter PIN to confirm
-              </Button>
-            ) : null}
-
-            {mode === 'setup' && confirmingPin ? (
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  setPin('');
-                  setConfirmPin('');
-                  setConfirmingPin(false);
-                  setError(null);
-                }}
-                className="mt-3 w-full"
-              >
-                Choose a different PIN
-              </Button>
-            ) : null}
-
-            {pinMismatch ? <Notice tone="bad">Those PINs do not match. Choose a different PIN and enter it twice.</Notice> : null}
-          </>
+        {step === 'confirm' ? (
+          <Button variant="ghost" className="mt-3 w-full" disabled={busy} onClick={() => { setPin(''); setConfirmPin(''); setStep('pin'); setError(null); }}>
+            Choose a different PIN
+          </Button>
         ) : null}
 
+        {mismatch ? <Notice tone="bad">The two PINs do not match.</Notice> : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}
 
-        <Button variant="primary" disabled={!ready || busy} onClick={() => void run()} className="mt-6 w-full">
-          {mode === 'setup' ? 'Finish clinic setup' : mode === 'legacy' ? 'Claim email access' : 'Trust this device'}
-        </Button>
-        <Button variant="ghost" disabled={busy} onClick={() => router.replace('/access')} className="mt-3 w-full">
-          Use another email
+        <Button variant="primary" className="mt-6 w-full" disabled={!ready || busy} onClick={() => void finish()}>
+          Create clinic & open control panel
         </Button>
       </div>
     </Centered>
