@@ -1,6 +1,10 @@
 begin;
 select * from no_plan();
 
+-- Production seeds one owner email out-of-band before the first login. Tests do
+-- the same explicitly so a random verified inbox cannot claim an empty clinic.
+insert into app.bootstrap_owner(email) values ('owner@example.com');
+
 -- Device-free staff sessions can exist without a legacy tablet row.
 select ok(
   exists (
@@ -15,7 +19,7 @@ select ok(
 );
 
 -- A normal anonymous Supabase browser cannot claim first-run ownership even if
--- it knows the future administrator email address.
+-- it knows the configured administrator email address.
 select set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000001', true);
 select set_config('request.jwt.claim.email', 'owner@example.com', true);
 select set_config('request.jwt.claims', '{"sub":"b1000000-0000-0000-0000-000000000001","email":"owner@example.com","is_anonymous":true}', true);
@@ -26,7 +30,18 @@ select throws_ok(
   'anonymous auth cannot create the clinic owner'
 );
 
--- A verified email OTP identity can create the single clinic owner once.
+-- Even a verified but different email cannot claim the empty clinic.
+select set_config('request.jwt.claim.email', 'attacker@example.com', true);
+select set_config('request.jwt.claims', '{"sub":"b1000000-0000-0000-0000-000000000009","email":"attacker@example.com","is_anonymous":false}', true);
+select set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000009', true);
+select throws_ok(
+  $$ select app.first_run_owner('Wrong Owner', '481920') $$,
+  'CL005', null,
+  'a different verified email cannot claim the empty clinic'
+);
+
+-- The pre-authorized verified email OTP identity can create the owner once.
+select set_config('request.jwt.claim.email', 'owner@example.com', true);
 select set_config('request.jwt.claims', '{"sub":"b1000000-0000-0000-0000-000000000001","email":"owner@example.com","is_anonymous":false}', true);
 select set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000001', true);
 
@@ -43,6 +58,7 @@ select is(
 );
 select is((select count(*)::int from devices), 0, 'first run creates no trusted device');
 select is((select count(*)::int from staff_sessions), 0, 'first run creates no device session');
+select is((select count(*)::int from app.bootstrap_owner), 0, 'owner bootstrap record is consumed');
 select isnt_empty(
   $$ select app.owner_profile() where app.owner_profile()->>'staff_name' = 'Clinic Owner' $$,
   'verified owner identity resolves the administrator profile'
