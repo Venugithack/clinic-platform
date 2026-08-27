@@ -41,21 +41,36 @@ function swallowPopups(page: Page) {
   page.context().on('page', (opened) => void opened.close().catch(() => {}));
 }
 
-test('low stock drafts one order per supplier, and the counter cannot send them', async ({
+test('low stock has one order per supplier, and the counter cannot send them', async ({
   page,
 }) => {
   await signIn(page, 'seed-device-counter', 'Counter');
 
   await page.goto('/reorder');
-  await page.getByRole('button', { name: /^Draft \d+ orders?$/ }).click();
-  await expect(page.getByText(/draft orders? saved/)).toBeVisible();
+
+  // m3-purchasing runs earlier in the full suite and now deliberately leaves
+  // its drafts open so the duplicate-order guard can be exercised. When this
+  // gate is run alone there are no drafts yet, so create them here. In either
+  // case the product invariant is the same: one open order covers the medicine
+  // and the reorder screen will not create another one.
+  const draftButton = page.getByRole('button', { name: /^Draft \d+ orders?$/ });
+  if ((await draftButton.count()) > 0) {
+    await draftButton.click();
+    await expect(page.getByText(/draft orders? saved/)).toBeVisible();
+  } else {
+    await expect(page.getByText(/already on an open purchase order/i).first()).toBeVisible();
+  }
 
   await page.goto('/orders');
-  const draft = page
+  const kumarDraft = page
     .getByRole('button', { name: /Kumar Distributors.*draft/ })
     .first();
-  await expect(draft).toBeVisible();
-  await draft.click();
+  const reddyDraft = page
+    .getByRole('button', { name: /Reddy Pharma.*draft/ })
+    .first();
+  await expect(kumarDraft).toBeVisible();
+  await expect(reddyDraft).toBeVisible();
+  await kumarDraft.click();
 
   // Rule 4, on the screen: an order is a financial commitment to somebody else.
   await expect(page.getByRole('button', { name: 'Approve & send' })).toBeDisabled();
