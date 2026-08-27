@@ -79,7 +79,9 @@ test('admin configures owner email and no registration code is generated', async
   await input.fill('admin-e2e@example.com');
   await page.getByRole('button', { name: 'Save email' }).click();
   await expect(page.getByTestId('admin-notice')).toContainText('can use admin-e2e@example.com');
-  await expect(page.getByText(/admin-e2e@example.com/)).toBeVisible();
+  await expect(
+    page.getByText(/admin · PIN set .* · admin-e2e@example\.com/),
+  ).toBeVisible();
 
   // Leave the shared seeded database as we found it for parallel specs.
   await page.getByRole('button', { name: 'Email access for Admin' }).click();
