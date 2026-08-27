@@ -241,7 +241,7 @@ export default function QueuePage() {
               {canIntake ? (
                 <button
                   type="button"
-                  aria-label={`Vitals for ${entry.patient_name}`}
+                  aria-label="Vitals"
                   onClick={() =>
                     router.push(`/vitals?appointment=${entry.appointment_id}` as Route)
                   }
