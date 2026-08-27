@@ -58,6 +58,8 @@ begin
     crypt(p_pin, gen_salt('bf', 12)), now()
   ) returning * into v_staff;
 
+  -- One-shot bootstrap: later administrator access resolves only through the
+  -- bound staff row and verified owner identity.
   delete from app.bootstrap_owner;
 
   perform app.write_audit(
