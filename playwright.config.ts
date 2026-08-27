@@ -61,6 +61,20 @@ export default defineConfig({
         // sandbox with a pre-baked browser point at that one instead of
         // downloading a second copy.
         browserName: 'chromium',
+        /**
+         * The condition three register specs failed under, on demand.
+         *
+         * The clinic's tablets are set to IST and so agree with the clinic's own
+         * day; a CI runner is set to UTC and disagrees with it from 00:00 to
+         * 05:30 IST. That gap emptied the H1 register and failed
+         * m8-registers/m11-corrections deterministically, and only at night.
+         *
+         * `E2E_TIMEZONE=America/Los_Angeles pnpm exec playwright test e2e/m8-registers.spec.ts`
+         * reproduces the disagreement at any hour of the day instead of waiting
+         * for one. Unset everywhere else, so the suite runs in the runner's own
+         * timezone the way it always has.
+         */
+        ...(process.env.E2E_TIMEZONE ? { timezoneId: process.env.E2E_TIMEZONE } : {}),
         ...(process.env.PLAYWRIGHT_CHROMIUM_PATH
           ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH } }
           : {}),
