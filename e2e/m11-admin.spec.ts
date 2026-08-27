@@ -15,6 +15,7 @@ async function signIn(page: Page, staffName: string, pin = '481920') {
   await page.goto('/');
   await page.getByRole('button', { name: new RegExp(staffName, 'i') }).click();
   await typePin(page, pin);
+  await expect(page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) })).toBeVisible();
 }
 
 test('admin can add pharmacy staff who can then sign in from another browser', async ({ browser }) => {
@@ -38,6 +39,7 @@ test('admin can add pharmacy staff who can then sign in from another browser', a
   await expect(theirs.getByRole('button', { name: new RegExp(PHARMACIST) })).toBeVisible();
   await theirs.getByRole('button', { name: new RegExp(PHARMACIST) }).click();
   await typePin(theirs, '246810');
+  await theirs.getByRole('button', { name: 'Open the counter' }).click();
   await expect(theirs).toHaveURL(/\/counter$/);
 
   await admin.close();
@@ -62,6 +64,7 @@ test('admin can reset a PIN and the replacement PIN works', async ({ browser }) 
   await theirs.goto('/');
   await theirs.getByRole('button', { name: new RegExp(PHARMACIST) }).click();
   await typePin(theirs, '135790');
+  await theirs.getByRole('button', { name: 'Open the counter' }).click();
   await expect(theirs).toHaveURL(/\/counter$/);
 
   await admin.close();
