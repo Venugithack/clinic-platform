@@ -25,6 +25,25 @@ export interface DrugRow {
   batches: number;
 }
 
+export interface AdminDrugRow {
+  id: string;
+  name: string;
+  generic: string | null;
+  salt_composition: string;
+  strength: string;
+  form: string;
+  base_unit: 'tablet' | 'ml' | 'piece';
+  default_units_per_strip: number | null;
+  default_strips_per_box: number | null;
+  default_mrp_basis: 'unit' | 'strip' | 'box';
+  schedule: 'OTC' | 'H' | 'H1' | 'X';
+  hsn: string | null;
+  default_supplier_id: string | null;
+  reorder_level_base: number | null;
+  reorder_qty_base: number | null;
+  active: boolean;
+}
+
 /** Three characters is enough (TABLET.md §4). */
 export const MIN_SEARCH_LENGTH = 3;
 
@@ -131,6 +150,20 @@ export async function getDrug(id: string): Promise<DrugRow | null> {
 
   if (error) throw new Error(error.message);
   return (data as DrugRow) ?? null;
+}
+
+/** Admin master list includes inactive medicines and configuration fields. */
+export async function adminDrugs(): Promise<AdminDrugRow[]> {
+  const { data, error } = await db()
+    .from('drugs')
+    .select(
+      'id,name,generic,salt_composition,strength,form,base_unit,default_units_per_strip,default_strips_per_box,default_mrp_basis,schedule,hsn,default_supplier_id,reorder_level_base,reorder_qty_base,active',
+    )
+    .order('active', { ascending: false })
+    .order('name');
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AdminDrugRow[];
 }
 
 /** "18 in stock · Mar 2027", or "OUT". Expiries read as printed on the strip. */
