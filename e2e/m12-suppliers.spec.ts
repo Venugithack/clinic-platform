@@ -3,10 +3,10 @@ import { expect, test, type Page } from '@playwright/test';
 const DEVICE = 'seed-device-cabin';
 const PIN = '481920';
 
-async function signIn(page: Page, staffName: string) {
+async function signIn(page: Page, staffName: string, deviceToken = DEVICE) {
   await page.addInitScript(
     ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', DEVICE] as const,
+    ['clinic.deviceToken', deviceToken] as const,
   );
   await page.goto('/');
   await page.getByRole('button', { name: staffName, exact: true }).click();
@@ -25,7 +25,7 @@ test('admin can add a WhatsApp supplier, link a medicine and stop using the supp
   await signIn(page, 'Admin');
   await page.getByRole('button', { name: 'Open the queue' }).click();
   await page.getByRole('button', { name: 'Suppliers' }).click();
-  await expect(page.getByRole('heading', { name: 'Suppliers', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Suppliers', level: 1 })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add supplier' }).click();
   await page.getByLabel('Supplier name').fill(supplier);
@@ -59,15 +59,7 @@ test('non-admin staff cannot manage supplier configuration', async ({ page }) =>
   // Use the counter tablet because a pharmacy staff member is the role most
   // likely to know supplier details but is not allowed to rewrite purchasing
   // configuration in this build.
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', 'seed-device-counter'] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Counter', exact: true }).click();
-  for (const digit of PIN) {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
+  await signIn(page, 'Counter', 'seed-device-counter');
   await page.goto('/suppliers');
   await expect(page.getByText('Only an administrator can manage suppliers.')).toBeVisible();
 });
