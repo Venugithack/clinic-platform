@@ -33,7 +33,27 @@ site_url = "http://127.0.0.1:3000"
 # never be asked for a password on a shared tablet.
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
-enable_signup = false
+# This was `false`, and it made the local stack unusable.
+#
+# GoTrue refuses a disabled signup BEFORE it looks at whether the request is an
+# anonymous one, so `enable_anonymous_sign_ins = true` below could not fire:
+# `signInAnonymously()` came back 422 `signup_disabled`, `lib/db` had no
+# session, and every screen showed "Cannot reach the clinic database" on a stack
+# that was running perfectly. Verified both ways against gotrue as shipped with
+# supabase CLI 2.114.0 — false gives 422, true returns a token whose role is
+# `authenticated` and whose `is_anonymous` is true.
+#
+# This is not a loosening of the clinic's front door. config.toml configures the
+# LOCAL stack only; the hosted project's equivalent lives in its dashboard. What
+# an anonymous session can actually reach is decided by the grants in
+# 20260816270200_tighten_grants.sql, not by this line — three read-only things
+# and an unlock that refuses, per lib/db/index.ts.
+#
+# ON THE HOSTED PROJECT, CHECK BOTH TOGGLES. Auth → Providers → Anonymous
+# sign-ins must be on, and if "Allow new users to sign up" is off there, this is
+# the failure it will produce — on the cabin tablet, on go-live morning, on a
+# database nobody has signed into yet.
+enable_signup = true
 
 # How the tablet obtains the `authenticated` role that every grant targets.
 #
@@ -42,10 +62,6 @@ enable_signup = false
 # carried the role, which worked locally and failed on the first hosted request
 # — the bug stayed invisible precisely because the two environments differed.
 # On the hosted project this is Auth → Providers → Anonymous sign-ins.
-#
-# `enable_signup = false` above still stands: there is no public registration.
-# See lib/db/index.ts for what an anonymous session without a PIN can actually
-# reach, which is three read-only things and an unlock that refuses.
 enable_anonymous_sign_ins = true
 
 [analytics]
