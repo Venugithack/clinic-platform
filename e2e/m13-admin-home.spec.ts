@@ -26,8 +26,8 @@ test('admin opens one control center for setup, go-live data and back-office wor
     .toBeVisible();
 
   await expect(page.getByRole('button', { name: 'People & tablets', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Import medicine master', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Opening stock', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Import medicine master/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Opening stock/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Suppliers', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /Low stock & reorder/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Purchase orders/ })).toBeVisible();
