@@ -131,6 +131,22 @@ jobs:
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      # Before the main suite, because it is the only thing in this repository
+      # that needs an EMPTY database, and it puts the seed back when it is done.
+      #
+      # CI did not run this until now, and the cost of that was not theoretical.
+      # `app.first_run` makes the first staff member an ADMIN, and the lock
+      # screen's landing branch tested for 'doctor' — so the doctor who had just
+      # created the clinic was shown "Pharmacy counter" and one button into
+      # /counter. Nothing else in the suite can see that: every other spec starts
+      # from seed.sql, which already has staff, devices and roles in it.
+      #
+      # Standing the system up from nothing happens exactly once, in a clinic,
+      # with somebody waiting. That is the worst possible moment to discover it
+      # was never tried.
+      - name: First-run drill — the clinic, from nothing
+        run: pnpm test:first-run
+
       - name: E2E
         run: pnpm test:e2e
 

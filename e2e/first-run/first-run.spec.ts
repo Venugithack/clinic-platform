@@ -32,6 +32,44 @@ async function typePin(page: import('@playwright/test').Page, pin: string) {
   }
 }
 
+/**
+ * First, because it is the first second.
+ *
+ * Serial mode means this runs before the clinic below exists, which is the only
+ * state it can be asked in.
+ *
+ * The test under it already said "Not 'this tablet is not registered'" in a
+ * comment, and could not enforce it: `toBeVisible()` auto-waits, so it passed
+ * happily while the screen showed the accusation first and corrected itself a
+ * round trip later. On a laptop next to the database that flash is invisible.
+ * On a tablet in Kadapa talking to Mumbai it is the doctor's first second with
+ * the app, and it told him to go and find an administrator who does not exist.
+ *
+ * Delaying the one request the decision waits on turns "too fast to see" into
+ * something a test can stand still and look at.
+ */
+test('while it is still asking, it waits rather than accusing the tablet', async ({
+  page,
+}) => {
+  await page.route('**/rest/v1/clinic_setup_state*', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    await route.continue();
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByRole('heading', { name: 'Just a moment' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'This tablet is not registered' }),
+  ).toHaveCount(0);
+
+  // And when the answer lands, the screen that has something to offer.
+  await page.unroute('**/rest/v1/clinic_setup_state*');
+  await expect(page.getByRole('heading', { name: 'Set this clinic up' })).toBeVisible({
+    timeout: 15_000,
+  });
+});
+
 test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
   page,
 }) => {
