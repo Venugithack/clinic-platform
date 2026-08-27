@@ -36,6 +36,18 @@ export interface Encounter {
   created_at: string;
 }
 
+/**
+ * The encounter for this appointment, starting it if nobody has.
+ *
+ * This used to read-then-insert, which is a race with no constraint behind it:
+ * two overlapping calls both saw nothing and both inserted, and React
+ * re-invoking an effect was enough to do it. `encounters_one_per_appointment`
+ * (20260827090200) is now the thing that decides, so the second insert loses in
+ * the database rather than in a hope about timing.
+ *
+ * The read is kept as the fast path — it is the common case by a long way, and
+ * it costs one round trip either way.
+ */
 export async function startEncounter(
   patientId: string,
   doctorId: string,
@@ -44,14 +56,32 @@ export async function startEncounter(
   const existing = await encounterForAppointment(appointmentId);
   if (existing) return existing;
 
+  /**
+   * `ignoreDuplicates` is ON CONFLICT DO NOTHING, not DO UPDATE, and the
+   * difference matters: a losing call must not overwrite `doctor_id` or
+   * `patient_id` on an encounter the winner has already started and may already
+   * have written findings into.
+   */
   const { data, error } = await db()
     .from('encounters')
-    .insert({ patient_id: patientId, doctor_id: doctorId, appointment_id: appointmentId })
+    .upsert(
+      { patient_id: patientId, doctor_id: doctorId, appointment_id: appointmentId },
+      { onConflict: 'appointment_id', ignoreDuplicates: true },
+    )
     .select('*')
-    .single();
+    .maybeSingle();
 
   if (error) throw new Error(error.message);
-  return data as Encounter;
+  if (data) return data as Encounter;
+
+  // DO NOTHING returns no row, which is how this call learns it lost the race.
+  // The winner's encounter is the encounter; there is exactly one now.
+  const won = await encounterForAppointment(appointmentId);
+  if (won) return won;
+
+  // Neither inserted nor found. Something else refused the write — a policy, a
+  // dropped connection — and continuing would open a consult on nothing.
+  throw new Error('could not start the consultation for this appointment');
 }
 
 /**
@@ -63,21 +93,17 @@ export async function startEncounter(
  * appointment had two rows, that consult could never be opened again, by
  * anybody, and the doctor was shown a database error instead of a patient.
  *
- * Two encounters is not hypothetical. `startEncounter` reads-then-inserts with
- * no unique constraint behind it (encounters.appointment_id is a plain
- * reference), so two overlapping calls both see nothing and both insert. React
- * re-invoking an effect is enough to do it.
+ * Two encounters WAS not hypothetical. `startEncounter` read-then-inserted with
+ * no unique constraint behind it, so two overlapping calls both saw nothing and
+ * both inserted; React re-invoking an effect was enough to do it.
  *
- * Ordering and taking the first makes the screen survive the duplicate instead
- * of being bricked by it. `queue_today` takes the earliest the same way, since
- * 20260824090100 — the two have to agree, or the board and this screen can hold
- * different encounters for one appointment. `id` breaks the tie because the two
- * rows this exists to survive were 0.7 ms apart and a timestamp can tie.
- *
- * It is deliberately NOT the real fix: the real fix is `unique (appointment_id)`
- * plus an upsert, which is a forward-only migration on clinical data and wants a
- * decision, not a drive-by. Until then this keeps a doctor in front of a patient
- * rather than in front of an error.
+ * `encounters_one_per_appointment` (20260827090200) closed that, and the
+ * migration detached the duplicates that already existed. So the ordering below
+ * now has at most one row to order. It stays anyway, for two reasons: it is what
+ * makes the `limit(1)` a statement of intent rather than a guess, and it matches
+ * `queue_today`'s lateral exactly — the board and this screen have to agree
+ * about which encounter an appointment has, and the cheapest way to guarantee
+ * that is for both to ask the same question.
  */
 export async function encounterForAppointment(
   appointmentId: string,

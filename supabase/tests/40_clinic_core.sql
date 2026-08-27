@@ -133,22 +133,57 @@ select is(
 );
 
 -- ---------------------------------------------------------------------------
--- One appointment is one row, whatever encounters holds (20260824090100).
+-- One appointment is one encounter, and the board survives one that is not.
 --
--- `startEncounter` reads-then-inserts with no unique constraint behind it, so
--- an appointment can carry two encounters — reproduced live at 0.7 ms apart,
--- from React strict mode's double effect. Under the old plain join that became
--- two rows on the board, and because `ahead` is a window function over these
--- rows it also moved a real number on a real patient's screen.
+-- These are two separate claims and this file makes both, because they were
+-- made by two different migrations for two different reasons.
 --
--- Same created_at on both, deliberately: 0.7 ms apart is close enough to a tie
--- that the view cannot depend on the timestamp alone to separate them.
+-- `startEncounter` used to read-then-insert with no unique constraint behind
+-- it, so an appointment could carry two encounters — reproduced live at 0.7 ms
+-- apart, from React strict mode's double effect. Under the old plain join that
+-- became two rows on the board, and because `ahead` is a window function over
+-- those rows it also moved a real number on a real patient's screen.
+--
+-- 20260824090100 gave `queue_today` a lateral so the duplicate could not reach
+-- a screen. 20260827090200 added `encounters_one_per_appointment` so it cannot
+-- be written in the first place.
 -- ---------------------------------------------------------------------------
 insert into encounters (id, patient_id, doctor_id, appointment_id, created_at) values
-  ('e0000000-0000-0000-0000-0000000000d2', '60000000-0000-0000-0000-00000000001c',
-   '50000000-0000-0000-0000-00000000001a',
-   (select id from t_tokens where token_no = 3), '2026-08-24 09:00:00+05:30'),
   ('e0000000-0000-0000-0000-0000000000d1', '60000000-0000-0000-0000-00000000001c',
+   '50000000-0000-0000-0000-00000000001a',
+   (select id from t_tokens where token_no = 3), '2026-08-24 09:00:00+05:30');
+
+select throws_ok(
+  $$ insert into encounters (patient_id, doctor_id, appointment_id)
+     select '60000000-0000-0000-0000-00000000001c',
+            '50000000-0000-0000-0000-00000000001a',
+            id
+     from t_tokens where token_no = 3 $$,
+  '23505',
+  null,
+  'a second encounter on one appointment is refused by the database, not by a hope about timing'
+);
+
+-- ---------------------------------------------------------------------------
+-- And now the view's half, with the constraint out of the way.
+--
+-- Dropped INSIDE this transaction, which rolls back — so the constraint is
+-- intact the moment this file finishes, and every other test still meets it.
+--
+-- Worth keeping rather than deleting along with the duplicates it defends
+-- against. The constraint stops new ones; it does not stop an old one arriving
+-- from somewhere else, and the most likely somewhere else is a restore of an
+-- archive taken before 20260827090200 — which is exactly the moment nobody
+-- wants the doctor's board doubling tokens.
+--
+-- `...d1` is already in, from above. This adds `...d2` beside it with the SAME
+-- created_at, deliberately: 0.7 ms apart is close enough to a tie that the view
+-- cannot depend on the timestamp alone to separate them.
+-- ---------------------------------------------------------------------------
+alter table encounters drop constraint encounters_one_per_appointment;
+
+insert into encounters (id, patient_id, doctor_id, appointment_id, created_at) values
+  ('e0000000-0000-0000-0000-0000000000d2', '60000000-0000-0000-0000-00000000001c',
    '50000000-0000-0000-0000-00000000001a',
    (select id from t_tokens where token_no = 3), '2026-08-24 09:00:00+05:30');
 
