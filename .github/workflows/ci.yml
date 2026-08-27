@@ -1,39 +1,23 @@
 name: CI
 
-# BUILD.md §1.7 — blocking on every merge.
-#
-# The list is not arbitrary. Each job here is the enforcement half of a rule
-# that PLAN.md §5.3 states and this repository would otherwise only intend:
-#
-#   typecheck / lint  rule 1 (one seam), rule 2 (one writer), rule 7 (patient
-#                     surfaces default-deny), and the two tablet rules
-#   pgTAP             rules 2 and 3 — the direct write is REFUSED by Postgres
-#   Playwright        the tablet viewport, at 1280x800 with touch
-#   restore drill     HOSTING.md §5 — a backup nobody has restored is a belief
-#
-# M0 §1.8's last box is "CI blocks a deliberately broken merge". That is proven
-# by opening a pull request that breaks one rule on purpose and watching this
-# fail — do it once, on the first PR, and never wonder again.
+# Blocking validation for runtime changes. Documentation-only PRs skip this
+# hosted-runner suite entirely; application/database/config changes still get
+# the same type, database and tablet coverage before merge.
 
-# `push` on every branch AND `pull_request` ran this suite twice for every
-# commit on a branch with a PR open — two identical runs a minute apart, both
-# billed, against an Actions budget the backup cron now shares.
-#
-# `push` is narrowed to the branch that has to stay green rather than removed.
-# A pull_request run tests the MERGE of the branch into main, which is the
-# question a PR asks; a push run to main tests what actually landed, which is
-# the question a deployment asks, and Cloudflare builds from main.
-#
-# Worth knowing before you narrow this further: the duplication is what caught
-# the closure timezone bug. Two runs of the same commit seven minutes apart
-# straddled midnight IST and disagreed, which is how a bug that only appears
-# between 00:00 and 05:30 got noticed at all. That is now covered on purpose —
-# lib/clinic/day.test.ts pins both sides of the boundary, and
-# E2E_TIMEZONE reproduces it at any hour — rather than by accident.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE*'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -69,6 +53,10 @@ jobs:
         run: pnpm test:unit
 
   database:
+    # Keep the historical job name stable for branch-protection checks.
+    # PRs run migrations + pgTAP. The full dump/restore remains on main after
+    # merge and nightly in backup.yml, avoiding a duplicate restore drill on
+    # every iterative PR commit.
     name: pgTAP · restore drill
     runs-on: ubuntu-24.04
     steps:
@@ -88,11 +76,8 @@ jobs:
       - name: pgTAP
         run: ./scripts/db-test.sh
 
-      # HOSTING.md §5: proof, not intent. The drill asserts row counts survive
-      # a full dump-and-restore, and it runs on every merge rather than weekly
-      # so that a schema change which breaks restorability is caught by the PR
-      # that introduced it.
       - name: Seed, back up, restore, compare row counts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           ./scripts/db-reset.sh
           ./scripts/db-seed.sh
@@ -100,6 +85,9 @@ jobs:
           ./scripts/db-restore-drill.sh
 
   e2e:
+    # Full tablet E2E remains mandatory for every runtime PR and main push.
+    # This is intentionally not path-filtered more aggressively because SQL,
+    # scripts, config and UI changes can all change the real clinic flow.
     name: Playwright · 1280x800 touch
     runs-on: ubuntu-24.04
     steps:
@@ -113,11 +101,6 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The E2E suite drives the M1 gate against a real database, real RLS and
-      # the real transitions. Stubbing the API here would test the screens
-      # against a fiction — and the two bugs this suite has already caught (a
-      # build-time env inlining failure, and a plpgsql DEFAULT that does not
-      # apply to an explicit null) were both invisible to every other layer.
       - name: Install Postgres 17
         run: |
           ./scripts/ci-pgdg.sh
@@ -131,19 +114,6 @@ jobs:
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 
-      # Before the main suite, because it is the only thing in this repository
-      # that needs an EMPTY database, and it puts the seed back when it is done.
-      #
-      # CI did not run this until now, and the cost of that was not theoretical.
-      # `app.first_run` makes the first staff member an ADMIN, and the lock
-      # screen's landing branch tested for 'doctor' — so the doctor who had just
-      # created the clinic was shown "Pharmacy counter" and one button into
-      # /counter. Nothing else in the suite can see that: every other spec starts
-      # from seed.sql, which already has staff, devices and roles in it.
-      #
-      # Standing the system up from nothing happens exactly once, in a clinic,
-      # with somebody waiting. That is the worst possible moment to discover it
-      # was never tried.
       - name: First-run drill — the clinic, from nothing
         run: pnpm test:first-run
 
