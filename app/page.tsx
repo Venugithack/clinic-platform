@@ -98,12 +98,12 @@ export default function LockScreen() {
         <div className="w-full max-w-md text-center">
           <p className="eyebrow">{first ? 'First setup' : 'New device'}</p>
           <h1 className="mt-1 text-2xl font-semibold">
-            {first ? 'Set up clinic with email' : 'Trust this device'}
+            {first ? 'Set up Jayamurugan Clinic' : 'Trust this device'}
           </h1>
           <p className="mt-3 leading-6 text-ink-2">
             {first
-              ? 'The clinic owner signs in by email once, creates the administrator, and trusts this device.'
-              : 'An authorized administrator or doctor signs in by email once. After that, staff use their usual 6-digit PIN.'}
+              ? 'Sign in with the clinic owner email once, create the administrator, and choose a PIN.'
+              : 'Sign in with an authorized administrator or doctor email once. After that, staff use their usual 6-digit PIN.'}
           </p>
           {virgin === undefined && !asking ? (
             <Notice tone="bad">Cannot confirm the clinic setup state. Check the connection and try again.</Notice>
@@ -114,10 +114,10 @@ export default function LockScreen() {
             onClick={() => router.push('/access')}
             className="mt-7 w-full"
           >
-            {first ? 'Set up with email' : 'Continue with email'}
+            {first ? 'Start setup' : 'Continue with email'}
           </Button>
           <p className="mt-4 text-xs leading-5 text-ink-2">
-            Email is only for trusting or recovering a device. It is not the everyday staff sign-in.
+            Email is the recovery key. Daily staff sign-in stays name + PIN.
           </p>
         </div>
       </Centered>
@@ -211,6 +211,17 @@ export default function LockScreen() {
       >
         Not me
       </Button>
+      <Button
+        variant="ghost"
+        size="lg"
+        onClick={() => router.push('/access')}
+        className="mt-2 px-6"
+      >
+        Forgot PIN? Use owner email
+      </Button>
+      <p className="mt-3 max-w-sm text-center text-xs leading-5 text-ink-2">
+        Owner email can recover access to this device without database changes.
+      </p>
     </Centered>
   );
 }
