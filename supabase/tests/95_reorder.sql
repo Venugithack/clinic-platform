@@ -221,16 +221,18 @@ select is(
 );
 
 -- Updated in M5, which added the send. The claim being guarded was never "no
--- function may touch a purchase order" — it is that the function turning
--- SUGGESTIONS into orders has no path to sending one. Sending is a separate
--- transition and it demands the doctor; app.send_purchase_order's own refusal
--- is asserted in A1_purchasing.sql.
+-- function may mention a sent order" — the duplicate-order guard now has to
+-- inspect sent/acknowledged/partial orders. What matters is that drafting does
+-- not itself transition an order to sent or invoke the send transition.
 select is(
   (select count(*)::int from pg_proc p
    join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'app'
      and p.proname = 'draft_purchase_orders'
-     and p.prosrc like '%''sent''%'),
+     and (
+       p.prosrc ~* 'status[[:space:]]*=[[:space:]]*''sent'''
+       or p.prosrc ~* 'send_purchase_order[[:space:]]*\('
+     )),
   0,
   'nothing in the drafting path can send an order — that is a second, deliberate act by a person (rule 4)'
 );
