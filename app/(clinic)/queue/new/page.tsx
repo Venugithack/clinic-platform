@@ -29,6 +29,7 @@ export default function RegisterWalkInPage() {
   const [phone, setPhone] = useState('');
   const [age, setAge] = useState('');
   const [sex, setSex] = useState<'M' | 'F' | 'O' | ''>('');
+  const [reason, setReason] = useState('');
   const [allergies, setAllergies] = useState('');
   const [address, setAddress] = useState('');
   const [consent, setConsent] = useState(false);
@@ -67,7 +68,11 @@ export default function RegisterWalkInPage() {
           allergies: allergies || undefined,
         }));
 
-      await bookAppointment({ patientId: patient.id, source: 'walkin' });
+      await bookAppointment({
+        patientId: patient.id,
+        source: 'walkin',
+        reason: reason.trim() || undefined,
+      });
       router.push('/queue');
     } catch (cause) {
       setError((cause as Error).message);
@@ -109,6 +114,13 @@ export default function RegisterWalkInPage() {
                   : 'Start with the phone number to find returning patients.'}
             </p>
           </div>
+
+          {reason.trim() ? (
+            <div>
+              <p className="eyebrow">Today’s reason</p>
+              <p className="mt-1 text-sm leading-6">{reason.trim()}</p>
+            </div>
+          ) : null}
 
           {matches.length > 0 && !existing ? (
             <div>
@@ -202,7 +214,7 @@ export default function RegisterWalkInPage() {
 
         {existing ? (
           <Notice tone="good">
-            {existing.name} is selected. Tap <strong>Give today’s token</strong>; their existing details stay unchanged.
+            {existing.name} is selected. Their permanent details stay unchanged.
           </Notice>
         ) : (
           <section aria-labelledby="new-patient-heading" className="border-t border-rule pt-5">
@@ -303,6 +315,27 @@ export default function RegisterWalkInPage() {
             </div>
           </section>
         )}
+
+        <section aria-labelledby="visit-heading" className="border-t border-rule pt-5">
+          <div className="mb-3">
+            <h2 id="visit-heading" className="text-lg font-medium">
+              {existing ? '2' : '3'} · Today’s visit
+            </h2>
+            <p className="mt-1 text-sm text-ink-2">
+              A short reason helps the doctor scan the queue before opening the consultation.
+            </p>
+          </div>
+          <Field label="Reason for visit">
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value.slice(0, 120))}
+              onFocus={() => setActive(null)}
+              aria-label="Reason for visit"
+              placeholder="e.g. fever since yesterday"
+              className="blank h-14 w-full px-4 text-lg"
+            />
+          </Field>
+        </section>
       </div>
     </ThreePane>
   );
