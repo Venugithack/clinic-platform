@@ -37,7 +37,7 @@ test('admin opens one control center for setup, go-live data and back-office wor
   await expect(page.getByRole('button', { name: /Printing/ })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'People & tablets', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'People and tablets', level: 1 }))
+  await expect(page.getByRole('heading', { name: 'People and devices', level: 1 }))
     .toBeVisible();
 });
 

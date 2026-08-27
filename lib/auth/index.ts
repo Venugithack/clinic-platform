@@ -3,16 +3,12 @@
  *
  * Two separable things, deliberately:
  *
- *   the DEVICE holds the session  — a long-lived Supabase session, registered
- *                                   once by the admin, revocable from one screen
+ *   the DEVICE holds the session  — trusted once by an admin/doctor email,
+ *                                   revocable from one screen
  *   the PIN holds the identity    — six digits, per staff member, idle-locked
  *
- * Attribution stays exact — which the Schedule H1 register legally requires —
- * and nobody types a password forty times a day on a shared tablet.
- *
- * The whole Supabase surface used here is `rpc` and `auth`, both reached
- * through lib/db. Swapping Supabase Auth for something else is this file plus
- * lib/db, and no screen changes (HOSTING.md §7's exit ramp).
+ * Email is used only to establish device ownership or remote owner access.
+ * Staff do not type email/password during the clinic day.
  */
 import {
   appSchema,
@@ -24,20 +20,10 @@ import {
 } from '@/lib/db';
 
 export type StaffSession = StoredSession;
-
-/**
- * Re-exported because first run is the one path that receives a session
- * without calling `unlock` — `app.first_run` mints the device AND the session
- * in one transaction, and the lock screen writes both.
- */
 export { writeStoredSession };
 
 const DEVICE_TOKEN_KEY = 'clinic.deviceToken';
 
-/**
- * The device token identifies the tablet, not the person. It is written once at
- * registration and never rotated by the app.
- */
 export function deviceToken(): string | null {
   if (typeof window === 'undefined') return null;
   return window.localStorage.getItem(DEVICE_TOKEN_KEY);
@@ -47,17 +33,10 @@ export function registerDeviceLocally(token: string): void {
   window.localStorage.setItem(DEVICE_TOKEN_KEY, token);
 }
 
-/**
- * Unlock with a PIN.
- *
- * Failure is deliberately undifferentiated: a wrong PIN, an unknown staff
- * member and a revoked device all surface the same way, because a lock screen
- * that tells you which half you got right is a lock screen that helps.
- */
 export async function unlock(staffId: string, pin: string): Promise<StaffSession> {
   const device = deviceToken();
   if (!device) {
-    throw new Error('This tablet is not registered. Ask the administrator to register it.');
+    throw new Error('This tablet is not trusted yet. Sign in with an administrator email.');
   }
 
   const { data, error } = await appSchema().rpc('unlock', {
@@ -110,4 +89,48 @@ export async function lock(): Promise<void> {
     await appSchema().rpc('lock', { p_token: session.token });
   }
   clearStoredSession();
+}
+
+// ---------------------------------------------------------------------------
+// Owner email access.
+//
+// These are kept here rather than in a screen so @supabase remains behind the
+// lib/db seam. A normal browser already has an anonymous Supabase session; only
+// a magic-link session with a real email is accepted by the DB trust functions.
+// ---------------------------------------------------------------------------
+export interface EmailIdentity {
+  id: string;
+  email: string;
+}
+
+export async function sendEmailAccessLink(email: string): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) throw new Error('Enter your email address.');
+
+  const redirectTo =
+    typeof window === 'undefined' ? undefined : `${window.location.origin}/enroll`;
+  const { error } = await db().auth.signInWithOtp({
+    email: normalized,
+    options: {
+      // Creating an Auth user is harmless by itself. The database separately
+      // requires the email to be pre-authorized on an admin/doctor staff row,
+      // except for the guarded first-clinic/legacy-claim paths.
+      shouldCreateUser: true,
+      emailRedirectTo: redirectTo,
+    },
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function emailIdentity(): Promise<EmailIdentity | null> {
+  const { data, error } = await db().auth.getUser();
+  if (error || !data.user || data.user.is_anonymous || !data.user.email) return null;
+  return { id: data.user.id, email: data.user.email.toLowerCase() };
+}
+
+export async function signOutEmailIdentity(): Promise<void> {
+  // Device/PIN trust is independent of the email auth session. Signing the
+  // owner email out does not untrust the tablet they just enrolled.
+  await db().auth.signOut();
 }
