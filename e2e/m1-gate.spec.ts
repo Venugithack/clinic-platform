@@ -22,7 +22,8 @@ async function signIn(page: import('@playwright/test').Page) {
 
 async function register(page: import('@playwright/test').Page, patient: string) {
   await page.getByRole('button', { name: 'Register walk-in' }).click();
-  await page.getByLabel('Name').fill(patient);
+  await expect(page.getByRole('heading', { name: 'Register walk-in', exact: true })).toBeVisible();
+  await page.getByLabel('Name', { exact: true }).fill(patient);
   await page.getByLabel('Consent').click();
   await page.getByRole('button', { name: /Register & get token/ }).click();
   await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
@@ -33,7 +34,8 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
 
   const patient = `E2E Patient ${Date.now()}`;
   await page.getByRole('button', { name: 'Register walk-in' }).click();
-  await page.getByLabel('Name').fill(patient);
+  await expect(page.getByRole('heading', { name: 'Register walk-in', exact: true })).toBeVisible();
+  await page.getByLabel('Name', { exact: true }).fill(patient);
 
   await page.getByLabel('Age', { exact: true }).click();
   for (const digit of '42') {
@@ -68,9 +70,12 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   await page.getByRole('button', { name: new RegExp(patient) }).click();
   await expect(page.getByRole('heading', { name: 'Consult', exact: true })).toBeVisible();
   await expect(page.getByText('Allergies: Penicillin')).toBeVisible();
-  await expect(page.getByText(/BP 120\/80/)).toBeVisible();
-  await expect(page.getByText(/Pulse 78/)).toBeVisible();
-  await expect(page.getByText(/SpO₂ 98%/)).toBeVisible();
+  await expect(page.getByText('BP', { exact: true })).toBeVisible();
+  await expect(page.getByText('120/80', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pulse', { exact: true })).toBeVisible();
+  await expect(page.getByText('78', { exact: true })).toBeVisible();
+  await expect(page.getByText('SpO₂', { exact: true })).toBeVisible();
+  await expect(page.getByText('98%', { exact: true })).toBeVisible();
 
   await page.getByLabel('Diagnosis').fill('Acute pharyngitis');
   await page.getByRole('button', { name: 'Add diagnosis' }).click();
@@ -133,9 +138,6 @@ test('finish visit saves diagnosis and advice before returning to the queue', as
   await page.getByRole('button', { name: 'Finish visit', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
 
-  // Reopening a completed row must show what was entered before Finish. This is
-  // the regression for the old UI, where Finish changed queue state but never
-  // persisted the encounter edits first.
   await page.getByRole('button', { name: new RegExp(patient) }).click();
   await expect(page.getByRole('button', { name: /Viral fever/ })).toBeVisible();
   await expect(page.getByLabel('Advice')).toHaveValue('Rest and fluids');
