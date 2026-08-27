@@ -144,8 +144,44 @@ gunzip -c "${BACKUP_FILE}" \
 
 after="$(counts_of "${SCRATCH_DB}")"
 
+# Rule 3, asserted on real rows once a night.
+#
+# `stock_cache_drift` (20260816090500_pharmacy_inventory.sql) compares
+# `stock_batches.qty_base_on_hand` against the sum of the ledger movements
+# behind it, and its own comment says it "must always be empty ... the nightly
+# job alerts if it is not". There was no nightly job. The view had been read by
+# nothing since the day it was written, which makes an invariant a decoration.
+#
+# It is asked HERE, of the restored copy, rather than of production directly.
+# The rows are the same rows, so the answer is the same answer, and this job
+# already has a Postgres up with the whole clinic in it - the check costs no
+# Actions minutes on a budget the hourly schedule is already spending.
+#
+# It also gives the drill something to say about DATA. Until there is clinic
+# data every count here is zero, so all this job proves is that the schema round
+# trips; a cache that disagrees with its own ledger is the first fact about the
+# ROWS that a restore can be asked for.
+drift="$(psql -tA -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${SCRATCH_DB}" \
+  -c "select count(*) from stock_cache_drift")"
+
+if [ "${drift}" = "0" ]; then
+  echo "stock cache drift: none"
+else
+  echo "STOCK CACHE DRIFT - ${drift} batch(es) disagree with the ledger" >&2
+  psql -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${SCRATCH_DB}" >&2 \
+    -c "select batch_no, cached, ledger, drift from stock_cache_drift order by abs(drift) desc limit 20"
+  drift_failed=1
+fi
+
 psql -q -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d postgres \
   -c "drop database if exists ${SCRATCH_DB} with (force)"
+
+# Raised after the scratch database has been dropped, so a drift never leaves a
+# restored copy of the clinic sitting on the runner.
+if [ "${drift_failed:-0}" -eq 1 ]; then
+  echo "RESTORE DRILL FAILED - the stock cache does not match the ledger" >&2
+  exit 1
+fi
 
 if [ "${COMPARE}" -eq 1 ]; then
   if [ "${before}" != "${after}" ]; then
