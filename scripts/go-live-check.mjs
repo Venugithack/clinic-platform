@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { URL } from 'node:url';
+
 /**
  * Production app-environment preflight.
  *
