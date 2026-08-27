@@ -25,19 +25,19 @@ test('admin opens one control center for clinic setup and back-office work', asy
   await expect(page.getByRole('heading', { name: 'Clinic control center', level: 1 }))
     .toBeVisible();
 
-  await expect(page.getByRole('button', { name: /People & tablets/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Suppliers/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'People & tablets', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Suppliers', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /Low stock & reorder/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Purchase orders/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Receiving/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Clinic settings/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clinic settings', exact: true })).toBeVisible();
 
   // Printing is deliberately visible but not pretending to be configured
   // before the client's actual hardware has been tested.
   await expect(page.getByRole('button', { name: /Printing/ })).toBeDisabled();
   await expect(page.getByText('Hardware test pending')).toBeVisible();
 
-  await page.getByRole('button', { name: /People & tablets/ }).click();
+  await page.getByRole('button', { name: 'People & tablets', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'People and tablets', level: 1 }))
     .toBeVisible();
 });
