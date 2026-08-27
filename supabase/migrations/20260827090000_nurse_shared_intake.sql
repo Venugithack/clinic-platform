@@ -4,6 +4,17 @@
 
 alter type staff_role add value if not exists 'nurse' before 'counter';
 
+-- Vitals used to belong only to the patient. That loses which visit/token the
+-- measurement was taken for, so the doctor cannot reliably distinguish today's
+-- intake from an older reading. Existing rows stay valid with a null visit;
+-- every new intake row written by this feature carries its appointment.
+alter table vitals
+  add column if not exists appointment_id uuid references appointments (id);
+
+create index if not exists vitals_appointment_idx
+  on vitals (appointment_id, recorded_at desc)
+  where appointment_id is not null;
+
 -- The original broad policy let any signed-in staff member insert a vitals row
 -- naming any staff member as `recorded_by`. Keep reads shared, but make writes
 -- attributable to the clinical staff member actually holding the tablet
