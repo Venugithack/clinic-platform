@@ -17,15 +17,16 @@ select * from no_plan();
 -- 1. What `authenticated` may write to DIRECTLY.
 --
 -- Everything else in this database moves through a transition, which is
--- PLAN.md §5.3 rule 2. The seven below are the deliberate exceptions and each
--- one earns it:
+-- PLAN.md §5.3 rule 2. The four below are the deliberate exceptions:
 --
---   patients, encounters,                   clinical and demographic records.
---   prescriptions, vitals                   Ordinary CRUD under RLS; they move
---                                           neither stock nor money, and the
---                                           ones that DO — signing an Rx — are
---                                           still transitions.
---   drugs, suppliers                        master data. Same argument.
+--   patients, encounters, prescriptions, vitals
+--       Clinical and demographic records. Ordinary CRUD is narrowed by RLS;
+--       actions that move workflow state, such as signing an Rx, still go
+--       through transitions.
+--
+-- `drugs` and `suppliers` used to be direct-write master data. Once the clinic
+-- gained real administration screens, that became a bypass around the
+-- admin-only supplier/medicine transitions, so both are transition-owned now.
 --
 -- `devices` was on this list until M11c. Registration was a plain INSERT and
 -- the admin-only policy made that defensible — but a device token invented by
@@ -34,16 +35,14 @@ select * from no_plan();
 -- `revoked_at`. Both are arguments for a transition, so devices went behind
 -- `app.register_device` and `app.revoke_device` and this list got shorter.
 --
--- `appointments` is NOT on the list, and that surprised the author of this file
--- when the review was first run. Booking one allocates a token under an
+-- `appointments` is NOT on the list. Booking one allocates a token under an
 -- advisory lock, so it was written as a transition in M1 and the table was
--- never granted at all. The review's job is to find that the schema is stricter
--- than somebody remembered, as well as looser.
+-- never granted at all.
 --
--- Note what is NOT here: stock_batches, stock_movements, dispenses, bills,
--- cash_movements, purchase_orders, presence, wa_messages, replay_log. Every
--- one of those is transition-owned, and that is what makes the audit log
--- complete rather than well-intentioned.
+-- Note what is NOT here: drugs, suppliers, stock_batches, stock_movements,
+-- dispenses, bills, cash_movements, purchase_orders, presence, wa_messages,
+-- replay_log. Every one of those is transition-owned, and that is what makes
+-- the audit log complete rather than well-intentioned.
 -- ---------------------------------------------------------------------------
 select set_eq(
   $$ select distinct table_name::text
@@ -51,9 +50,8 @@ select set_eq(
      where grantee = 'authenticated'
        and table_schema = 'public'
        and privilege_type in ('INSERT', 'UPDATE', 'DELETE') $$,
-  $$ values ('patients'), ('encounters'), ('prescriptions'),
-            ('vitals'), ('drugs'), ('suppliers') $$,
-  'exactly six tables are directly writable, and every other state change in the build goes through a transition (rule 2)'
+  $$ values ('patients'), ('encounters'), ('prescriptions'), ('vitals') $$,
+  'exactly four tables are directly writable, and every other state change in the build goes through a transition (rule 2)'
 );
 
 select is(

@@ -18,6 +18,7 @@ const TONES = {
   bad: 'border-stop bg-stop-wash text-stop',
   attn: 'border-attn bg-attn-wash text-attn',
   plain: 'border-rule bg-paper text-ink-2',
+  neutral: 'border-rule bg-paper text-ink-2',
 } as const;
 
 export function Notice({

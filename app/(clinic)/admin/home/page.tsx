@@ -38,9 +38,9 @@ const SECTIONS: Array<{ title: string; items: AdminDestination[] }> = [
     title: 'Medicines & stock',
     items: [
       {
-        title: 'Medicines & import',
-        description: 'Maintain the medicine master and load catalogue data.',
-        href: '/import',
+        title: 'Medicines',
+        description: 'Medicine master, pack defaults, schedule and low-stock/reorder configuration.',
+        href: '/medicines',
       },
       {
         title: 'Inventory',
@@ -124,6 +124,7 @@ export default function AdminHomePage() {
             Back to queue
           </RailButton>
           <RailButton onClick={() => router.push('/admin')}>People & tablets</RailButton>
+          <RailButton onClick={() => router.push('/medicines')}>Medicines</RailButton>
           <RailButton onClick={() => router.push('/suppliers')}>Suppliers</RailButton>
           <RailButton onClick={() => router.push('/reorder')}>Low stock</RailButton>
           <div className="flex-1" />
