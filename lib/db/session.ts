@@ -14,7 +14,7 @@ export interface StoredSession {
   token: string;
   staffId: string;
   staffName: string;
-  role: 'doctor' | 'counter' | 'admin';
+  role: 'doctor' | 'nurse' | 'counter' | 'admin';
 }
 
 export function readStoredSession(): StoredSession | null {
