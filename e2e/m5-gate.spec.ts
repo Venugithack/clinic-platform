@@ -58,7 +58,7 @@ test('low stock has one order per supplier, and the counter cannot send them', a
     await draftButton.click();
     await expect(page.getByText(/draft orders? saved/)).toBeVisible();
   } else {
-    await expect(page.getByText(/already on an open purchase order/i).first()).toBeVisible();
+    await expect(page.getByText(/Already on order:/).first()).toBeVisible();
   }
 
   await page.goto('/orders');
