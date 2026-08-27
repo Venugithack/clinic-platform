@@ -1,29 +1,32 @@
 import { expect, test } from '@playwright/test';
 
-test.describe('lock screen', () => {
-  test('an untrusted device sends the owner to email access', async ({ page }) => {
+test.describe('staff sign-in', () => {
+  test('the clinic URL directly offers staff without device registration', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Trust this device' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Continue with email' })).toBeVisible();
-    await expect(page.getByLabel('Registration code')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Who are you?' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Dr Seed.*Doctor/i })).toBeVisible();
+    await expect(page.getByText(/trusted device/i)).toHaveCount(0);
   });
 
-  test('a registered tablet offers the staff who can unlock it', async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('clinic.deviceToken', 'seed-device-cabin');
-    });
+  test('choosing a staff member asks only for their PIN', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Who is this?' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Dr Seed' })).toBeVisible();
+    await page.getByRole('button', { name: /Dr Seed.*Doctor/i }).click();
+    await expect(page.getByRole('heading', { name: 'Dr Seed' })).toBeVisible();
+    await expect(page.getByText('Enter your 6-digit PIN')).toBeVisible();
+  });
+
+  test('the administrator OTP entry point remains separate from daily PIN sign-in', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Administrator email OTP' })).toBeVisible();
+    await page.getByRole('button', { name: 'Administrator email OTP' }).click();
+    await expect(page.getByRole('heading', { name: 'Open the control panel' })).toBeVisible();
+    await expect(page.getByLabel('Administrator email')).toBeVisible();
   });
 
   test('an unreachable database is a sentence, not a stack trace', async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('clinic.deviceToken', 'seed-device-cabin');
-    });
     await page.route('**/rest/v1/**', (route) => route.abort());
     await page.goto('/');
-    await expect(page.getByText('Cannot reach the clinic database.')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/clinic database|could not reach|failed to fetch/i)).toBeVisible({ timeout: 20_000 });
   });
 });
 
@@ -37,9 +40,6 @@ test.describe('tablet layout rules', () => {
   });
 
   test('every interactive element clears the 44px touch target', async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('clinic.deviceToken', 'e2e-device');
-    });
     await page.goto('/');
     const undersized = await page.evaluate(() => {
       const selector = 'button, a, input, select, textarea, [role="button"]';
