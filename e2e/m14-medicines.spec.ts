@@ -40,7 +40,7 @@ test('admin adds a medicine and configures its reorder threshold', async ({ page
   await page.getByLabel('Reorder quantity').fill('300');
   await page.getByRole('button', { name: 'Save medicine' }).click();
 
-  await expect(page.getByRole('status')).toContainText(`${name} saved`);
+  await expect(page.getByText(`${name} saved.`, { exact: true })).toBeVisible();
   await expect(page.getByText(`${name} · 650mg`, { exact: true }).first()).toBeVisible();
   await expect(page.getByText('50 tablets', { exact: true })).toBeVisible();
   await expect(page.getByText('300 tablets', { exact: true })).toBeVisible();
@@ -49,12 +49,12 @@ test('admin adds a medicine and configures its reorder threshold', async ({ page
   await page.getByLabel('Low-stock threshold').fill('40');
   await page.getByLabel('Reorder quantity').fill('240');
   await page.getByRole('button', { name: 'Save medicine' }).click();
-  await expect(page.getByRole('status')).toContainText(`${name} saved`);
+  await expect(page.getByText(`${name} saved.`, { exact: true })).toBeVisible();
   await expect(page.getByText('40 tablets', { exact: true })).toBeVisible();
   await expect(page.getByText('240 tablets', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Deactivate' }).click();
-  await expect(page.getByRole('status')).toContainText('inactive');
+  await expect(page.getByText(`${name} is inactive. Existing prescriptions, stock history and bills are unchanged.`, { exact: true })).toBeVisible();
   await expect(page.getByText('Inactive', { exact: true }).first()).toBeVisible();
 });
 
