@@ -13,7 +13,8 @@ export default function VitalsPage() {
   const params = useSearchParams();
   const appointmentId = params.get('appointment');
   const session = currentSession();
-  const allowed = session?.role === 'doctor' || session?.role === 'nurse';
+  const allowed =
+    session?.role === 'doctor' || session?.role === 'nurse' || session?.role === 'admin';
 
   const [entry, setEntry] = useState<QueueEntry | null>(null);
   const [previous, setPrevious] = useState<VitalRecord | null>(null);
@@ -73,7 +74,7 @@ export default function VitalsPage() {
         rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}
       >
         <PageHeader eyebrow="Patient intake" title="Vitals" />
-        <Notice tone="bad">Only a doctor or nurse can record vitals.</Notice>
+        <Notice tone="bad">Only clinical staff can record vitals.</Notice>
       </ThreePane>
     );
   }
