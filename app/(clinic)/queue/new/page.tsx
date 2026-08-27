@@ -4,11 +4,12 @@
  * Register a walk-in, and hand out a token.
  *
  * Registration is shared clinical intake in this clinic: doctors and nurses
- * can both create/find the patient, issue today's token and record vitals.
+ * can both create/find a patient and issue today's token. Vitals are a separate
+ * shared action from the queue so either person can do them when the workflow
+ * actually reaches that step.
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Field, Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
@@ -63,8 +64,8 @@ export default function RegisterWalkInPage() {
         allergies: allergies || undefined,
       }));
 
-      const appointment = await bookAppointment({ patientId: patient.id, source: 'walkin' });
-      router.push(`/vitals?appointment=${appointment.id}` as Route);
+      await bookAppointment({ patientId: patient.id, source: 'walkin' });
+      router.push('/queue');
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);
@@ -143,7 +144,7 @@ export default function RegisterWalkInPage() {
         ) : (
           <>
             <RailButton tone="primary" disabled={!canRegister || busy} onClick={() => void submit()}>
-              {busy ? 'Registering…' : 'Register & take vitals'}
+              {busy ? 'Registering…' : 'Register & get token'}
             </RailButton>
             <RailButton onClick={() => router.push('/queue')}>Cancel</RailButton>
           </>
@@ -156,8 +157,7 @@ export default function RegisterWalkInPage() {
 
       {existing ? (
         <p className="mt-6 text-ink-2">
-          {existing.name} is already registered. Continuing will give them today&apos;s next token,
-          then open vitals.
+          {existing.name} is already registered. Registering will give them today&apos;s next token.
         </p>
       ) : (
         <div className="mt-6 max-w-xl space-y-5">
