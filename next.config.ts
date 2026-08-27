@@ -13,6 +13,14 @@ const nextConfig: NextConfig = {
   typedRoutes: true,
 
   /**
+   * The deployment is a static export, so image requests must resolve to files
+   * that exist in `out/` rather than a runtime `/_next/image` optimizer route.
+   * Public clinic artwork is already sized PNG content; serving it directly is
+   * both simpler and portable across Cloudflare, Netlify and a plain web server.
+   */
+  images: { unoptimized: true },
+
+  /**
    * A static export, and it widens the §7 exit ramp rather than narrowing it.
    *
    * This is not host-specific configuration — it is the absence of it. `next
