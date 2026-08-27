@@ -45,7 +45,8 @@ import {
 } from '@/lib/transitions/admin';
 
 const ROLES: Array<{ value: StaffRole; label: string; hint: string }> = [
-  { value: 'doctor', label: 'Doctor', hint: 'Consults, signs prescriptions' },
+  { value: 'doctor', label: 'Doctor', hint: 'Registers patients, takes vitals, consults and prescribes' },
+  { value: 'nurse', label: 'Nurse', hint: 'Registers patients, takes vitals and manages intake' },
   { value: 'counter', label: 'Counter', hint: 'Dispenses, sells, takes cash' },
   { value: 'admin', label: 'Admin', hint: 'All of that, plus this screen' },
 ];

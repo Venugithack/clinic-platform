@@ -30,6 +30,7 @@ import {
 } from '@/lib/db/encounters';
 import type { DrugRow } from '@/lib/db/drugs';
 import { currentSession } from '@/lib/auth';
+import { latestVitalsForAppointment, type VitalRecord } from '@/lib/db/vitals';
 import { setAppointmentStatus, signPrescription } from '@/lib/transitions/clinic';
 
 const DAY_CHIPS = [3, 5, 7, 10, 15];
@@ -41,6 +42,7 @@ function ConsultScreen() {
   const [entry, setEntry] = useState<QueueEntry | null>(null);
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [visits, setVisits] = useState<VisitSummary[]>([]);
+  const [visitVitals, setVisitVitals] = useState<VitalRecord | null>(null);
 
   const [diagnosis, setDiagnosis] = useState('');
   const [diagnoses, setDiagnoses] = useState<string[]>([]);
@@ -72,6 +74,7 @@ function ConsultScreen() {
           return;
         }
         setEntry(found);
+        setVisitVitals(await latestVitalsForAppointment(appointmentId));
 
         const started = await startEncounter(found.patient_id, session.staffId, appointmentId);
         setEncounter(started);
@@ -216,6 +219,32 @@ function ConsultScreen() {
               Allergies: {entry.allergies}
             </Notice>
           ) : null}
+
+          <h3 className="eyebrow mt-8">Vitals this visit</h3>
+          {visitVitals ? (
+            <div className="mt-2 rounded-box border border-rule bg-sheet p-3">
+              <p className="tabular text-sm leading-6">
+                {[
+                  visitVitals.bp && `BP ${visitVitals.bp}`,
+                  visitVitals.pulse && `Pulse ${visitVitals.pulse}`,
+                  visitVitals.temp && `Temp ${visitVitals.temp} °F`,
+                  visitVitals.spo2 && `SpO₂ ${visitVitals.spo2}%`,
+                  visitVitals.weight && `Weight ${visitVitals.weight} kg`,
+                  visitVitals.height && `Height ${visitVitals.height} cm`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              <p className="mt-1 text-xs text-ink-2">
+                Recorded {new Date(visitVitals.recorded_at).toLocaleTimeString('en-IN', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-ink-2">No vitals recorded for this visit.</p>
+          )}
 
           <h3 className="eyebrow mt-8">Previous visits</h3>
           {visits.length === 0 ? (

@@ -7,7 +7,7 @@
  */
 import { db } from './index';
 
-export type StaffRole = 'doctor' | 'counter' | 'admin';
+export type StaffRole = 'doctor' | 'nurse' | 'counter' | 'admin';
 
 export interface StaffAdminRow {
   id: string;

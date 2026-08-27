@@ -67,11 +67,26 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   // The allergy is legible from the queue, before the record is even opened.
   await expect(row).toContainText('Penicillin');
 
-  await row.click();
+  // Vitals are a shared intake action, separate from registration. Scope the
+  // secondary action to this patient's list item so the test describes the UI
+  // relationship rather than relying on a globally unique accessible name.
+  const patientItem = page.getByRole('listitem').filter({ has: row });
+  await patientItem.getByRole('button', { name: 'Vitals', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Vitals', exact: true })).toBeVisible();
+  await page.getByLabel('Blood pressure').fill('120/80');
+  await page.getByLabel('Pulse').fill('78');
+  await page.getByLabel('SpO2').fill('98');
+  await page.getByRole('button', { name: 'Save vitals' }).click();
+  await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: new RegExp(patient) }).click();
 
   // ---- consult -----------------------------------------------------------
   await expect(page.getByRole('heading', { name: 'Consult', exact: true })).toBeVisible();
   await expect(page.getByText('Allergies: Penicillin')).toBeVisible();
+  await expect(page.getByText(/BP 120\/80/)).toBeVisible();
+  await expect(page.getByText(/Pulse 78/)).toBeVisible();
+  await expect(page.getByText(/SpO₂ 98%/)).toBeVisible();
 
   await page.getByLabel('Diagnosis').fill('Acute pharyngitis');
   await page.getByRole('button', { name: 'Add diagnosis' }).click();
