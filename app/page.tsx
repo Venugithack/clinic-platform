@@ -21,6 +21,12 @@ function routeFor(role: StaffSession['role']): string {
   return '/queue';
 }
 
+function openLabel(role: StaffSession['role']): string {
+  if (role === 'admin') return 'Open the control panel';
+  if (role === 'counter') return 'Open the counter';
+  return 'Open the queue';
+}
+
 export default function SignInPage() {
   const router = useRouter();
   const [session, setSession] = useState<StaffSession | null>(null);
@@ -50,26 +56,22 @@ export default function SignInPage() {
     setBusy(true);
     setError(null);
     void unlock(selected.id, pin)
-      .then((next) => {
-        setSession(next);
-        router.replace(routeFor(next.role));
-      })
+      .then(setSession)
       .catch((cause: Error) => {
         setError(cause.message);
         setPin('');
       })
       .finally(() => setBusy(false));
-  }, [pin, selected, busy, router]);
+  }, [pin, selected, busy]);
 
   if (session) {
     return (
       <Centered>
         <div className="w-full max-w-md text-center">
-          <p className="eyebrow">Signed in</p>
-          <h1 className="mt-1 text-2xl font-semibold">{session.staffName}</h1>
-          <p className="mt-2 text-ink-2">{ROLE_LABEL[session.role]}</p>
+          <p className="eyebrow">{ROLE_LABEL[session.role]}</p>
+          <h1 className="mt-1 text-2xl font-semibold">Signed in as {session.staffName}</h1>
           <Button variant="primary" className="mt-7 w-full" onClick={() => router.replace(routeFor(session.role))}>
-            Open workspace
+            {openLabel(session.role)}
           </Button>
           <Button
             variant="ghost"
