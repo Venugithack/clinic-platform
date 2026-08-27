@@ -17,6 +17,37 @@ comment on column staff.pin_failed_attempts is
 comment on column staff.pin_locked_until is
   'Temporary server-side lock after repeated wrong PINs.';
 
+-- A PIN session always wins. Without one, only the verified administrator
+-- owner may resolve through Supabase Auth. Doctors, nurses and counter staff
+-- never inherit access merely because a historical auth_user_id happens to
+-- match their anonymous browser JWT.
+create or replace function app.current_staff_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public, extensions, pg_catalog
+as $$
+  select coalesce(
+    (
+      select s.staff_id
+      from staff_sessions s
+      join staff st on st.id = s.staff_id and st.active
+      where s.token_hash = encode(
+              digest(nullif(current_setting('app.staff_session', true), ''), 'sha256'), 'hex')
+        and s.ended_at is null
+        and s.expires_at > now()
+    ),
+    (
+      select st.id
+      from staff st
+      where st.auth_user_id = auth.uid()
+        and st.active
+        and st.role = 'admin'
+    )
+  )
+$$;
+
 create or replace function app.unlock_pin(
   p_staff_id uuid,
   p_pin text
