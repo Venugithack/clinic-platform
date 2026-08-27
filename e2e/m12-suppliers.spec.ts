@@ -24,7 +24,8 @@ test('admin can add a WhatsApp supplier, link a medicine and stop using the supp
 
   await signIn(page, 'Admin');
   await page.getByRole('button', { name: 'Open the queue' }).click();
-  await page.getByRole('button', { name: 'Suppliers' }).click();
+  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await page.getByRole('button', { name: 'Suppliers', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Suppliers', level: 1 })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add supplier' }).click();
