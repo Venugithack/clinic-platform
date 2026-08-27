@@ -1,5 +1,6 @@
 'use client';
 
+import type { Route } from 'next';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Numpad } from '@/components/Numpad';
@@ -15,7 +16,7 @@ const ROLE_LABEL: Record<StaffMember['role'], string> = {
   admin: 'Administrator',
 };
 
-function routeFor(role: StaffSession['role']): string {
+function routeFor(role: StaffSession['role']): Route {
   if (role === 'admin') return '/admin/home';
   if (role === 'counter') return '/counter';
   return '/queue';
