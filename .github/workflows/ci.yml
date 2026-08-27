@@ -15,9 +15,24 @@ name: CI
 # by opening a pull request that breaks one rule on purpose and watching this
 # fail — do it once, on the first PR, and never wonder again.
 
+# `push` on every branch AND `pull_request` ran this suite twice for every
+# commit on a branch with a PR open — two identical runs a minute apart, both
+# billed, against an Actions budget the backup cron now shares.
+#
+# `push` is narrowed to the branch that has to stay green rather than removed.
+# A pull_request run tests the MERGE of the branch into main, which is the
+# question a PR asks; a push run to main tests what actually landed, which is
+# the question a deployment asks, and Cloudflare builds from main.
+#
+# Worth knowing before you narrow this further: the duplication is what caught
+# the closure timezone bug. Two runs of the same commit seven minutes apart
+# straddled midnight IST and disagreed, which is how a bug that only appears
+# between 00:00 and 05:30 got noticed at all. That is now covered on purpose —
+# lib/clinic/day.test.ts pins both sides of the boundary, and
+# E2E_TIMEZONE reproduces it at any hour — rather than by accident.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
 
 concurrency:
