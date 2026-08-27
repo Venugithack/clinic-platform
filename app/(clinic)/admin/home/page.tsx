@@ -17,8 +17,8 @@ const SECTIONS: Array<{ title: string; items: AdminDestination[] }> = [
     title: 'Clinic setup',
     items: [
       {
-        title: 'People & tablets',
-        description: 'Doctors, nurses, counter staff, PINs and registered clinic tablets.',
+        title: 'People & access',
+        description: 'Doctors, nurses, pharmacy staff, roles and everyday PIN access.',
         href: '/admin',
       },
       {
@@ -93,7 +93,7 @@ const SECTIONS: Array<{ title: string; items: AdminDestination[] }> = [
     items: [
       {
         title: 'Billing',
-        description: 'Bills, payments and counter billing workflows.',
+        description: 'Bills, payments and pharmacy billing workflows.',
         href: '/billing',
       },
       {
@@ -120,19 +120,18 @@ export default function AdminHomePage() {
       context={
         <div>
           <h2 className="eyebrow">Administration</h2>
-          <p className="mt-1 text-lg">Clinic control center</p>
+          <p className="mt-1 text-lg">Clinic control panel</p>
           <p className="mt-5 text-sm text-ink-2">
-            Configuration and back-office work lives here. Doctor, nurse and pharmacy
-            workflows stay on their own operational screens.
+            Configure the team, medicines, stock, suppliers and clinic settings here. Staff can then sign in from any browser using their name and PIN.
           </p>
         </div>
       }
       rail={
         <>
-          <RailButton tone="primary" onClick={() => router.push('/queue')}>
-            Back to queue
+          <RailButton tone="primary" onClick={() => router.push('/')}>
+            Staff sign in
           </RailButton>
-          <RailButton onClick={() => router.push('/admin')}>People & tablets</RailButton>
+          <RailButton onClick={() => router.push('/admin')}>People & access</RailButton>
           <RailButton onClick={() => router.push('/medicines')}>Medicines</RailButton>
           <RailButton onClick={() => router.push('/suppliers')}>Suppliers</RailButton>
           <RailButton onClick={() => router.push('/reorder')}>Low stock</RailButton>
@@ -142,14 +141,10 @@ export default function AdminHomePage() {
         </>
       }
     >
-      <PageHeader
-        eyebrow="Administration"
-        title="Clinic control center"
-        sub={session?.staffName}
-      />
+      <PageHeader eyebrow="Administration" title="Clinic control panel" sub={session?.staffName} />
 
       {!allowed ? (
-        <Notice tone="bad">Only an administrator can open the clinic control center.</Notice>
+        <Notice tone="bad">Only an administrator can open the clinic control panel.</Notice>
       ) : (
         <div className="mt-6 max-w-5xl space-y-8">
           {SECTIONS.map((section) => (
@@ -165,9 +160,7 @@ export default function AdminHomePage() {
                     className="min-h-28 rounded-box border border-rule bg-sheet p-4 text-left active:bg-paper-2 disabled:cursor-default disabled:opacity-55"
                   >
                     <span className="text-lg font-medium">{item.title}</span>
-                    <span className="mt-2 block text-sm leading-5 text-ink-2">
-                      {item.description}
-                    </span>
+                    <span className="mt-2 block text-sm leading-5 text-ink-2">{item.description}</span>
                   </button>
                 ))}
               </div>
