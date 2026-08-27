@@ -1,21 +1,17 @@
 'use client';
 
 /**
- * The consult. TABLET.md §7: context pane = patient history, work pane = the
- * form, rail = Sign Rx. Sections collapse; nothing is more than one scroll.
+ * Doctor consultation workspace.
  *
- * Everything on this screen is typed by the doctor. Nothing is suggested,
- * completed, computed or flagged — PLAN.md §15.3 and rule 8. There is no
- * diagnosis autocomplete here and there must never be one: suggesting a
- * diagnosis from symptoms engages CDSCO software-as-a-medical-device rules and
- * clinical liability, and it is the kind of thing that arrives by accident as
- * an "autocomplete improvement".
+ * Clinical content remains entirely doctor-authored: no diagnosis suggestions,
+ * no inferred treatment and no automated prescribing. This pass only improves
+ * workflow hierarchy and makes leaving the visit save what the doctor entered.
  */
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
-import { Notice, PageHeader, Token } from '@/components/ui';
+import { Badge, Notice, PageHeader, Token } from '@/components/ui';
 import { DrugSearch } from '@/components/DrugSearch';
 import { QtyPad } from '@/components/QtyPad';
 import { queueEntry, type QueueEntry } from '@/lib/db/queue';
@@ -58,6 +54,7 @@ function ConsultScreen() {
   const [food, setFood] = useState<'before' | 'after' | 'with' | null>('after');
 
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [signedAt, setSignedAt] = useState<string | null>(null);
   const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
@@ -96,33 +93,74 @@ function ConsultScreen() {
     })();
   }, [appointmentId]);
 
-  const save = useCallback(async () => {
+  const persist = useCallback(async () => {
     if (!encounter) return;
     await saveEncounter(encounter.id, {
       diagnoses,
-      advice: advice || null,
+      advice: advice.trim() || null,
       follow_up_date: followUp || null,
     });
-    if (items.length > 0) {
+    if (items.length > 0 && !signedAt) {
       const rx = await draftPrescription(encounter, items);
       setPrescriptionId(rx.id);
     }
-  }, [encounter, diagnoses, advice, followUp, items]);
+  }, [encounter, diagnoses, advice, followUp, items, signedAt]);
 
-  const sign = async () => {
-    if (!encounter || items.length === 0) return;
+  const saveDraft = async () => {
     setBusy(true);
     setError(null);
+    setNotice(null);
+    try {
+      await persist();
+      setNotice('Draft saved. You can continue this visit or return to the queue.');
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finishVisit = async () => {
+    if (!encounter || !entry) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      // Saving is part of Finish, not a separate prerequisite. A doctor must
+      // never lose a diagnosis/advice because they chose the obvious final action.
+      await persist();
+      if (entry.status === 'in_consult') {
+        await setAppointmentStatus(appointmentId, 'done');
+      }
+      router.push('/queue');
+    } catch (cause) {
+      setError((cause as Error).message);
+      setBusy(false);
+    }
+  };
+
+  const sign = async () => {
+    if (!encounter || !entry || items.length === 0) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
       await saveEncounter(encounter.id, {
         diagnoses,
-        advice: advice || null,
+        advice: advice.trim() || null,
         follow_up_date: followUp || null,
       });
       const rx = await draftPrescription(encounter, items);
       const signed = await signPrescription(rx.id);
       setPrescriptionId(rx.id);
       setSignedAt(signed.signed_at);
+
+      // A signed prescription is the end of the doctor's visit. Completing the
+      // queue state here prevents the patient remaining "in consult" while the
+      // prescription is already waiting at pharmacy.
+      if (entry.status === 'in_consult') {
+        await setAppointmentStatus(appointmentId, 'done');
+      }
       router.push(`/rx/print?rx=${rx.id}` as Route);
     } catch (cause) {
       setError((cause as Error).message);
@@ -130,17 +168,6 @@ function ConsultScreen() {
     }
   };
 
-  /**
-   * What the course on screen actually comes to.
-   *
-   * "1 · 1-0-1 · 10 days" is twenty tablets; a strip of fifteen is not that.
-   * Nothing used to say so, and both numbers print on the prescription the
-   * patient carries to the counter, where the shortfall becomes real.
-   *
-   * Frequency is the Indian morning-noon-night notation, so the doses in a day
-   * are its parts added up. Anything that will not parse — an SOS, a taper,
-   * a frequency typed as words — yields undefined and no claim is made.
-   */
   const dosesPerDay = freq
     .split('-')
     .map(Number)
@@ -175,17 +202,10 @@ function ConsultScreen() {
 
   if (error && !entry) {
     return (
-      <ThreePane rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}>
+      <ThreePane rail={<RailButton onClick={() => router.push('/queue')}>Back to queue</RailButton>}>
         <PageHeader eyebrow="Consulting room" title="This consult will not open" />
-        {/* A sentence a doctor can act on, and the database's own words kept
-            underneath it rather than shown as the message. "JSON object
-            requested, multiple (or no) rows returned" was the entire screen
-            here, which tells the person holding the tablet nothing about what
-            to do next and nothing they can repeat down the phone. */}
         <Notice tone="bad">
-          The record for this patient could not be opened. Go back to the queue
-          and open them again; if it keeps happening, this appointment needs
-          looking at before the consult can go ahead.
+          The patient record could not be opened. Return to the queue and try again; if it keeps happening, this appointment needs checking before the consultation continues.
         </Notice>
         <p className="font-mono text-xs text-ink-2">{error}</p>
       </ThreePane>
@@ -204,201 +224,226 @@ function ConsultScreen() {
     );
   }
 
+  const hasUnsignedMedicines = items.length > 0 && !signedAt;
+
   return (
     <ThreePane
       context={
-        <div>
-          <h2 className="text-xl font-semibold">{entry?.patient_name ?? '…'}</h2>
-          <p className="mt-1 text-ink-2">
-            {[entry?.age, entry?.sex, entry?.phone].filter(Boolean).join(' · ')}
-          </p>
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold">{entry?.patient_name ?? '…'}</h2>
+            <p className="mt-1 text-ink-2">
+              {[entry?.age ? `${entry.age} yrs` : null, entry?.sex, entry?.phone]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+          </div>
 
-          {/* The one thing that must be impossible to miss. */}
-          {entry?.allergies ? (
-            <Notice tone="bad">
-              Allergies: {entry.allergies}
-            </Notice>
+          {entry?.allergies ? <Notice tone="bad">Allergies: {entry.allergies}</Notice> : null}
+
+          {entry?.reason ? (
+            <div>
+              <p className="eyebrow">Reason for visit</p>
+              <p className="mt-1 text-sm leading-6">{entry.reason}</p>
+            </div>
           ) : null}
 
-          <h3 className="eyebrow mt-8">Vitals this visit</h3>
-          {visitVitals ? (
-            <div className="mt-2 rounded-box border border-rule bg-sheet p-3">
-              <p className="tabular text-sm leading-6">
+          <div>
+            <h3 className="eyebrow">Vitals this visit</h3>
+            {visitVitals ? (
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 {[
-                  visitVitals.bp && `BP ${visitVitals.bp}`,
-                  visitVitals.pulse && `Pulse ${visitVitals.pulse}`,
-                  visitVitals.temp && `Temp ${visitVitals.temp} °F`,
-                  visitVitals.spo2 && `SpO₂ ${visitVitals.spo2}%`,
-                  visitVitals.weight && `Weight ${visitVitals.weight} kg`,
-                  visitVitals.height && `Height ${visitVitals.height} cm`,
+                  visitVitals.bp && ['BP', visitVitals.bp],
+                  visitVitals.pulse && ['Pulse', `${visitVitals.pulse}`],
+                  visitVitals.temp && ['Temp', `${visitVitals.temp} °F`],
+                  visitVitals.spo2 && ['SpO₂', `${visitVitals.spo2}%`],
+                  visitVitals.weight && ['Weight', `${visitVitals.weight} kg`],
+                  visitVitals.height && ['Height', `${visitVitals.height} cm`],
                 ]
                   .filter(Boolean)
-                  .join(' · ')}
-              </p>
-              <p className="mt-1 text-xs text-ink-2">
-                Recorded {new Date(visitVitals.recorded_at).toLocaleTimeString('en-IN', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-2 text-sm text-ink-2">No vitals recorded for this visit.</p>
-          )}
+                  .map((value) => value as [string, string])
+                  .map(([label, value]) => (
+                    <div key={label} className="rounded-box border border-rule bg-sheet p-2">
+                      <p className="eyebrow">{label}</p>
+                      <p className="tabular mt-1 text-sm font-medium">{value}</p>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-ink-2">No vitals recorded for this visit.</p>
+            )}
+          </div>
 
-          <h3 className="eyebrow mt-8">Previous visits</h3>
-          {visits.length === 0 ? (
-            <p className="mt-2 text-ink-2">First visit.</p>
-          ) : (
-            <ul className="mt-2 space-y-3">
-              {visits.map((visit) => (
-                <li key={visit.id} className="border-b border-rule pb-3">
-                  <p className="tabular text-sm text-ink-2">
-                    {new Date(visit.created_at).toLocaleDateString('en-IN', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </p>
-                  <p>{(visit.diagnoses as string[])?.join(', ') || '—'}</p>
-                  {visit.advice ? (
-                    <p className="text-sm text-ink-2">{visit.advice}</p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+          <div>
+            <h3 className="eyebrow">Previous visits</h3>
+            {visits.length === 0 ? (
+              <p className="mt-2 text-sm text-ink-2">First visit.</p>
+            ) : (
+              <ul className="mt-2 space-y-3">
+                {visits.map((visit) => (
+                  <li key={visit.id} className="border-b border-rule pb-3">
+                    <p className="tabular text-xs text-ink-2">
+                      {new Date(visit.created_at).toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </p>
+                    <p className="mt-1 text-sm font-medium">
+                      {(visit.diagnoses as string[])?.join(', ') || 'No diagnosis recorded'}
+                    </p>
+                    {visit.advice ? <p className="mt-1 text-sm text-ink-2">{visit.advice}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       }
       rail={
         <>
-          {/* The signature object, not a card with a number in it. The queue
-              shows this patient as a token box and so does the counter; the
-              consult screen showing the same fact in a different shape made
-              one number look like three different things. */}
-          <div className="flex justify-center">
+          <div className="flex justify-center pb-1">
             <Token prefix="Token" serial={entry?.token_no ?? '—'} size="lg" />
           </div>
 
-          <RailButton
-            tone="primary"
-            disabled={items.length === 0 || busy || signedAt !== null}
-            onClick={() => void sign()}
-          >
-            {signedAt ? 'Signed' : busy ? 'Signing…' : 'Sign Rx'}
-          </RailButton>
+          {signedAt ? (
+            <RailButton
+              tone="primary"
+              onClick={() => prescriptionId && router.push(`/rx/print?rx=${prescriptionId}` as Route)}
+            >
+              Open signed Rx
+            </RailButton>
+          ) : hasUnsignedMedicines ? (
+            <RailButton tone="primary" disabled={busy} onClick={() => void sign()}>
+              {busy ? 'Signing…' : 'Sign Rx & finish'}
+            </RailButton>
+          ) : (
+            <RailButton tone="primary" disabled={!encounter || busy} onClick={() => void finishVisit()}>
+              {busy ? 'Finishing…' : 'Finish visit'}
+            </RailButton>
+          )}
 
-          <RailButton disabled={busy} onClick={() => void save()}>
-            Save
-          </RailButton>
-
-          {signedAt && prescriptionId ? (
-            <RailButton onClick={() => router.push(`/rx/print?rx=${prescriptionId}` as Route)}>
-              Print
+          {!signedAt ? (
+            <RailButton disabled={!encounter || busy} onClick={() => void saveDraft()}>
+              Save draft
             </RailButton>
           ) : null}
 
-          <div className="flex-1" />
+          {!signedAt && !hasUnsignedMedicines ? (
+            <RailButton onClick={() => router.push('/queue')}>Back to queue</RailButton>
+          ) : null}
 
-          <RailButton
-            onClick={() => {
-              void (async () => {
-                try {
-                  if (entry?.status === 'in_consult') {
-                    await setAppointmentStatus(appointmentId, 'done');
-                  }
-                } finally {
-                  router.push('/queue');
-                }
-              })();
-            }}
-          >
-            Finish
-          </RailButton>
+          {hasUnsignedMedicines ? (
+            <p className="px-1 pt-2 text-xs leading-5 text-ink-2">
+              Medicines are not sent to pharmacy until the prescription is signed.
+            </p>
+          ) : null}
+
+          <div className="flex-1" />
         </>
       }
     >
-      <PageHeader eyebrow="Consulting room" title="Consult" />
+      <PageHeader
+        eyebrow="Consulting room"
+        title="Consult"
+        sub={entry?.reason || 'Record the visit, prescribe if needed, then finish'}
+      />
 
       {error ? <Notice tone="bad">{error}</Notice> : null}
+      {notice ? <Notice tone="good">{notice}</Notice> : null}
 
       {signedAt ? (
         <Notice tone="good">
-          Signed at {new Date(signedAt).toLocaleTimeString('en-IN')}. A signed prescription
-          cannot be edited.
+          Prescription signed at {new Date(signedAt).toLocaleTimeString('en-IN')}. The visit is complete and the prescription cannot be edited.
         </Notice>
       ) : null}
 
-      <section className="mt-6 max-w-2xl">
-        <h2 className="eyebrow">Diagnosis</h2>
-        <div className="mt-2 flex gap-3">
+      <section className="mt-2 max-w-2xl">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-medium">Diagnosis</h2>
+            <p className="mt-1 text-sm text-ink-2">Doctor-entered clinical assessment.</p>
+          </div>
+          {diagnoses.length > 0 ? <Badge>{diagnoses.length} recorded</Badge> : null}
+        </div>
+
+        <div className="mt-3 flex gap-3">
           <input
             value={diagnosis}
             onChange={(event) => setDiagnosis(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || !diagnosis.trim()) return;
+              event.preventDefault();
+              setDiagnoses((current) => [...current, diagnosis.trim()]);
+              setDiagnosis('');
+            }}
+            disabled={signedAt !== null}
             aria-label="Diagnosis"
-            placeholder="As you would write it"
-            className="blank h-14 min-w-0 flex-1 px-4 text-lg"
+            placeholder="Type diagnosis and press Enter"
+            className="blank h-14 min-w-0 flex-1 px-4 text-lg disabled:opacity-50"
           />
           <button
             type="button"
+            disabled={signedAt !== null || !diagnosis.trim()}
             onClick={() => {
               if (!diagnosis.trim()) return;
               setDiagnoses((current) => [...current, diagnosis.trim()]);
               setDiagnosis('');
             }}
-            className="h-14 rounded-box border border-ink bg-transparent px-5 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
+            className="h-14 rounded-box border border-ink px-5 text-xs font-semibold uppercase tracking-[0.08em] disabled:opacity-40"
           >
             Add diagnosis
           </button>
         </div>
+
         <ul className="mt-3 flex flex-wrap gap-2">
           {diagnoses.map((entryText, index) => (
             <li key={`${entryText}-${index}`}>
               <button
                 type="button"
+                disabled={signedAt !== null}
                 onClick={() => setDiagnoses((current) => current.filter((_, i) => i !== index))}
-                className="h-11 rounded-box border border-ink bg-transparent px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
+                className="min-h-11 rounded-box border border-ink px-4 text-sm disabled:opacity-50"
               >
-                {entryText} ✕
+                {entryText} {!signedAt ? '×' : ''}
               </button>
             </li>
           ))}
         </ul>
       </section>
 
-      <section className="mt-8 max-w-2xl">
+      <section className="mt-6 max-w-2xl border-t border-rule pt-5">
         <div className="flex items-center justify-between">
-          <h2 className="eyebrow">Medicines</h2>
+          <div>
+            <h2 className="text-lg font-medium">Prescription</h2>
+            <p className="mt-1 text-sm text-ink-2">
+              {items.length === 0 ? 'No medicines added.' : `${items.length} medicine${items.length === 1 ? '' : 's'} added.`}
+            </p>
+          </div>
           {!signedAt ? (
             <button
               type="button"
               onClick={() => setSearching(true)}
-              className="h-11 rounded-box border border-ink bg-transparent px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
+              className="h-11 rounded-box border border-ink px-4 text-xs font-semibold uppercase tracking-[0.08em]"
             >
               + Add medicine
             </button>
           ) : null}
         </div>
 
-        {items.length === 0 ? (
-          <p className="mt-3 text-ink-2">Nothing prescribed yet.</p>
-        ) : (
-          <ul className="mt-3">
+        {items.length > 0 ? (
+          <ul className="mt-3 rounded-box border border-rule bg-sheet">
             {items.map((item, index) => (
-              <li
-                key={`${item.drug_id}-${index}`}
-                className="flex items-center gap-4 border-b border-rule py-3"
-              >
+              <li key={`${item.drug_id}-${index}`} className="flex items-center gap-4 border-b border-rule p-3 last:border-b-0">
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-lg">
-                    {item.name} <span className="text-sm text-ink-2">{item.strength}</span>
+                  <span className="block truncate text-lg font-medium">
+                    {item.name} <span className="text-sm font-normal text-ink-2">{item.strength}</span>
                   </span>
                   <span className="tabular block text-sm text-ink-2">
-                    {item.dose} · {item.freq} · {item.days} days
-                    {item.food ? ` · ${item.food} food` : ''}
+                    {item.dose} · {item.freq} · {item.days} days{item.food ? ` · ${item.food} food` : ''}
                   </span>
                 </span>
-                <span className="tabular shrink-0">{item.qty_base}</span>
+                <span className="tabular shrink-0 text-sm">Qty {item.qty_base}</span>
                 {!signedAt ? (
                   <button
                     type="button"
@@ -406,52 +451,40 @@ function ConsultScreen() {
                     onClick={() => setItems((current) => current.filter((_, i) => i !== index))}
                     className="h-11 w-11 shrink-0 rounded-box border border-rule text-ink-2 active:bg-paper-2"
                   >
-                    ✕
+                    ×
                   </button>
                 ) : null}
               </li>
             ))}
           </ul>
-        )}
+        ) : null}
 
         {pending ? (
-          <div className="mt-5">
-            <p className="text-lg">
-              {pending.name} <span className="text-sm text-ink-2">{pending.strength}</span>
+          <div className="mt-5 rounded-box border border-rule bg-sheet p-4">
+            <p className="text-lg font-medium">
+              {pending.name} <span className="text-sm font-normal text-ink-2">{pending.strength}</span>
             </p>
 
-            <div className="mt-3 flex flex-wrap items-end gap-4">
+            <div className="mt-4 flex flex-wrap items-end gap-4">
               <label className="block">
-                <span className="mb-1 block text-sm text-ink-2">Dose</span>
-                <input
-                  value={dose}
-                  onChange={(event) => setDose(event.target.value)}
-                  aria-label="Dose"
-                  className="blank h-14 w-24 px-3 text-lg"
-                />
+                <span className="eyebrow mb-1 block">Dose</span>
+                <input value={dose} onChange={(event) => setDose(event.target.value)} aria-label="Dose" className="blank h-14 w-24 px-3 text-lg" />
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm text-ink-2">Frequency</span>
-                <input
-                  value={freq}
-                  onChange={(event) => setFreq(event.target.value)}
-                  aria-label="Frequency"
-                  className="blank tabular h-14 w-32 px-3 text-lg"
-                />
+                <span className="eyebrow mb-1 block">Frequency</span>
+                <input value={freq} onChange={(event) => setFreq(event.target.value)} aria-label="Frequency" className="blank tabular h-14 w-32 px-3 text-lg" />
               </label>
 
               <div>
-                <span className="mb-1 block text-sm text-ink-2">Days</span>
+                <span className="eyebrow mb-1 block">Days</span>
                 <div className="flex gap-2">
                   {DAY_CHIPS.map((count) => (
                     <button
                       key={count}
                       type="button"
                       onClick={() => setDays(count)}
-                      className={`tabular h-14 w-14 rounded-box border text-lg ${
-                        days === count ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'
-                      }`}
+                      className={`tabular h-14 w-14 rounded-box border text-lg ${days === count ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'}`}
                     >
                       {count}
                     </button>
@@ -460,16 +493,14 @@ function ConsultScreen() {
               </div>
 
               <div>
-                <span className="mb-1 block text-sm text-ink-2">Food</span>
+                <span className="eyebrow mb-1 block">Food</span>
                 <div className="flex gap-2">
                   {(['before', 'after', 'with'] as const).map((option) => (
                     <button
                       key={option}
                       type="button"
                       onClick={() => setFood(option)}
-                      className={`h-14 rounded-box border px-4 ${
-                        food === option ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'
-                      }`}
+                      className={`h-14 rounded-box border px-4 ${food === option ? 'border-ink bg-ink text-paper' : 'border-rule bg-sheet'}`}
                     >
                       {option}
                     </button>
@@ -494,26 +525,27 @@ function ConsultScreen() {
         ) : null}
       </section>
 
-      <section className="mt-8 max-w-2xl">
-        <h2 className="eyebrow">Advice</h2>
+      <section className="mt-6 max-w-2xl border-t border-rule pt-5">
+        <h2 className="text-lg font-medium">Advice & follow-up</h2>
         <textarea
           value={advice}
           onChange={(event) => setAdvice(event.target.value)}
+          disabled={signedAt !== null}
           aria-label="Advice"
+          placeholder="Advice to the patient"
           rows={3}
-          className="blank mt-2 w-full p-4 text-lg"
+          className="blank mt-3 w-full p-4 text-lg disabled:opacity-50"
         />
 
         <label className="mt-4 block">
-          <span className="eyebrow mb-1 block">
-            Follow-up
-          </span>
+          <span className="eyebrow mb-1 block">Follow-up date</span>
           <input
             type="date"
             value={followUp}
             onChange={(event) => setFollowUp(event.target.value)}
+            disabled={signedAt !== null}
             aria-label="Follow-up date"
-            className="blank tabular h-14 px-4 text-lg"
+            className="blank tabular h-14 px-4 text-lg disabled:opacity-50"
           />
         </label>
       </section>
@@ -521,19 +553,6 @@ function ConsultScreen() {
   );
 }
 
-/**
- * The screen reads its id from the query string, not from a path segment.
- *
- * A path segment would make this a dynamic route, and Next refuses to static-
- * export a dynamic route without generateStaticParams() — which cannot exist
- * here, because the ids are rows in a database that has not been written yet.
- * HOSTING.md §3: the static export is what keeps the whole app off a Worker's
- * 10 ms CPU budget and 3 MB bundle ceiling, so the query string is the cheaper
- * side of the trade.
- *
- * useSearchParams() forces everything up to the nearest Suspense boundary to be
- * client-rendered, and the build errors without one.
- */
 export default function ConsultPage() {
   return (
     <Suspense fallback={<p className="p-8 text-ink-2">Loading…</p>}>
