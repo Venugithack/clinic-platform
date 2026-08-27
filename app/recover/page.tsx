@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { Numpad } from '@/components/Numpad';
 import { Button, Notice } from '@/components/ui';
 import { recoverAdminDevice } from '@/lib/transitions/admin';
@@ -60,9 +61,12 @@ export default function RecoverTabletPage() {
 
   return (
     <main className="flex min-h-full flex-col items-center justify-center p-8">
-      <img
+      <Image
         src="/logo-mark.png"
         alt="Jayamurugan Clinic"
+        width={900}
+        height={643}
+        priority
         className="mb-6 h-24 w-auto"
       />
 
