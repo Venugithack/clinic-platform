@@ -50,6 +50,14 @@ export default function LockScreen() {
   // been able to ask — which is not the same as "empty", and the difference
   // decides whether a stranger is offered the setup form.
   const [virgin, setVirgin] = useState<boolean | undefined>(undefined);
+  /**
+   * Whether that question is still in flight.
+   *
+   * `virgin` alone cannot say. It is `undefined` both before the read starts and
+   * after one that failed, and those two must render differently: the second is
+   * "we could not ask, so assume nothing", and the first is "wait half a second".
+   */
+  const [asking, setAsking] = useState(false);
   const [clinicName, setClinicName] = useState('');
   const [myName, setMyName] = useState('');
   const [tabletName, setTabletName] = useState('');
@@ -69,9 +77,14 @@ export default function LockScreen() {
   // means what it says.
   useEffect(() => {
     if (registered) return;
+    setAsking(true);
     void (async () => {
-      const { needsSetup } = await import('@/lib/db/settings');
-      setVirgin(await needsSetup());
+      try {
+        const { needsSetup } = await import('@/lib/db/settings');
+        setVirgin(await needsSetup());
+      } finally {
+        setAsking(false);
+      }
     })();
   }, [registered]);
 
@@ -165,6 +178,27 @@ export default function LockScreen() {
   // the staff list came back and came back EMPTY — a failed read leaves
   // `virgin` undefined and this screen unoffered, because a network blip on a
   // working tablet must never show a stranger a form that mints an admin.
+  /**
+   * Say nothing until the answer arrives.
+   *
+   * Without this the branch below renders first — for as long as one round trip
+   * to Mumbai takes — and the FIRST thing anybody sees on a database nobody has
+   * set up is "This tablet is not registered. Ask the administrator to register
+   * it." There is no administrator yet; that is what the next screen is for.
+   *
+   * It is the doctor's first second with this app, on go-live morning, and it
+   * told him to go and find somebody who does not exist. Found by loading the
+   * live URL and watching it flip.
+   */
+  if (!registered && asking) {
+    return (
+      <Centered>
+        <h1 className="text-2xl font-semibold">Just a moment</h1>
+        <p className="mt-3 max-w-md text-center text-ink-2">Reaching the clinic database.</p>
+      </Centered>
+    );
+  }
+
   if (!registered && virgin === true) {
     const ready =
       clinicName.trim() !== '' && myName.trim() !== '' && pin.length === PIN_LENGTH;
@@ -295,7 +329,24 @@ export default function LockScreen() {
     // went to `/queue`, so the pharmacist read "Pharmacy counter", pressed the
     // only button on the screen and arrived in the consulting room — every
     // shift, on the tablet that never leaves the counter. One test, used twice.
-    const isDoctor = session.role === 'doctor';
+    // An ADMIN belongs in the consulting room too, and did not get there.
+    //
+    // `app.first_run` creates the very first staff member with role 'admin'
+    // (20260817140100:85) — correctly, because that person has to be able to
+    // reach the admin screen to register the second tablet and add everybody
+    // else. This test was `role === 'doctor'`, so the one person who has just
+    // stood the clinic up was told "Pharmacy counter" and offered a single
+    // button into `/counter`.
+    //
+    // That is go-live morning, in the cabin, on the doctor's own tablet, in the
+    // first four seconds of the clinic's existence.
+    //
+    // It survived since M0 for one reason: `e2e/first-run/` is the only suite
+    // that meets it, and CI has never run that suite. It does now.
+    //
+    // The counter is still one tap away on the queue screen; the admin is not
+    // locked out of it. What changes is which room the app assumes.
+    const isDoctor = session.role === 'doctor' || session.role === 'admin';
 
     return (
       <Centered>
