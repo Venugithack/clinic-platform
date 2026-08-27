@@ -54,11 +54,16 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
 
   // DPDP §15.1: consent is a deliberate step, and registration is blocked
   // until it is given.
-  const register = page.getByRole('button', { name: /Register & get token/ });
+  const register = page.getByRole('button', { name: /Register & take vitals/ });
   await expect(register).toBeDisabled();
   await page.getByLabel('Consent').click();
   await expect(register).toBeEnabled();
   await register.click();
+  await expect(page.getByRole('heading', { name: 'Vitals', exact: true })).toBeVisible();
+  await page.getByLabel('Blood pressure').fill('120/80');
+  await page.getByLabel('Pulse').fill('78');
+  await page.getByLabel('SpO2').fill('98');
+  await page.getByRole('button', { name: 'Save vitals' }).click();
 
   // ---- the queue ---------------------------------------------------------
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
@@ -72,6 +77,9 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
   // ---- consult -----------------------------------------------------------
   await expect(page.getByRole('heading', { name: 'Consult', exact: true })).toBeVisible();
   await expect(page.getByText('Allergies: Penicillin')).toBeVisible();
+  await expect(page.getByText(/BP 120\/80/)).toBeVisible();
+  await expect(page.getByText(/Pulse 78/)).toBeVisible();
+  await expect(page.getByText(/SpO₂ 98%/)).toBeVisible();
 
   await page.getByLabel('Diagnosis').fill('Acute pharyngitis');
   await page.getByRole('button', { name: 'Add diagnosis' }).click();
@@ -130,7 +138,9 @@ test('a signed prescription cannot be edited from the consult screen', async ({ 
   await page.getByRole('button', { name: 'Register walk-in' }).click();
   await page.getByLabel('Name').fill(patient);
   await page.getByLabel('Consent').click();
-  await page.getByRole('button', { name: /Register & get token/ }).click();
+  await page.getByRole('button', { name: /Register & take vitals/ }).click();
+  await expect(page.getByRole('heading', { name: 'Vitals', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip / back to queue' }).click();
 
   await page.getByRole('button', { name: new RegExp(patient) }).click();
   await page.getByRole('button', { name: '+ Add medicine' }).click();
