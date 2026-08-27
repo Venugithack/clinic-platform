@@ -127,35 +127,31 @@ Docker run `supabase db reset` first and then `pnpm exec playwright test`
 directly — the reset is not optional, and `playwright.config.ts` explains at
 length why the suite only tells the truth on a fresh seed.
 
-### `.env.local`, and the part that is not obvious
+### `.env.local`
 
-`.env.*` is gitignored, so this is rebuilt on any fresh checkout — and **the
-Supabase anon key is the wrong value to put in it.** `lib/db/index.ts` never
-calls `signIn`: the key itself is the device's session (TABLET.md §5), and every
-grant in `20260816270200_tighten_grants.sql` targets `authenticated`. Hand it a
-key with role `anon` and you get `permission denied for table staff`.
-
-So mint an `authenticated` JWT against the local stack's secret, put it in
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`, set
-`NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321`, and leave
-`NEXT_PUBLIC_REALTIME_WS_URL` unset so `lib/realtime` uses Supabase Realtime
-rather than the `dev-api.mjs` stand-in.
+`.env.*` is gitignored, so this is rebuilt on any fresh checkout. Three lines,
+and the ordinary anon key is the right value for the key:
 
 ```
-node -e "
-const {createHmac}=require('crypto');
-const b=(o)=>Buffer.from(JSON.stringify(o)).toString('base64url');
-const secret='super-secret-jwt-token-with-at-least-32-characters-long';
-const h=b({alg:'HS256',typ:'JWT'});
-const p=b({iss:'supabase-demo',role:'authenticated',
-           sub:'a5ed0000-0000-0000-0000-000000000001',
-           iat:Math.floor(Date.now()/1000),exp:2000000000});
-console.log(h+'.'+p+'.'+createHmac('sha256',secret).update(h+'.'+p).digest('base64url'));
-"
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<the anon key from `supabase status`>
 ```
 
-This is a local-development shape and not a production one: no code path yet
-obtains a real `authenticated` session on a hosted project.
+Leave `NEXT_PUBLIC_REALTIME_WS_URL` unset when the real stack is up, so
+`lib/realtime` uses Supabase Realtime rather than the `dev-api.mjs` stand-in.
+Point it at `ws://127.0.0.1:54321/realtime` only when running against the
+bare-cluster stand-in, which `scripts/dev-stack.sh` does for you.
+
+**This used to say the opposite**, and the reason is worth keeping. Every grant
+in `20260816270200_tighten_grants.sql` targets `authenticated`, so an anon-role
+key really did get `permission denied for table staff` — and this file told you
+to mint an `authenticated` JWT by hand against the local stack's secret and use
+it as the anon key. That is gone. `lib/db/index.ts` now calls
+`signInAnonymously()`, and the session it gets back is an `authenticated` one;
+the anon key is only what opens the door to ask for it. If you are following
+an older note that mints a JWT, stop — it will work locally and has no
+counterpart on a hosted project, which is exactly how it survived as long as it
+did.
 
 ### Signing in
 
