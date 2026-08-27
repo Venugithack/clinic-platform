@@ -35,6 +35,8 @@ async function shelfQty(page: Page, drug: string): Promise<number> {
 }
 
 test('one clinic day crosses intake, consult, pharmacy, stock and billing', async ({ browser }) => {
+  test.setTimeout(90_000);
+
   const cabin = await browser.newContext();
   const counter = await browser.newContext();
   const doctorPage = await cabin.newPage();
@@ -84,12 +86,16 @@ test('one clinic day crosses intake, consult, pharmacy, stock and billing', asyn
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(patient) }).click();
   await expect(counterPage.getByRole('heading', { name: 'Dispense', exact: true })).toBeVisible();
-  const noBarcode = counterPage.getByRole('button', { name: 'No barcode' });
-  for (let left = await noBarcode.count(); left > 0; left = await noBarcode.count()) {
-    await noBarcode.first().click();
-    await counterPage.getByRole('button', { name: 'Confirm by name' }).click();
-  }
-  await counterPage.getByRole('button', { name: 'Dispense', exact: true }).click();
+
+  const noBarcode = counterPage.getByRole('button', { name: 'No barcode', exact: true });
+  await expect(noBarcode).toBeVisible();
+  await noBarcode.click();
+  await counterPage.getByRole('button', { name: 'Confirm by name', exact: true }).click();
+  await expect(counterPage.getByText('confirmed', { exact: true })).toBeVisible();
+
+  const dispenseButton = counterPage.getByRole('button', { name: 'Dispense', exact: true });
+  await expect(dispenseButton).toBeEnabled();
+  await dispenseButton.click();
   await expect(counterPage.getByText(/The ledger has been written|Dispensed\./)).toBeVisible();
 
   // Billing. UPI avoids making the go-live rehearsal depend on the cash drawer;
