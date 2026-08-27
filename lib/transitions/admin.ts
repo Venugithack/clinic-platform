@@ -1,4 +1,4 @@
-/** Staff, email ownership and devices. PLAN.md §16, TABLET.md §5. */
+/** Staff administration transitions. */
 import { appSchema } from '@/lib/db';
 import type { StaffRole } from '@/lib/db/admin';
 import { toTransitionError } from './errors';
@@ -21,7 +21,6 @@ export interface StaffRow {
   reg_no: string | null;
   active: boolean;
   pin_set_at: string | null;
-  email?: string | null;
 }
 
 export async function addStaff(input: NewStaff): Promise<StaffRow> {
@@ -64,99 +63,4 @@ export async function setStaffPin(staffId: string, pin: string): Promise<void> {
     p_pin: pin,
   });
   if (error) throw toTransitionError(error);
-}
-
-export async function setStaffEmail(staffId: string, email: string | null): Promise<StaffRow> {
-  const { data, error } = await appSchema().rpc('set_staff_email', {
-    p_staff_id: staffId,
-    p_email: email,
-  });
-  if (error) throw toTransitionError(error);
-  return data as StaffRow;
-}
-
-/** Retained for old admin clients; the current UI enrolls tablets by email. */
-export interface RegisteredDevice {
-  id: string;
-  label: string;
-  device_token: string;
-  idle_timeout_seconds: number;
-}
-
-export async function registerDevice(
-  label: string,
-  isClinicDevice = true,
-  idleTimeoutSeconds?: number,
-): Promise<RegisteredDevice> {
-  const { data, error } = await appSchema().rpc('register_device', {
-    p_label: label,
-    p_is_clinic_device: isClinicDevice,
-    p_idle_timeout_seconds: idleTimeoutSeconds ?? null,
-  });
-  if (error) throw toTransitionError(error);
-  return data as RegisteredDevice;
-}
-
-export async function revokeDevice(deviceId: string): Promise<number> {
-  const { data, error } = await appSchema().rpc('revoke_device', {
-    p_device_id: deviceId,
-  });
-  if (error) throw toTransitionError(error);
-  return Number(data);
-}
-
-export interface EmailTrustedDevice {
-  staff_id: string;
-  staff_name: string;
-  staff_role: StaffRole;
-  device_id: string;
-  device_label: string;
-  device_token: string;
-  session_token: string;
-}
-
-export async function trustDeviceByEmail(input: {
-  deviceLabel: string;
-  isClinicDevice?: boolean;
-  idleTimeoutSeconds?: number;
-}): Promise<EmailTrustedDevice> {
-  const { data, error } = await appSchema().rpc('trust_device_by_email', {
-    p_label: input.deviceLabel,
-    p_is_clinic_device: input.isClinicDevice ?? true,
-    p_idle_timeout_seconds: input.idleTimeoutSeconds ?? null,
-  });
-  if (error) throw toTransitionError(error);
-  return data as EmailTrustedDevice;
-}
-
-export async function firstRunEmail(input: {
-  clinicName: string;
-  staffName: string;
-  pin: string;
-  deviceLabel?: string;
-}): Promise<EmailTrustedDevice & { clinic_name: string }> {
-  const { data, error } = await appSchema().rpc('first_run_email', {
-    p_clinic_name: input.clinicName,
-    p_staff_name: input.staffName,
-    p_pin: input.pin,
-    p_device_label: input.deviceLabel ?? null,
-  });
-  if (error) throw toTransitionError(error);
-  return data as EmailTrustedDevice & { clinic_name: string };
-}
-
-export async function claimLegacyAdminByEmail(input: {
-  clinicName: string;
-  adminName: string;
-  pin: string;
-  deviceLabel: string;
-}): Promise<EmailTrustedDevice> {
-  const { data, error } = await appSchema().rpc('claim_legacy_admin_by_email', {
-    p_clinic_name: input.clinicName,
-    p_admin_name: input.adminName,
-    p_pin: input.pin,
-    p_device_label: input.deviceLabel,
-  });
-  if (error) throw toTransitionError(error);
-  return data as EmailTrustedDevice;
 }
