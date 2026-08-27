@@ -1,5 +1,5 @@
 -- Shared patient intake: doctors and nurses can record vitals, while the
--- pharmacy counter cannot and a nurse still cannot prescribe.
+-- pharmacy counter cannot and a nurse still cannot open the consultation side.
 begin;
 select * from no_plan();
 
@@ -18,6 +18,10 @@ insert into staff (id, name, role, reg_no, auth_user_id) values
 
 insert into patients (id, name, age, sex) values
   ('69000000-0000-0000-0000-000000000001', 'Ravi Kumar', 42, 'M');
+
+insert into appointments (id, patient_id, date, token_no, status, source) values
+  ('79000000-0000-0000-0000-000000000001',
+   '69000000-0000-0000-0000-000000000001', app.clinic_today(), 1, 'waiting', 'walkin');
 
 select is(
   (select role::text from staff where id = '59000000-0000-0000-0000-000000000002'),
@@ -38,19 +42,38 @@ select set_config('request.jwt.claim.sub', 'a9000000-0000-0000-0000-000000000002
 set local role authenticated;
 
 select lives_ok(
-  $$ insert into vitals (patient_id, bp, pulse, spo2, recorded_by)
-     values ('69000000-0000-0000-0000-000000000001', '120/80', 78, 98,
+  $$ insert into vitals (patient_id, appointment_id, bp, pulse, spo2, recorded_by)
+     values ('69000000-0000-0000-0000-000000000001',
+             '79000000-0000-0000-0000-000000000001', '120/80', 78, 98,
              '59000000-0000-0000-0000-000000000002') $$,
   'a nurse can record patient vitals under her own identity'
 );
 
+select is(
+  (select appointment_id from vitals
+   where recorded_by = '59000000-0000-0000-0000-000000000002' limit 1),
+  '79000000-0000-0000-0000-000000000001'::uuid,
+  'the vitals stay attached to the visit/token they were taken for'
+);
+
 select throws_ok(
-  $$ insert into vitals (patient_id, bp, recorded_by)
-     values ('69000000-0000-0000-0000-000000000001', '130/90',
+  $$ insert into vitals (patient_id, appointment_id, bp, recorded_by)
+     values ('69000000-0000-0000-0000-000000000001',
+             '79000000-0000-0000-0000-000000000001', '130/90',
              '59000000-0000-0000-0000-000000000001') $$,
   '42501',
   null,
   'a nurse cannot attribute a vitals row to the doctor'
+);
+
+select throws_ok(
+  $$ insert into encounters (patient_id, doctor_id, appointment_id)
+     values ('69000000-0000-0000-0000-000000000001',
+             '59000000-0000-0000-0000-000000000002',
+             '79000000-0000-0000-0000-000000000001') $$,
+  '42501',
+  null,
+  'a nurse cannot create a consultation encounter'
 );
 
 reset role;
@@ -59,8 +82,9 @@ select set_config('request.jwt.claim.sub', 'a9000000-0000-0000-0000-000000000003
 set local role authenticated;
 
 select throws_ok(
-  $$ insert into vitals (patient_id, pulse, recorded_by)
-     values ('69000000-0000-0000-0000-000000000001', 80,
+  $$ insert into vitals (patient_id, appointment_id, pulse, recorded_by)
+     values ('69000000-0000-0000-0000-000000000001',
+             '79000000-0000-0000-0000-000000000001', 80,
              '59000000-0000-0000-0000-000000000003') $$,
   '42501',
   null,
@@ -73,32 +97,26 @@ select set_config('request.jwt.claim.sub', 'a9000000-0000-0000-0000-000000000001
 set local role authenticated;
 
 select lives_ok(
-  $$ insert into vitals (patient_id, temp, recorded_by)
-     values ('69000000-0000-0000-0000-000000000001', 98.6,
+  $$ insert into vitals (patient_id, appointment_id, temp, recorded_by)
+     values ('69000000-0000-0000-0000-000000000001',
+             '79000000-0000-0000-0000-000000000001', 98.6,
              '59000000-0000-0000-0000-000000000001') $$,
   'the doctor can record vitals too'
 );
 
-reset role;
-
-select set_config('request.jwt.claim.sub', 'a9000000-0000-0000-0000-000000000004', true);
-set local role authenticated;
-
 select lives_ok(
-  $$ insert into vitals (patient_id, weight, recorded_by)
-     values ('69000000-0000-0000-0000-000000000001', 72.5,
-             '59000000-0000-0000-0000-000000000004') $$,
-  'the first-run admin keeps the clinical-superuser behavior used by this custom build'
+  $$ insert into encounters (id, patient_id, doctor_id, appointment_id)
+     values ('e9000000-0000-0000-0000-000000000001',
+             '69000000-0000-0000-0000-000000000001',
+             '59000000-0000-0000-0000-000000000001',
+             '79000000-0000-0000-0000-000000000001') $$,
+  'the doctor can create the consultation encounter'
 );
 
 reset role;
 
--- Nurse remains outside the prescription boundary.
-insert into encounters (id, patient_id, doctor_id) values
-  ('e9000000-0000-0000-0000-000000000001',
-   '69000000-0000-0000-0000-000000000001',
-   '59000000-0000-0000-0000-000000000002');
-
+-- Nurse remains outside the prescription boundary even when a doctor-owned
+-- encounter already exists.
 select set_config('request.jwt.claim.sub', 'a9000000-0000-0000-0000-000000000002', true);
 set local role authenticated;
 
@@ -110,6 +128,21 @@ select throws_ok(
   '42501',
   null,
   'a nurse cannot create a prescription'
+);
+
+reset role;
+
+-- The bootstrap admin is still treated as the doctor/owner in this custom
+-- build, matching the existing first-run UI.
+select set_config('request.jwt.claim.sub', 'a9000000-0000-0000-0000-000000000004', true);
+set local role authenticated;
+
+select lives_ok(
+  $$ insert into vitals (patient_id, appointment_id, weight, recorded_by)
+     values ('69000000-0000-0000-0000-000000000001',
+             '79000000-0000-0000-0000-000000000001', 72.5,
+             '59000000-0000-0000-0000-000000000004') $$,
+  'the first-run admin keeps clinical intake access'
 );
 
 reset role;
