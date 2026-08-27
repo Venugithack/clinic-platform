@@ -129,7 +129,13 @@ test('the reorder screen shows its working, and orders nothing by itself', async
   await page.getByRole('button', { name: /^Draft \d+ orders?$/ }).click();
 
   // Drafts, and the screen says so plainly. Nothing here can reach a supplier:
-  // that is PLAN.md §5.3 rule 4, and M5 is where a human taps send.
+  // sending is still a separate deliberate step on Purchase orders.
   await expect(page.getByText(/draft orders? saved/)).toBeVisible();
-  await expect(page.getByText(/Nothing has been sent/)).toBeVisible();
+  await expect(page.getByText(/Open Purchase orders to review the draft/)).toBeVisible();
+
+  // Refresh after the draft: the same medicine stays visible for context but
+  // cannot be ordered twice, and there is a direct route to the existing PO.
+  await expect(calpol).toContainText(/Already on order:/);
+  await expect(calpol.getByRole('button', { name: /Order quantity for Calpol 650/ })).toBeDisabled();
+  await expect(calpol.getByRole('button', { name: /View purchase orders for Calpol 650/ })).toBeVisible();
 });
