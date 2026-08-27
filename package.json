@@ -22,7 +22,10 @@
     "db:migrate": "./scripts/db-migrate.sh",
     "db:backup": "./scripts/db-backup.sh",
     "db:restore-drill": "./scripts/db-restore-drill.sh",
-    "test:first-run": "./scripts/first-run-drill.sh"
+    "test:first-run": "./scripts/first-run-drill.sh",
+    "test:clinic-day": "./scripts/dev-stack.sh --reset && playwright test e2e/m15-clinic-day.spec.ts",
+    "test:go-live": "./scripts/dev-stack.sh --reset && playwright test e2e/m15-clinic-day.spec.ts e2e/m5-gate.spec.ts",
+    "go-live:check": "node scripts/go-live-check.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
@@ -39,7 +42,7 @@
     "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
     "eslint": "^10.8.1",
-    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-hooks": "^7.0.0",
     "pg": "^8.23.0",
     "supabase": "2.114.0",
     "tailwindcss": "^4.3.3",
