@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Archivo, IBM_Plex_Mono } from 'next/font/google';
+import { RecoveryAccess } from '@/components/RecoveryAccess';
 import './globals.css';
 
 /*
@@ -54,7 +55,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${archivo.variable} ${plexMono.variable}`}>
-      <body className="h-full antialiased">{children}</body>
+      <body className="h-full antialiased">
+        {children}
+        <RecoveryAccess />
+      </body>
     </html>
   );
 }
