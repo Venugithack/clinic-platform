@@ -1,16 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { currentSession, ownerSession, touch, type StaffSession } from '@/lib/auth';
 import { presencePing } from '@/lib/transitions/presence';
 import { CounterQueries } from '@/components/CounterQueries';
 import { WriteQueue } from '@/components/WriteQueue';
 
+const ADMIN_FORBIDDEN_OPERATIONAL_ROUTES = ['/queue', '/counter'] as const;
+
 export default function ClinicLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const router = useRouter();
+  const pathname = usePathname();
   const [session, setSession] = useState<StaffSession | null | undefined>(undefined);
 
   useEffect(() => {
@@ -28,6 +31,14 @@ export default function ClinicLayout({
       if (!owner) router.replace('/');
     });
   }, [router]);
+
+  useEffect(() => {
+    if (!session || session.role !== 'admin') return;
+    const sentToOperationalScreen = ADMIN_FORBIDDEN_OPERATIONAL_ROUTES.some(
+      (route) => pathname === route || pathname.startsWith(`${route}/`),
+    );
+    if (sentToOperationalScreen) router.replace('/admin/home');
+  }, [pathname, router, session]);
 
   useEffect(() => {
     if (!session) return;
