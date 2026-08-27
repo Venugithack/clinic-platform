@@ -152,3 +152,34 @@ export async function firstRun(input: {
   if (error) throw toTransitionError(error);
   return data as FirstRun;
 }
+
+export interface RecoveredAdminDevice {
+  staff_id: string;
+  staff_name: string;
+  device_id: string;
+  device_label: string;
+  device_token: string;
+  session_token: string;
+}
+
+/**
+ * Emergency recovery when a clinic already exists but every usable device
+ * token has been lost. The database enforces the safety boundary: clinic name,
+ * active administrator name + PIN, and no registered tablet seen recently.
+ */
+export async function recoverAdminDevice(input: {
+  clinicName: string;
+  adminName: string;
+  pin: string;
+  deviceLabel: string;
+}): Promise<RecoveredAdminDevice> {
+  const { data, error } = await appSchema().rpc('recover_admin_device', {
+    p_clinic_name: input.clinicName,
+    p_admin_name: input.adminName,
+    p_pin: input.pin,
+    p_device_label: input.deviceLabel,
+  });
+
+  if (error) throw toTransitionError(error);
+  return data as RecoveredAdminDevice;
+}
