@@ -32,6 +32,22 @@ async function typePin(page: import('@playwright/test').Page, pin: string) {
   }
 }
 
+/**
+ * First, because it is the first second.
+ *
+ * Serial mode means this runs before the clinic below exists, which is the only
+ * state it can be asked in.
+ *
+ * The test under it already said "Not 'this tablet is not registered'" in a
+ * comment, and could not enforce it: `toBeVisible()` auto-waits, so it passed
+ * happily while the screen showed the accusation first and corrected itself a
+ * round trip later. On a laptop next to the database that flash is invisible.
+ * On a tablet in Kadapa talking to Mumbai it is the doctor's first second with
+ * the app, and it told him to go and find an administrator who does not exist.
+ *
+ * Delaying the one request the decision waits on turns "too fast to see" into
+ * something a test can stand still and look at.
+ */
 test('while it is still asking, it waits rather than accusing the tablet', async ({
   page,
 }) => {
@@ -52,6 +68,9 @@ test('while it is still asking, it waits rather than accusing the tablet', async
     page.getByRole('heading', { name: 'This tablet is not registered' }),
   ).toHaveCount(0);
 
+  // Let the exact request being observed finish before removing the route.
+  // Unrouting while its delayed handler was still alive could make Playwright
+  // report "Route is already handled!" depending on CI timing.
   releaseSetupState();
   await expect(page.getByRole('heading', { name: 'Set this clinic up' })).toBeVisible({
     timeout: 15_000,
@@ -64,6 +83,9 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
 }) => {
   await page.goto('/');
 
+  // Not "this tablet is not registered" — there is nothing to be registered
+  // WITH. The screen has to tell those two situations apart, and it does it by
+  // asking whether the clinic has any staff at all.
   await expect(page.getByRole('heading', { name: 'Set this clinic up' })).toBeVisible();
 
   await page.getByLabel('Clinic name').fill(CLINIC);
@@ -72,10 +94,16 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
   await typePin(page, PIN);
   await page.getByRole('button', { name: 'Set up', exact: true }).click();
 
+  // Signed in already, on a tablet that is now registered: the device token
+  // and the session both came back from that one call, and the PIN chosen four
+  // seconds ago is not asked for again.
   await expect(
     page.getByRole('heading', { name: new RegExp(`Signed in as ${DOCTOR}`) }),
   ).toBeVisible();
 
+  // And the person who set it up is an admin, so the rest of go-live — the
+  // settings, the second tablet and the drug master — is reachable from here
+  // without anybody touching a database.
   await page.getByRole('button', { name: 'Open the queue' }).click();
   await expect(page.getByRole('button', { name: 'Admin', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
@@ -87,6 +115,10 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /People & tablets/ })).toBeVisible();
 
+  // Then lock it and come back in the ordinary way. This is the assertion that
+  // setup was a real sign-in on a real device registration, rather than a
+  // special case bolted past the front door: the PIN he chose is the PIN that
+  // works, on the tablet that call registered.
   await page.goto('/');
   await page.evaluate(() => window.sessionStorage.clear());
   await page.reload();
@@ -100,6 +132,7 @@ test('a clinic is stood up from nothing, on the tablet, by the doctor', async ({
 });
 
 test('the setup screen is never offered again, on any tablet', async ({ browser }) => {
+  // A second tablet out of the box, against the clinic the first test created.
   const fresh = await browser.newContext();
   const tablet = await fresh.newPage();
   await tablet.goto('/');
@@ -108,6 +141,10 @@ test('the setup screen is never offered again, on any tablet', async ({ browser 
   await expect(
     tablet.getByRole('heading', { name: 'This tablet is not registered' }),
   ).toBeVisible();
+
+  // It asks for a code instead — which only an admin can produce, from the
+  // tablet that already works. That is the difference between setting a clinic
+  // up and walking into one.
   await expect(tablet.getByLabel('Registration code')).toBeVisible();
 
   await fresh.close();
