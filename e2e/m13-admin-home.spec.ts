@@ -20,7 +20,7 @@ async function signIn(page: Page, device: string, staffName: string) {
 test('admin opens one control center for setup, go-live data and back-office work', async ({ page }) => {
   await signIn(page, 'seed-device-cabin', 'Admin');
   await page.getByRole('button', { name: 'Open the queue' }).click();
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await page.getByRole('button', { name: 'Administration', exact: true }).click();
 
   await expect(page.getByRole('heading', { name: 'Clinic control center', level: 1 }))
     .toBeVisible();
@@ -34,8 +34,6 @@ test('admin opens one control center for setup, go-live data and back-office wor
   await expect(page.getByRole('button', { name: /Receiving/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Clinic settings', exact: true })).toBeVisible();
 
-  // Printer setup is intentionally absent until real hardware exists. The
-  // control center should not present a dead configuration surface.
   await expect(page.getByRole('button', { name: /Printing/ })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'People & tablets', exact: true }).click();
