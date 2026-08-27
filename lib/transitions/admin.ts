@@ -1,4 +1,4 @@
-/** Staff, email ownership and devices. PLAN.md §16, TABLET.md §5. */
+/** Staff and clinic administration. */
 import { appSchema } from '@/lib/db';
 import type { StaffRole } from '@/lib/db/admin';
 import { toTransitionError } from './errors';
@@ -66,6 +66,25 @@ export async function setStaffPin(staffId: string, pin: string): Promise<void> {
   if (error) throw toTransitionError(error);
 }
 
+export interface FirstRunOwner {
+  staff_id: string;
+  staff_name: string;
+  staff_role: 'admin';
+  email: string;
+  clinic_name: string;
+}
+
+export async function firstRunOwner(staffName: string, pin: string): Promise<FirstRunOwner> {
+  const { data, error } = await appSchema().rpc('first_run_owner', {
+    p_staff_name: staffName,
+    p_pin: pin,
+  });
+  if (error) throw toTransitionError(error);
+  return data as FirstRunOwner;
+}
+
+// Legacy exports are retained for old clients/tests but normal browser execute
+// privileges for device enrollment are revoked by the device-free migration.
 export async function setStaffEmail(staffId: string, email: string | null): Promise<StaffRow> {
   const { data, error } = await appSchema().rpc('set_staff_email', {
     p_staff_id: staffId,
@@ -75,7 +94,6 @@ export async function setStaffEmail(staffId: string, email: string | null): Prom
   return data as StaffRow;
 }
 
-/** Retained for old admin clients; the current UI enrolls tablets by email. */
 export interface RegisteredDevice {
   id: string;
   label: string;

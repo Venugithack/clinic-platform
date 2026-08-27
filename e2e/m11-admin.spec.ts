@@ -11,97 +11,88 @@ async function typePin(page: Page, pin: string) {
   }
 }
 
-async function signIn(page: Page, device: string, staffName: string, pin = '481920') {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
+async function signIn(page: Page, staffName: string, pin = '481920') {
   await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
+  await page.getByRole('button', { name: new RegExp(staffName, 'i') }).click();
   await typePin(page, pin);
   await expect(page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) })).toBeVisible();
 }
 
-test('somebody added here can sign in, and somebody marked as left cannot', async ({ browser }) => {
+test('admin can add pharmacy staff who can then sign in from another browser', async ({ browser }) => {
   const admin = await browser.newContext();
   const page = await admin.newPage();
-  await signIn(page, 'seed-device-cabin', 'Admin');
+  await signIn(page, 'Admin');
   await page.goto('/admin');
 
-  await page.getByRole('button', { name: 'Add someone' }).click();
+  await page.getByRole('button', { name: 'Add staff' }).click();
   await page.getByLabel('Name', { exact: true }).fill(PHARMACIST);
   await page.getByLabel('Phone').fill('+91 90000 00009');
-  await typePin(page, '246810');
-  await page.getByRole('button', { name: 'Add them' }).click();
-  await expect(page.getByTestId('admin-notice')).toContainText('can sign in with their PIN');
+  await page.getByRole('button', { name: /Pharmacy \/ Counter/ }).click();
+  await page.getByLabel('PIN', { exact: true }).fill('246810');
+  await page.getByLabel('Confirm PIN').fill('246810');
+  await page.getByRole('button', { name: 'Add staff', exact: true }).last().click();
+  await expect(page.getByRole('status')).toContainText('ready to sign in');
 
   const counter = await browser.newContext();
   const theirs = await counter.newPage();
-  await signIn(theirs, 'seed-device-counter', PHARMACIST, '246810');
-
-  await page.getByRole('button', { name: `Mark ${PHARMACIST} as left` }).click();
-  await expect(page.getByTestId('admin-notice')).toContainText('marked as no longer here');
-
-  const after = await browser.newContext();
-  const gone = await after.newPage();
-  await gone.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', 'seed-device-counter'] as const,
-  );
-  await gone.goto('/');
-  await expect(gone.getByRole('button', { name: PHARMACIST, exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: `Bring ${PHARMACIST} back` })).toBeVisible();
+  await theirs.goto('/');
+  await expect(theirs.getByRole('button', { name: new RegExp(PHARMACIST) })).toBeVisible();
+  await theirs.getByRole('button', { name: new RegExp(PHARMACIST) }).click();
+  await typePin(theirs, '246810');
+  await theirs.getByRole('button', { name: 'Open the counter' }).click();
+  await expect(theirs).toHaveURL(/\/counter$/);
 
   await admin.close();
   await counter.close();
-  await after.close();
 });
 
-test('the last administrator cannot switch themselves off', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Admin');
+test('admin can reset a PIN and the replacement PIN works', async ({ browser }) => {
+  const admin = await browser.newContext();
+  const page = await admin.newPage();
+  await signIn(page, 'Admin');
   await page.goto('/admin');
-  await page.getByRole('button', { name: 'Mark Admin as left' }).click();
-  await expect(page.getByText(/only administrator left/)).toBeVisible();
-  await expect(page.getByText(/make somebody else an admin first/)).toBeVisible();
+
+  const row = page.getByRole('listitem').filter({ hasText: PHARMACIST });
+  await row.getByRole('button', { name: 'Reset PIN' }).click();
+  await page.getByLabel('PIN', { exact: true }).fill('135790');
+  await page.getByLabel('Confirm PIN').fill('135790');
+  await page.getByRole('button', { name: 'Set new PIN' }).click();
+  await expect(page.getByRole('status')).toContainText('PIN was changed');
+
+  const counter = await browser.newContext();
+  const theirs = await counter.newPage();
+  await theirs.goto('/');
+  await theirs.getByRole('button', { name: new RegExp(PHARMACIST) }).click();
+  await typePin(theirs, '135790');
+  await theirs.getByRole('button', { name: 'Open the counter' }).click();
+  await expect(theirs).toHaveURL(/\/counter$/);
+
+  await admin.close();
+  await counter.close();
 });
 
-test('admin configures owner email and no registration code is generated', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Admin');
+test('deactivated staff disappear from the public sign-in list', async ({ browser }) => {
+  const admin = await browser.newContext();
+  const page = await admin.newPage();
+  await signIn(page, 'Admin');
   await page.goto('/admin');
 
-  await expect(page.getByRole('heading', { name: 'No registration code anymore' })).toBeVisible();
-  await expect(page.getByText(/Continue with email/)).toBeVisible();
-  await expect(page.getByLabel('Tablet name')).toHaveCount(0);
-  await expect(page.getByTestId('registration-code')).toHaveCount(0);
+  const row = page.getByRole('listitem').filter({ hasText: PHARMACIST });
+  await row.getByRole('button', { name: 'Deactivate' }).click();
+  await expect(page.getByRole('status')).toContainText('can no longer sign in');
 
-  await page.getByRole('button', { name: 'Email access for Admin' }).click();
-  const input = page.getByLabel('Email for Admin');
-  await input.fill('admin-e2e@example.com');
-  await page.getByRole('button', { name: 'Save email' }).click();
-  await expect(page.getByTestId('admin-notice')).toContainText('can use admin-e2e@example.com');
-  await expect(
-    page.getByText(/admin · PIN set .* · admin-e2e@example\.com/),
-  ).toBeVisible();
+  const other = await browser.newContext();
+  const theirs = await other.newPage();
+  await theirs.goto('/');
+  await expect(theirs.getByRole('button', { name: new RegExp(PHARMACIST) })).toHaveCount(0);
 
-  // Leave the shared seeded database as we found it for parallel specs.
-  await page.getByRole('button', { name: 'Email access for Admin' }).click();
-  await page.getByLabel('Email for Admin').fill('');
-  await page.getByRole('button', { name: 'Save email' }).click();
-  await expect(page.getByTestId('admin-notice')).toContainText('Email access removed');
+  await admin.close();
+  await other.close();
 });
 
-test('the tablet in your hands is not the one you revoke', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Admin');
+test('counter cannot change staff or PINs', async ({ page }) => {
+  await signIn(page, 'Counter');
   await page.goto('/admin');
-  await page.getByRole('button', { name: 'Revoke Cabin tablet' }).click();
-  await expect(page.getByText(/that is the tablet you are using/)).toBeVisible();
-});
-
-test('the counter cannot change staff, email access or trusted devices', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
-  await page.goto('/admin');
-  await expect(page.getByText(/Only an administrator/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Add someone' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Email access for Admin' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Revoke Cabin tablet' })).toBeDisabled();
+  await expect(page.getByText(/Only the administrator/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add staff' })).toBeDisabled();
 });
