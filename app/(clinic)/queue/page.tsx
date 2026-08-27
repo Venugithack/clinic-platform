@@ -54,9 +54,6 @@ export default function QueuePage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
-    // Cleared before the read, never after it. A read landing is not evidence
-    // that the last WRITE succeeded, and clearing on completion erased a
-    // refusal somebody was in the middle of reading (M11e).
     setError(null);
     void todaysQueue()
       .then(setQueue)
@@ -68,20 +65,23 @@ export default function QueuePage() {
   const open = async (entry: QueueEntry) => {
     if (busy) return;
 
-    // This screen is the default on BOTH tablets (TABLET.md §7), so this row is
-    // under the pharmacist's thumb as often as the doctor's — and opening a
-    // consult is the one thing only the consulting room may do.
-    //
-    // Unguarded it did both halves wrongly: it moved the token to `in_consult`
-    // and then showed the counter the doctor's consult form. The board then
-    // announced a consult that had not started, on the doctor's own screen,
-    // with the counter's name against it in the audit log. Recoverable —
-    // `in_consult` can go back to `waiting` — but only by someone who works out
-    // what happened.
-    if (currentSession()?.role !== 'doctor') {
+    const role = currentSession()?.role;
+
+    // Nurses share intake with the doctor but not consultation: tapping a
+    // patient means "take/update vitals", never "start a consultation".
+    if (role === 'nurse') {
+      router.push(`/vitals?appointment=${entry.appointment_id}` as Route);
+      return;
+    }
+
+    // The pharmacy still sees the queue, but cannot move clinical state.
+    if (role === 'counter') {
       router.push('/counter');
       return;
     }
+
+    // Doctor and the first-run admin use the consultation side of the clinic.
+    if (role !== 'doctor' && role !== 'admin') return;
 
     setBusy(true);
     try {
@@ -98,12 +98,11 @@ export default function QueuePage() {
   };
 
   const waiting = queue.filter((entry) => entry.status === 'waiting').length;
-  // The state between the two ends, which the summary used to skip. With it
-  // missing the rail could read "Waiting 0 · Seen 0" over a list of people who
-  // were all mid-consult — true of both numbers, and wrong about the room.
   const inConsult = queue.filter((entry) => entry.status === 'in_consult').length;
   const done = queue.filter((entry) => entry.status === 'done').length;
   const session = currentSession();
+  const canIntake =
+    session?.role === 'doctor' || session?.role === 'nurse' || session?.role === 'admin';
 
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
@@ -147,20 +146,16 @@ export default function QueuePage() {
       }
       rail={
         <>
-          <RailButton tone="primary" onClick={() => router.push('/queue/new')}>
-            Register walk-in
-          </RailButton>
-          {/* The counter's way back to its own room. Without it the pharmacy
-              tablet lands on this screen and the rail offers no route to the
-              pharmacy queue at all — the URL bar was the only way across, on a
-              tablet whose whole point is that nobody types. */}
-          {session && session.role !== 'doctor' ? (
+          {canIntake ? (
+            <RailButton tone="primary" onClick={() => router.push('/queue/new')}>
+              Register walk-in
+            </RailButton>
+          ) : null}
+          {session?.role === 'counter' ? (
             <RailButton onClick={() => router.push('/counter')}>Counter</RailButton>
           ) : null}
           <RailButton onClick={() => router.push('/presence')}>Presence</RailButton>
           <RailButton onClick={() => router.push('/reports')}>Reports</RailButton>
-          {/* Doctor and admin only — it is where the drug master comes from,
-              and the counter has no business rewriting what a strip is. */}
           {session?.role === 'doctor' || session?.role === 'admin' ? (
             <>
               <RailButton onClick={() => router.push('/import')}>Import</RailButton>
@@ -182,14 +177,14 @@ export default function QueuePage() {
         </>
       }
     >
-      {/* No action here: "Register walk-in" already lives in the rail, and two
-          buttons with one name is an ambiguous target for a finger and for the
-          e2e suite alike. The rail is this app's action surface. */}
-      {/* Shared screen, so the eyebrow names the room the reader is standing
-          in. Hard-coded it told the pharmacist she was in the consulting room
-          — the same wrong answer the button on the lock screen used to give. */}
       <PageHeader
-        eyebrow={session?.role === 'doctor' ? 'Consulting room' : 'Pharmacy'}
+        eyebrow={
+          session?.role === 'nurse'
+            ? 'Patient intake'
+            : session?.role === 'counter'
+              ? 'Pharmacy'
+              : 'Consulting room'
+        }
         title="Queue"
         sub={today}
       />
@@ -199,7 +194,11 @@ export default function QueuePage() {
       {queue.length === 0 && !error ? (
         <EmptyState
           title="Nobody has a token yet"
-          direction="Register a walk-in from the rail on the right. The token appears here and on the counter's tablet at the same moment."
+          direction={
+            canIntake
+              ? 'Register a walk-in from the rail on the right. The token appears here and on the counter tablet at the same moment.'
+              : 'New patients appear here when the clinical team gives them a token.'
+          }
         />
       ) : null}
 
@@ -230,8 +229,6 @@ export default function QueuePage() {
                   </span>
                 </span>
 
-                {/* Allergies are the one thing that must be visible before the
-                    doctor opens the record, not inside it. */}
                 {entry.allergies ? (
                   <Badge tone="stop">{entry.allergies}</Badge>
                 ) : null}
