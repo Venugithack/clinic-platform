@@ -28,6 +28,11 @@ interface SessionPayload {
   staff_role: StaffSession['role'];
 }
 
+interface UnlockPayload extends Partial<SessionPayload> {
+  ok: boolean;
+  reason?: 'incorrect' | 'locked';
+}
+
 function storePayload(payload: SessionPayload): StaffSession {
   const session: StaffSession = {
     token: payload.session_token,
@@ -45,14 +50,21 @@ export async function unlock(staffId: string, pin: string): Promise<StaffSession
     p_pin: pin,
   });
 
-  if (error || !data) {
-    const message = error?.message?.toLowerCase().includes('too many')
-      ? 'Too many incorrect attempts. Try again in 10 minutes.'
-      : 'Incorrect PIN.';
-    throw new Error(message);
+  if (error || !data) throw new Error('Could not sign in. Try again.');
+
+  const result = data as UnlockPayload;
+  if (!result.ok) {
+    if (result.reason === 'locked') {
+      throw new Error('Too many incorrect attempts. Try again in 10 minutes.');
+    }
+    throw new Error('Incorrect PIN.');
   }
 
-  return storePayload(data as SessionPayload);
+  if (!result.session_token || !result.staff_id || !result.staff_name || !result.staff_role) {
+    throw new Error('Could not start your clinic session. Try again.');
+  }
+
+  return storePayload(result as SessionPayload);
 }
 
 export function currentSession(): StaffSession | null {
