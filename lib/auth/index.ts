@@ -1,20 +1,19 @@
 /**
- * Auth, behind one adapter. HOSTING.md §7, TABLET.md §5.
+ * Clinic authentication behind one adapter.
  *
- * Two separable things, deliberately:
+ * Two identities, deliberately:
+ *   - owner/admin: verified email OTP for control-panel access and recovery
+ *   - daily staff: name + six-digit PIN from any browser
  *
- *   the DEVICE holds the session  — trusted once by an admin/doctor email,
- *                                   revocable from one screen
- *   the PIN holds the identity    — six digits, per staff member, idle-locked
- *
- * Email is used only to establish device ownership or remote owner access.
- * Staff do not type email/password during the clinic day.
+ * The browser is not trusted. Postgres mints a short-lived staff session token
+ * after either successful path, and every protected request carries that token.
  */
 import {
   appSchema,
   clearStoredSession,
   db,
   readStoredSession,
+  resetDb,
   writeStoredSession,
   type StoredSession,
 } from '@/lib/db';
@@ -22,55 +21,44 @@ import {
 export type StaffSession = StoredSession;
 export { writeStoredSession };
 
-const DEVICE_TOKEN_KEY = 'clinic.deviceToken';
-
-export function deviceToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(DEVICE_TOKEN_KEY);
+interface SessionPayload {
+  session_token: string;
+  staff_id: string;
+  staff_name: string;
+  staff_role: StaffSession['role'];
 }
 
-export function registerDeviceLocally(token: string): void {
-  window.localStorage.setItem(DEVICE_TOKEN_KEY, token);
+function storePayload(payload: SessionPayload): StaffSession {
+  const session: StaffSession = {
+    token: payload.session_token,
+    staffId: payload.staff_id,
+    staffName: payload.staff_name,
+    role: payload.staff_role,
+  };
+  writeStoredSession(session);
+  return session;
 }
 
 export async function unlock(staffId: string, pin: string): Promise<StaffSession> {
-  const device = deviceToken();
-  if (!device) {
-    throw new Error('This tablet is not trusted yet. Sign in with an administrator email.');
-  }
-
-  const { data, error } = await appSchema().rpc('unlock', {
-    p_device_token: device,
+  const { data, error } = await appSchema().rpc('unlock_staff', {
     p_staff_id: staffId,
     p_pin: pin,
   });
 
-  if (error || typeof data !== 'string') {
-    throw new Error('Incorrect PIN.');
+  if (error || !data) {
+    const message = error?.message?.toLowerCase().includes('too many')
+      ? 'Too many incorrect attempts. Try again in 10 minutes.'
+      : 'Incorrect PIN.';
+    throw new Error(message);
   }
 
-  const { data: staff } = await db()
-    .from('staff')
-    .select('id, name, role')
-    .eq('id', staffId)
-    .single();
-
-  const session: StaffSession = {
-    token: data,
-    staffId,
-    staffName: staff?.name ?? '',
-    role: staff?.role ?? 'counter',
-  };
-
-  writeStoredSession(session);
-  return session;
+  return storePayload(data as SessionPayload);
 }
 
 export function currentSession(): StaffSession | null {
   return readStoredSession();
 }
 
-/** Called on activity, not on a timer. The idle window comes from the device. */
 export async function touch(): Promise<boolean> {
   const session = currentSession();
   if (!session) return false;
@@ -85,42 +73,39 @@ export async function touch(): Promise<boolean> {
 
 export async function lock(): Promise<void> {
   const session = currentSession();
-  if (session) {
-    await appSchema().rpc('lock', { p_token: session.token });
-  }
+  if (session) await appSchema().rpc('lock', { p_token: session.token });
   clearStoredSession();
 }
 
-// ---------------------------------------------------------------------------
-// Owner email access.
-//
-// These are kept here rather than in a screen so @supabase remains behind the
-// lib/db seam. A normal browser already has an anonymous Supabase session; only
-// a magic-link session with a real email is accepted by the DB trust functions.
-// ---------------------------------------------------------------------------
 export interface EmailIdentity {
   id: string;
   email: string;
 }
 
-export async function sendEmailAccessLink(email: string): Promise<void> {
+/** Send a six-digit Supabase email OTP. The email template must contain {{ .Token }}. */
+export async function sendEmailOtp(email: string): Promise<void> {
   const normalized = email.trim().toLowerCase();
   if (!normalized) throw new Error('Enter your email address.');
 
-  const redirectTo =
-    typeof window === 'undefined' ? undefined : `${window.location.origin}/enroll`;
   const { error } = await db().auth.signInWithOtp({
     email: normalized,
-    options: {
-      // Creating an Auth user is harmless by itself. The database separately
-      // requires the email to be pre-authorized on an admin/doctor staff row,
-      // except for the guarded first-clinic/legacy-claim paths.
-      shouldCreateUser: true,
-      emailRedirectTo: redirectTo,
-    },
+    options: { shouldCreateUser: true },
   });
-
   if (error) throw new Error(error.message);
+}
+
+export async function verifyEmailOtp(email: string, token: string): Promise<EmailIdentity> {
+  const normalized = email.trim().toLowerCase();
+  const code = token.replace(/\D/g, '');
+  if (code.length !== 6) throw new Error('Enter the 6-digit code from your email.');
+
+  const { data, error } = await db().auth.verifyOtp({
+    email: normalized,
+    token: code,
+    type: 'email',
+  });
+  if (error || !data.user?.email) throw new Error(error?.message ?? 'The code is invalid or expired.');
+  return { id: data.user.id, email: data.user.email.toLowerCase() };
 }
 
 export async function emailIdentity(): Promise<EmailIdentity | null> {
@@ -129,8 +114,22 @@ export async function emailIdentity(): Promise<EmailIdentity | null> {
   return { id: data.user.id, email: data.user.email.toLowerCase() };
 }
 
+export async function openOwnerSession(): Promise<StaffSession> {
+  const { data, error } = await appSchema().rpc('owner_session');
+  if (error || !data) throw new Error(error?.message ?? 'This email is not authorized for administration.');
+  return storePayload(data as SessionPayload);
+}
+
+export async function firstRunOwner(staffName: string, pin: string): Promise<StaffSession> {
+  const { data, error } = await appSchema().rpc('first_run_owner', {
+    p_staff_name: staffName,
+    p_pin: pin,
+  });
+  if (error || !data) throw new Error(error?.message ?? 'Clinic setup failed.');
+  return storePayload(data as SessionPayload);
+}
+
 export async function signOutEmailIdentity(): Promise<void> {
-  // Device/PIN trust is independent of the email auth session. Signing the
-  // owner email out does not untrust the tablet they just enrolled.
   await db().auth.signOut();
+  resetDb();
 }
