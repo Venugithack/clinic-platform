@@ -28,6 +28,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
+import { clinicToday, isoDay } from '@/lib/clinic/day';
 import { Numpad } from '@/components/Numpad';
 import { ScanField } from '@/components/ScanField';
 import { DrugSearch } from '@/components/DrugSearch';
@@ -234,7 +235,11 @@ function Receiving() {
       const input: GoodsReceiptInput = {
         supplierId: supplier?.id,
         invoiceNo: invoiceNo.trim() || undefined,
-        invoiceDate: new Date().toISOString().slice(0, 10),
+        // The clinic's day, not UTC's. `toISOString()` is UTC by definition, so
+        // a receipt booked in the 00:00-05:30 IST window carried yesterday's
+        // date onto a supplier invoice. Same two-todays bug as the registers
+        // (lib/clinic/day.ts); this one just never had a test standing under it.
+        invoiceDate: isoDay(clinicToday()),
         awaitingInvoice,
         lines: lines.map((line) => ({
           drugId: line.drug.id,

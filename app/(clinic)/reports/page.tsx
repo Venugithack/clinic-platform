@@ -27,6 +27,17 @@ import {
   salesRegister,
 } from '@/lib/db/registers';
 import { downloadCsv, toCsv, type CsvColumn } from '@/lib/reports/csv';
+import {
+  CLINIC_TIMEZONE,
+  addDays,
+  clinicToday,
+  endOfPreviousMonth,
+  isoDay,
+  startOfFinancialYear,
+  startOfMonth,
+  startOfPreviousMonth,
+} from '@/lib/clinic/day';
+import { clinicRow } from '@/lib/db/settings';
 import './reports.css';
 
 type Tab = 'h1' | 'sales' | 'purchases' | 'writeoffs' | 'recall';
@@ -119,38 +130,64 @@ const TRACE_COLUMNS: Array<CsvColumn<Record<string, unknown>>> = [
   { key: 'dispensed_by', label: 'Dispensed by' },
 ];
 
-/** Local YYYY-MM-DD. The registers group by clinic day, not by UTC. */
-function isoDay(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-    date.getDate(),
-  ).padStart(2, '0')}`;
+interface Range {
+  label: string;
+  from: string;
+  to: string;
 }
 
-function presets() {
-  const today = new Date();
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
-  const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() - 6);
-  const yearStart = new Date(today.getFullYear(), 3, 1);
-  if (yearStart > today) yearStart.setFullYear(yearStart.getFullYear() - 1);
+/**
+ * The preset ranges, on the CLINIC's calendar rather than the browser's.
+ *
+ * These are compared against `dispensed_on` / `billed_on` / `received_on`, and
+ * every one of those is `app.clinic_day(...)` — a local date. Building them out
+ * of a bare `new Date()` asked in whatever timezone the device happens to be
+ * set to, which is right on a clinic tablet and wrong on everything else. See
+ * lib/clinic/day.ts.
+ *
+ * A fixed-length tuple, so `ranges[DEFAULT_RANGE_INDEX]` is a `Range` rather
+ * than `Range | undefined`.
+ */
+function presets(timeZone: string): [Range, Range, Range, Range, Range] {
+  const today = clinicToday(timeZone);
 
   return [
     { label: 'Today', from: isoDay(today), to: isoDay(today) },
-    { label: 'Last 7 days', from: isoDay(weekStart), to: isoDay(today) },
-    { label: 'This month', from: isoDay(monthStart), to: isoDay(today) },
-    { label: 'Last month', from: isoDay(lastMonthStart), to: isoDay(lastMonthEnd) },
+    { label: 'Last 7 days', from: isoDay(addDays(today, -6)), to: isoDay(today) },
+    { label: 'This month', from: isoDay(startOfMonth(today)), to: isoDay(today) },
+    {
+      label: 'Last month',
+      from: isoDay(startOfPreviousMonth(today)),
+      to: isoDay(endOfPreviousMonth(today)),
+    },
     // The financial year, because that is the range the accountant asks for.
-    { label: 'This financial year', from: isoDay(yearStart), to: isoDay(today) },
+    { label: 'This financial year', from: isoDay(startOfFinancialYear(today)), to: isoDay(today) },
   ];
 }
 
+const DEFAULT_RANGE_INDEX = 2;
+
 export default function ReportsPage() {
   const router = useRouter();
-  const ranges = presets();
+  /**
+   * The clinic's timezone, once the clinic row has been read.
+   *
+   * Until then the ranges use the same default the column does — `clinic.timezone`
+   * is `not null default 'Asia/Kolkata'` — so the first render is already right
+   * for this clinic and merely provisional for a clinic that has changed it.
+   */
+  const [timeZone, setTimeZone] = useState(CLINIC_TIMEZONE);
   const [tab, setTab] = useState<Tab>('h1');
-  const [range, setRange] = useState(ranges[2] as { label: string; from: string; to: string });
+
+  const ranges = presets(timeZone);
+  /**
+   * The SELECTION is the label, not the range object. The dates behind a label
+   * move — at midnight, and when the clinic timezone arrives — and a stored
+   * object would hold yesterday's while the buttons showed today's.
+   */
+  const [rangeLabel, setRangeLabel] = useState(ranges[DEFAULT_RANGE_INDEX].label);
+  const range =
+    ranges.find((preset) => preset.label === rangeLabel) ?? ranges[DEFAULT_RANGE_INDEX];
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [batchNo, setBatchNo] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -178,11 +215,33 @@ export default function ReportsPage() {
         setBusy(false);
       }
     })();
-  }, [tab, range, batchNo]);
+    // `range` is derived, so it is a new object on every render. These two
+    // strings are what the read actually depends on; the object identity would
+    // re-run this effect forever.
+  }, [tab, range.from, range.to, batchNo]);
 
   useEffect(() => {
     if (tab !== 'recall') load();
-  }, [tab, range, load]);
+  }, [tab, load]);
+
+  /**
+   * Ask the database which timezone it is grouping the registers by.
+   *
+   * A failure is deliberately silent: the fallback above is this column's own
+   * default, and a clinic that has never changed it — which is this one — is
+   * already being shown the right dates. An error banner over a correct range
+   * would be noise on the screen an inspector is standing at.
+   */
+  useEffect(() => {
+    void (async () => {
+      try {
+        const clinic = await clinicRow();
+        if (clinic?.timezone) setTimeZone(clinic.timezone);
+      } catch {
+        /* keep CLINIC_TIMEZONE */
+      }
+    })();
+  }, []);
 
   const missingAddresses =
     tab === 'h1' ? rows.filter((row) => row.address_missing).length : 0;
@@ -211,7 +270,7 @@ export default function ReportsPage() {
                     key={preset.label}
                     type="button"
                     aria-pressed={range.label === preset.label}
-                    onClick={() => setRange(preset)}
+                    onClick={() => setRangeLabel(preset.label)}
                     className={`h-11 rounded-box border px-3 text-left text-sm ${
                       range.label === preset.label
                         ? 'border-ink bg-ink text-paper'
