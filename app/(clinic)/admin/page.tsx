@@ -4,69 +4,43 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
-import { Numpad } from '@/components/Numpad';
 import { currentSession } from '@/lib/auth';
-import {
-  allDevices,
-  allStaff,
-  type DeviceRow,
-  type StaffAdminRow,
-  type StaffRole,
-} from '@/lib/db/admin';
-import {
-  addStaff,
-  revokeDevice,
-  setStaffEmail,
-  setStaffPin,
-  updateStaff,
-} from '@/lib/transitions/admin';
+import { allStaff, type StaffAdminRow, type StaffRole } from '@/lib/db/admin';
+import { addStaff, setStaffPin, updateStaff } from '@/lib/transitions/admin';
 
 const ROLES: Array<{ value: StaffRole; label: string; hint: string }> = [
-  { value: 'doctor', label: 'Doctor', hint: 'Intake, consult and prescribe' },
-  { value: 'nurse', label: 'Nurse', hint: 'Registration, vitals and intake' },
-  { value: 'counter', label: 'Counter', hint: 'Dispense, sell and take cash' },
-  { value: 'admin', label: 'Admin', hint: 'Clinic operations and configuration' },
+  { value: 'doctor', label: 'Doctor', hint: 'Queue, consultation and prescriptions' },
+  { value: 'nurse', label: 'Nurse', hint: 'Patients, vitals and queue intake' },
+  { value: 'counter', label: 'Pharmacy / Counter', hint: 'Dispensing, billing and stock' },
+  { value: 'admin', label: 'Administrator', hint: 'Control panel and clinic configuration' },
 ];
 
-function asDay(value: string | null): string {
-  if (!value) return 'never';
-  return new Date(value).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+function roleLabel(role: StaffRole): string {
+  return ROLES.find((item) => item.value === role)?.label ?? role;
 }
 
-export default function AdminPage() {
+export default function AdminPeoplePage() {
   const router = useRouter();
   const session = typeof window === 'undefined' ? null : currentSession();
   const allowed = session?.role === 'admin';
 
   const [staff, setStaff] = useState<StaffAdminRow[]>([]);
-  const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [adding, setAdding] = useState(false);
+  const [resetting, setResetting] = useState<StaffAdminRow | null>(null);
   const [name, setName] = useState('');
   const [role, setRole] = useState<StaffRole>('counter');
   const [phone, setPhone] = useState('');
+  const [regNo, setRegNo] = useState('');
   const [pin, setPin] = useState('');
-  const [resetting, setResetting] = useState<StaffAdminRow | null>(null);
-  const [emailFor, setEmailFor] = useState<StaffAdminRow | null>(null);
-  const [email, setEmail] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
 
   const refresh = useCallback(() => {
     setError(null);
-    void (async () => {
-      try {
-        setStaff(await allStaff());
-        setDevices(await allDevices());
-      } catch (cause) {
-        setError((cause as Error).message);
-      }
-    })();
+    void allStaff().then(setStaff).catch((cause) => setError((cause as Error).message));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -85,54 +59,54 @@ export default function AdminPage() {
     }
   };
 
+  const clearPin = () => {
+    setPin('');
+    setConfirmPin('');
+  };
+
+  const validPin = /^\d{6}$/.test(pin) && pin === confirmPin;
+
   const doAdd = () =>
     run(async () => {
-      const added = await addStaff({ name, role, pin, phone: phone || undefined });
+      if (!name.trim()) throw new Error('Enter the staff member name.');
+      if (!validPin) throw new Error('Enter the same 6-digit PIN twice.');
+      const added = await addStaff({
+        name: name.trim(),
+        role,
+        pin,
+        phone: phone.trim() || undefined,
+        regNo: regNo.trim() || undefined,
+      });
       setAdding(false);
       setName('');
       setPhone('');
-      setPin('');
+      setRegNo('');
       setRole('counter');
-      return `${added.name} can sign in with their PIN now.`;
+      clearPin();
+      return `${added.name} is ready to sign in from the clinic home page.`;
     });
 
-  const doResetPin = () =>
+  const doReset = () =>
     run(async () => {
-      const who = resetting as StaffAdminRow;
-      await setStaffPin(who.id, pin);
+      if (!resetting) throw new Error('Choose a staff member.');
+      if (!validPin) throw new Error('Enter the same 6-digit PIN twice.');
+      await setStaffPin(resetting.id, pin);
+      const who = resetting.name;
       setResetting(null);
-      setPin('');
-      return `${who.name}'s PIN is set.`;
+      clearPin();
+      return `${who}'s PIN was changed and their old sessions were ended.`;
     });
 
-  const saveEmail = () =>
-    run(async () => {
-      const who = emailFor as StaffAdminRow;
-      const saved = await setStaffEmail(who.id, email.trim() || null);
-      setEmailFor(null);
-      setEmail('');
-      return saved.email
-        ? `${who.name} can use ${saved.email} to trust a new device.`
-        : `Email access removed for ${who.name}.`;
-    });
-
-  const pinPad = (onDone: () => void, label: string) => (
-    <div className="mt-4 max-w-xs">
-      <p className="eyebrow">Six-digit PIN</p>
-      <div className="mt-2 flex gap-3" role="status" aria-label="PIN entry">
-        {Array.from({ length: 6 }, (_, index) => (
-          <span key={index} className={`h-4 w-4 rounded-full border border-rule ${index < pin.length ? 'bg-ink' : ''}`} />
-        ))}
-      </div>
-      <div className="mt-3 w-64">
-        <Numpad
-          onDigit={(digit) => setPin((current) => (current + digit).slice(0, 6))}
-          onBackspace={() => setPin((current) => current.slice(0, -1))}
-        />
-      </div>
-      <button type="button" disabled={busy || pin.length !== 6} onClick={onDone} className="mt-4 h-14 w-64 rounded-box border border-ink bg-ink font-medium text-paper disabled:opacity-40">
-        {label}
-      </button>
+  const pinFields = (
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <label className="block">
+        <span className="block text-sm text-ink-2">6-digit PIN</span>
+        <input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="PIN" className="blank mt-1 h-14 w-full px-3 text-center text-xl tracking-[0.3em]" />
+      </label>
+      <label className="block">
+        <span className="block text-sm text-ink-2">PIN again</span>
+        <input type="password" inputMode="numeric" maxLength={6} value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="Confirm PIN" className="blank mt-1 h-14 w-full px-3 text-center text-xl tracking-[0.3em]" />
+      </label>
     </div>
   );
 
@@ -140,141 +114,92 @@ export default function AdminPage() {
     <ThreePane
       context={
         <div>
-          <h2 className="eyebrow">People and devices</h2>
-          <p className="tabular mt-1 text-lg">
-            {staff.filter((row) => row.active).length} working · {devices.filter((row) => row.revoked_at === null).length} trusted devices
-          </p>
+          <h2 className="eyebrow">People</h2>
+          <p className="tabular mt-1 text-lg">{staff.filter((row) => row.active).length} active staff</p>
           <p className="mt-6 text-sm leading-6 text-ink-2">
-            Staff use PINs during the clinic day. Admins and doctors may have an email for trusting a new device or owner access.
+            There are no trusted devices. Staff can open the clinic URL on any browser, choose their name and use their PIN.
           </p>
           <p className="mt-4 text-sm leading-6 text-ink-2">
-            <strong className="text-ink">Lost a device?</strong> Revoke it here. Its live clinic session ends immediately.
+            The administrator email OTP is reserved for the control panel and recovery.
           </p>
         </div>
       }
       rail={
         <>
-          <RailButton
-            tone="primary"
-            disabled={!allowed || busy}
-            onClick={() => {
-              setAdding((value) => !value);
-              setResetting(null);
-              setEmailFor(null);
-              setPin('');
-            }}
-          >
-            Add someone
+          <RailButton tone="primary" disabled={!allowed || busy} onClick={() => { setAdding(true); setResetting(null); clearPin(); }}>
+            Add staff
           </RailButton>
           <RailButton disabled={busy} onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/admin/home')}>Administration</RailButton>
-          <RailButton onClick={() => router.push('/queue')}>Back to queue</RailButton>
+          <RailButton onClick={() => router.push('/admin/home')}>Control panel</RailButton>
+          <RailButton onClick={() => router.push('/')}>Staff sign-in</RailButton>
         </>
       }
     >
-      <PageHeader eyebrow="Administration" title="People and devices" />
+      <PageHeader eyebrow="Administration" title="Staff access" />
 
-      {!allowed ? (
-        <Notice tone="bad">Only an administrator can change staff, PINs, email access or trusted devices.</Notice>
-      ) : null}
+      {!allowed ? <Notice tone="bad">Only the administrator can change staff or PINs.</Notice> : null}
       {error ? <Notice tone="bad" className="max-w-3xl">{error}</Notice> : null}
-      {notice ? <p role="status" data-testid="admin-notice" className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free">{notice}</p> : null}
+      {notice ? <p role="status" className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free">{notice}</p> : null}
 
       {adding ? (
         <section className="mt-6 max-w-2xl rounded-box border border-rule bg-sheet p-4">
-          <h2 className="text-lg font-medium">Someone new</h2>
-          <label className="mt-3 block">
+          <h2 className="text-lg font-medium">Add staff member</h2>
+          <label className="mt-4 block">
             <span className="block text-sm text-ink-2">Name</span>
             <input value={name} onChange={(event) => setName(event.target.value)} aria-label="Name" className="blank mt-1 h-14 w-full px-3 text-lg" />
           </label>
-          <label className="mt-3 block">
-            <span className="block text-sm text-ink-2">Phone</span>
-            <input value={phone} onChange={(event) => setPhone(event.target.value)} aria-label="Phone" className="blank mt-1 h-14 w-full px-3 text-lg" />
-          </label>
           <div className="mt-4 grid grid-cols-2 gap-3">
             {ROLES.map((option) => (
-              <button key={option.value} type="button" aria-pressed={role === option.value} onClick={() => setRole(option.value)} className={`min-h-14 rounded-box border px-3 text-left active:bg-paper-2 ${role === option.value ? 'border-ink bg-paper-2' : 'border-rule bg-sheet'}`}>
+              <button key={option.value} type="button" aria-pressed={role === option.value} onClick={() => setRole(option.value)} className={`min-h-16 rounded-box border px-3 text-left ${role === option.value ? 'border-ink bg-paper-2' : 'border-rule bg-sheet'}`}>
                 <span className="block">{option.label}</span>
                 <span className="block text-xs text-ink-2">{option.hint}</span>
               </button>
             ))}
           </div>
-          {pinPad(() => void doAdd(), 'Add them')}
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="block text-sm text-ink-2">Phone (optional)</span>
+              <input value={phone} onChange={(event) => setPhone(event.target.value)} aria-label="Phone" className="blank mt-1 h-14 w-full px-3" />
+            </label>
+            <label className="block">
+              <span className="block text-sm text-ink-2">Registration no. (optional)</span>
+              <input value={regNo} onChange={(event) => setRegNo(event.target.value)} aria-label="Registration number" className="blank mt-1 h-14 w-full px-3" />
+            </label>
+          </div>
+          {pinFields}
+          <div className="mt-5 flex gap-3">
+            <button type="button" disabled={busy || !name.trim() || !validPin} onClick={() => void doAdd()} className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40">Add staff</button>
+            <button type="button" disabled={busy} onClick={() => { setAdding(false); clearPin(); }} className="h-14 rounded-box border border-rule bg-sheet px-5">Cancel</button>
+          </div>
         </section>
       ) : null}
 
       {resetting ? (
         <section className="mt-6 max-w-2xl rounded-box border border-rule bg-sheet p-4">
-          <h2 className="text-lg font-medium">New PIN for {resetting.name}</h2>
-          <p className="mt-1 text-sm text-ink-2">Their old PIN stops working immediately.</p>
-          {pinPad(() => void doResetPin(), 'Set PIN')}
-        </section>
-      ) : null}
-
-      {emailFor ? (
-        <section className="mt-6 max-w-2xl rounded-box border border-rule bg-sheet p-4">
-          <p className="eyebrow">Email access</p>
-          <h2 className="mt-1 text-lg font-medium">{emailFor.name}</h2>
-          <p className="mt-2 text-sm leading-6 text-ink-2">
-            This email can trust a new device. It is not used for everyday PIN sign-in.
-          </p>
-          <label className="mt-4 block">
-            <span className="block text-sm text-ink-2">Authorized email</span>
-            <input type="email" inputMode="email" value={email} onChange={(event) => setEmail(event.target.value)} aria-label={`Email for ${emailFor.name}`} placeholder="doctor@example.com" className="blank mt-1 h-14 w-full px-3 text-lg" />
-          </label>
-          <div className="mt-4 flex gap-3">
-            <button type="button" disabled={busy} onClick={() => void saveEmail()} className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40">Save email</button>
-            <button type="button" disabled={busy} onClick={() => { setEmailFor(null); setEmail(''); }} className="h-14 rounded-box border border-rule bg-sheet px-5">Cancel</button>
+          <p className="eyebrow">Reset PIN</p>
+          <h2 className="mt-1 text-lg font-medium">{resetting.name}</h2>
+          <p className="mt-2 text-sm text-ink-2">The old PIN and any existing session stop working when you save.</p>
+          {pinFields}
+          <div className="mt-5 flex gap-3">
+            <button type="button" disabled={busy || !validPin} onClick={() => void doReset()} className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40">Set new PIN</button>
+            <button type="button" disabled={busy} onClick={() => { setResetting(null); clearPin(); }} className="h-14 rounded-box border border-rule bg-sheet px-5">Cancel</button>
           </div>
         </section>
       ) : null}
 
-      <h2 className="mt-8 text-lg font-medium">People</h2>
+      <h2 className="mt-8 text-lg font-medium">Clinic staff</h2>
       <ul className="mt-2 max-w-5xl">
-        {staff.map((row) => {
-          const canOwnDevice = row.role === 'admin' || row.role === 'doctor';
-          return (
-            <li key={row.id} className={`flex items-center gap-3 border-b border-rule py-3 ${row.active ? '' : 'opacity-50'}`}>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-lg">{row.name}</span>
-                <span className="block text-sm text-ink-2">
-                  {row.role} · PIN set {asDay(row.pin_set_at)}
-                  {canOwnDevice ? ` · ${row.email ?? 'no email access'}` : ''}
-                  {row.active ? '' : ' · not here any more'}
-                </span>
-              </span>
-              {canOwnDevice ? (
-                <button type="button" disabled={!allowed || busy || !row.active} aria-label={`Email access for ${row.name}`} onClick={() => { setEmailFor(row); setEmail(row.email ?? ''); setAdding(false); setResetting(null); }} className="h-14 rounded-box border border-rule bg-sheet px-4 disabled:opacity-40">Email access</button>
-              ) : null}
-              <button type="button" aria-label={`New PIN for ${row.name}`} disabled={!allowed || busy || !row.active} onClick={() => { setResetting(row); setAdding(false); setEmailFor(null); setPin(''); }} className="h-14 rounded-box border border-rule bg-sheet px-4 disabled:opacity-40">New PIN</button>
-              <button type="button" disabled={!allowed || busy} aria-label={row.active ? `Mark ${row.name} as left` : `Bring ${row.name} back`} onClick={() => void run(async () => { await updateStaff(row.id, { active: !row.active }); return row.active ? `${row.name} is marked as no longer here.` : `${row.name} is back.`; })} className="h-14 w-36 rounded-box border border-rule bg-sheet px-4 disabled:opacity-40">
-                {row.active ? 'Mark as left' : 'Bring back'}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      <section className="mt-9 max-w-4xl rounded-box border border-rule bg-paper-2 p-4">
-        <p className="eyebrow">Adding another device</p>
-        <h2 className="mt-1 text-lg font-medium">No registration code anymore</h2>
-        <p className="mt-2 text-sm leading-6 text-ink-2">
-          Open the clinic site on the new tablet or laptop and choose <strong className="text-ink">Continue with email</strong>. Sign in with an authorized administrator or doctor email, name the device, and it is trusted. Staff then use their PINs normally.
-        </p>
-      </section>
-
-      <h2 className="mt-8 text-lg font-medium">Trusted devices</h2>
-      <ul className="mt-2 max-w-4xl">
-        {devices.map((row) => (
-          <li key={row.id} className={`flex items-center gap-4 border-b border-rule py-3 ${row.revoked_at ? 'opacity-50' : ''}`}>
+        {staff.map((row) => (
+          <li key={row.id} className={`flex items-center gap-3 border-b border-rule py-3 ${row.active ? '' : 'opacity-50'}`}>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-lg">{row.label}</span>
-              <span className="block text-sm text-ink-2">
-                {row.is_clinic_device ? 'in the clinic' : 'outside the clinic'} · locks after {Math.round(row.idle_timeout_seconds / 60)} min · last used {asDay(row.last_seen_at)}{row.revoked_at ? ' · revoked' : ''}
-              </span>
+              <span className="block truncate text-lg">{row.name}</span>
+              <span className="block text-sm text-ink-2">{roleLabel(row.role)}{row.active ? '' : ' · inactive'}</span>
             </span>
-            <button type="button" disabled={!allowed || busy || row.revoked_at !== null} aria-label={`Revoke ${row.label}`} onClick={() => void run(async () => { const ended = await revokeDevice(row.id); return ended > 0 ? `${row.label} is revoked, and its live session ended.` : `${row.label} is revoked.`; })} className="h-14 w-36 rounded-box border border-stop bg-sheet px-4 text-stop disabled:opacity-40">Revoke</button>
+            <button type="button" disabled={!allowed || busy || !row.active} onClick={() => { setResetting(row); setAdding(false); clearPin(); }} className="h-14 rounded-box border border-rule bg-sheet px-4 disabled:opacity-40">Reset PIN</button>
+            <button type="button" disabled={!allowed || busy} onClick={() => void run(async () => { await updateStaff(row.id, { active: !row.active }); return row.active ? `${row.name} can no longer sign in.` : `${row.name} is active again.`; })} className="h-14 w-32 rounded-box border border-rule bg-sheet px-4 disabled:opacity-40">
+              {row.active ? 'Deactivate' : 'Activate'}
+            </button>
           </li>
         ))}
       </ul>
