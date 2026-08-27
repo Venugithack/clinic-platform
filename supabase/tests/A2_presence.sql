@@ -250,6 +250,13 @@ select is(
 -- drive in on stayed open.
 update clinic set timezone = 'Pacific/Kiritimati';
 
+-- Keep the fixture on the same local day the function is about to close. The
+-- old test left it on PostgreSQL's UTC current_date, making the expected count
+-- depend on what hour CI happened to run.
+update appointments
+set date = app.clinic_today()
+where patient_id = '70000000-0000-0000-0000-0000000000d1';
+
 select is(
   (select app.close_clinic_today('shut, in another timezone')),
   1,
