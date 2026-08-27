@@ -67,8 +67,7 @@ export default function QueuePage() {
 
     const role = currentSession()?.role;
 
-    // Nurses share intake with the doctor but not consultation: tapping a
-    // patient means "take/update vitals", never "start a consultation".
+    // A nurse's primary queue action is intake, never consultation.
     if (role === 'nurse') {
       router.push(`/vitals?appointment=${entry.appointment_id}` as Route);
       return;
@@ -85,8 +84,6 @@ export default function QueuePage() {
 
     setBusy(true);
     try {
-      // Only move the state machine forward when there is somewhere to go.
-      // Re-opening a finished consult must not reopen the appointment.
       if (entry.status === 'waiting' || entry.status === 'booked') {
         await setAppointmentStatus(entry.appointment_id, 'in_consult');
       }
@@ -205,14 +202,17 @@ export default function QueuePage() {
       {queue.length > 0 ? (
         <ul className="rounded-box border border-rule bg-sheet">
           {queue.map((entry) => (
-            <li key={entry.appointment_id} className="border-b border-rule last:border-b-0">
+            <li
+              key={entry.appointment_id}
+              className={`flex items-stretch border-b border-rule last:border-b-0 ${
+                entry.status === 'in_consult' ? 'bg-active-wash' : ''
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => void open(entry)}
                 disabled={busy}
-                className={`hoverable flex h-20 w-full items-center gap-4 px-3 text-left active:bg-paper-2 disabled:opacity-50 ${
-                  entry.status === 'in_consult' ? 'bg-active-wash' : ''
-                }`}
+                className="hoverable flex h-20 min-w-0 flex-1 items-center gap-4 px-3 text-left active:bg-paper-2 disabled:opacity-50"
               >
                 <Token
                   serial={entry.token_no}
@@ -237,6 +237,19 @@ export default function QueuePage() {
                   {STATUS_LABEL[entry.status]}
                 </Badge>
               </button>
+
+              {canIntake ? (
+                <button
+                  type="button"
+                  aria-label={`Vitals for ${entry.patient_name}`}
+                  onClick={() =>
+                    router.push(`/vitals?appointment=${entry.appointment_id}` as Route)
+                  }
+                  className="hoverable my-3 mr-3 min-w-24 rounded-box border border-rule bg-sheet px-4 text-sm font-medium active:bg-paper-2"
+                >
+                  Vitals
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
