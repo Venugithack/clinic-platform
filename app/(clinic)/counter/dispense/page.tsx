@@ -273,6 +273,11 @@ function CounterPrescriptionScreen() {
           ) : null}
         </div>
       }
+      primary={{
+        label: dispensedAt ? 'Dispensed' : busy ? 'Dispensing…' : 'Dispense',
+        onClick: () => void doDispense(),
+        disabled: !allVerified || busy || dispensedAt !== null,
+      }}
       rail={
         <>
           {!dispensedAt ? (

@@ -139,6 +139,11 @@ export default function CounterSalePage() {
           </p>
         </div>
       }
+      primary={{
+        label: soldAt ? (queued ? 'Saved' : 'Sold') : busy ? 'Selling…' : 'Complete sale',
+        onClick: () => void complete(),
+        disabled: basket.length === 0 || busy || soldAt !== null,
+      }}
       rail={
         <>
           {!soldAt ? (

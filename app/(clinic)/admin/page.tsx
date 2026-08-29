@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
@@ -20,7 +19,6 @@ function roleLabel(role: StaffRole): string {
 }
 
 export default function AdminPeoplePage() {
-  const router = useRouter();
   const session = typeof window === 'undefined' ? null : currentSession();
   const allowed = session?.role === 'admin';
 
@@ -144,9 +142,6 @@ export default function AdminPeoplePage() {
             Add staff
           </RailButton>
           <RailButton disabled={busy} onClick={refresh}>Refresh</RailButton>
-          <div className="flex-1" />
-          <RailButton onClick={() => router.push('/admin/home')}>Control panel</RailButton>
-          <RailButton onClick={() => router.push('/')}>Staff sign-in</RailButton>
         </>
       }
     >

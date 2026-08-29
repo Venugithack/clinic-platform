@@ -147,6 +147,11 @@ export default function VitalsPage() {
           )}
         </div>
       }
+      primary={{
+        label: busy ? 'Saving…' : canConsult ? 'Save & consult' : 'Save vitals',
+        onClick: () => void save(canConsult ? 'consult' : 'queue'),
+        disabled: !entry || !hasAnyValue || busy,
+      }}
       rail={
         <>
           {canConsult ? (
