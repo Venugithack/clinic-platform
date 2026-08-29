@@ -76,6 +76,32 @@ export async function signInAndOpen(page: Page, staffName: string): Promise<void
   await openApp(page);
 }
 
+/**
+ * Mark this browser as a screen that stands in the clinic.
+ *
+ * An administrator does this once per screen, and it decides exactly one thing:
+ * whether `app.set_presence` will accept "in clinic" from here. It is not
+ * device trust — signing in never needs it — but presence is refused without
+ * it, so the doctor's laptop at home cannot tell a waiting room he is present.
+ *
+ * Done through the real screen rather than by writing localStorage, because the
+ * marker is only worth anything if the administrator's path to it works.
+ */
+export async function markClinicScreen(page: Page, label = 'Consulting room'): Promise<void> {
+  await signIn(page, 'Admin');
+  await page.goto('/admin');
+  await page.getByLabel('Screen name').fill(label);
+  await page.getByRole('button', { name: 'This screen is in the clinic' }).click();
+  await expect(page.getByRole('main').getByRole('status')).toContainText('is marked');
+
+  // The marker is read when a session is minted, so the session that created it
+  // does not carry it. Signing out here is not tidying up — it is the step that
+  // makes the next sign-in count.
+  await page.getByRole('button', { name: 'Go to another screen' }).click();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: 'Who are you?' })).toBeVisible();
+}
+
 /** The row for one staff member on the lock screen. */
 export function staffRow(page: Page, staffName: string) {
   return page

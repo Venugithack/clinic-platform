@@ -85,8 +85,18 @@ test('a supplier with no WhatsApp number is refused, by name', async ({ page }) 
   await reddy.click();
   await page.getByRole('button', { name: 'Approve & send' }).click();
 
-  await expect(page.getByText(/no WhatsApp number is recorded for Reddy Pharma/i))
-    .toBeVisible();
+  // Two refusals can answer this now and either is correct. The database has
+  // always raised CL022 — "no WhatsApp number is recorded for Reddy Pharma" —
+  // and the Orders screen now checks the number before send_purchase_order
+  // numbers the order, because once it moves to `sent` the doctor cannot take
+  // that assertion back. Whichever fires, the property under test is the same
+  // one the test is named for: the refusal says WHICH supplier.
+  // Scoped to the refusal itself. The context pane also lists "Reddy Pharma"
+  // beside the open orders, so a bare page-wide match finds two elements and
+  // Playwright refuses to guess which one was meant.
+  await expect(
+    page.getByRole('status').filter({ hasText: /Reddy Pharma/ }),
+  ).toContainText(/WhatsApp number/i);
 });
 
 test('the doctor approves, and WhatsApp opens with the order already written', async ({

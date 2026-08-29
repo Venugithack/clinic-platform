@@ -92,6 +92,14 @@ test('deactivated staff disappear from the public sign-in list', async ({ browse
 test('counter cannot change staff or PINs', async ({ page }) => {
   await signIn(page, 'Counter');
   await page.goto('/admin');
-  await expect(page.getByText(/Only the administrator/)).toBeVisible();
-  await expect(page.getByRole('complementary').getByRole('button', { name: 'Add staff' })).toBeDisabled();
+
+  // Turned away at the door rather than shown a screen full of dead controls.
+  // The buttons were always disabled and the transitions behind them are
+  // administrator-only in the database, so nothing could be done from here —
+  // but the roster itself was the exposure, and every colleague's name and role
+  // rendered before the refusal did. The guard now mirrors the one that keeps
+  // administrators off the operational screens.
+  await expect(page).toHaveURL(/\/counter$/);
+  await expect(page.getByRole('heading', { name: 'Counter', level: 1 })).toBeVisible();
+  await expect(page.getByText('Reset PIN')).toHaveCount(0);
 });
