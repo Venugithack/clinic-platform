@@ -296,6 +296,11 @@ export default function ImportPage() {
           )}
         </div>
       }
+      primary={{
+        label: 'Check the file',
+        onClick: () => void check(),
+        disabled: busy || count === 0 || !allowed,
+      }}
       rail={
         <>
           <RailButton

@@ -208,6 +208,11 @@ export default function ExpiryPage() {
           ) : null}
         </div>
       }
+      primary={{
+        label: oneSupplier ? `Return to ${supplierName}` : 'Return to supplier',
+        onClick: () => void doReturn(),
+        disabled: busy || batchIds.length === 0 || !oneSupplier,
+      }}
       rail={
         <>
           <RailButton

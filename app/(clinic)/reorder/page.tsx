@@ -149,6 +149,11 @@ export default function ReorderPage() {
           ) : null}
         </div>
       }
+      primary={{
+        label: `Draft ${suppliers.size || ''} order${suppliers.size === 1 ? '' : 's'}`,
+        onClick: () => void draft(),
+        disabled: busy || orderable.length === 0,
+      }}
       rail={
         <>
           <RailButton

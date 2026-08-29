@@ -198,6 +198,11 @@ export default function AdminPeoplePage() {
           </p>
         </div>
       }
+      primary={{
+        label: 'Add staff',
+        onClick: () => { setAdding(true); setResetting(null); clearPin(); },
+        disabled: !allowed || busy,
+      }}
       rail={
         <>
           <RailButton tone="primary" disabled={!allowed || busy} onClick={() => { setAdding(true); setResetting(null); clearPin(); }}>

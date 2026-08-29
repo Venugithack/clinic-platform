@@ -257,7 +257,7 @@ export default function SettingsPage() {
         </p>
       ) : null}
 
-      <div className="mt-6 grid max-w-4xl grid-cols-2 gap-5">
+      <div className="mt-6 grid max-w-4xl grid-cols-1 gap-5 sm:grid-cols-2">
         <Field label="Clinic name" value={form.name} onChange={(v) => set('name', v)} />
         <Field label="Phone" value={form.phone} onChange={(v) => set('phone', v)} />
         <Field
@@ -288,7 +288,7 @@ export default function SettingsPage() {
       </div>
 
       <h2 className="mt-8 text-lg font-medium">Money</h2>
-      <div className="mt-2 grid max-w-4xl grid-cols-2 gap-5">
+      <div className="mt-2 grid max-w-4xl grid-cols-1 gap-5 sm:grid-cols-2">
         <Field
           label="Consultation fee (₹)"
           value={form.consultFee}

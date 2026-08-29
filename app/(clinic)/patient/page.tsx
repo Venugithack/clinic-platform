@@ -144,6 +144,11 @@ function PatientScreen() {
           ) : null}
         </div>
       }
+      primary={{
+        label: 'Save',
+        onClick: () => void save(),
+        disabled: busy || name.trim() === '' || patient === null,
+      }}
       rail={
         <>
           <RailButton

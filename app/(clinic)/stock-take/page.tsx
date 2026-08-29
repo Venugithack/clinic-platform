@@ -134,6 +134,33 @@ export default function StockTakePage() {
           )}
         </div>
       }
+      primary={
+        !take
+          ? {
+              label: 'Start a count',
+              onClick: () => {
+                setBusy(true);
+                void startStockTake('Full count')
+                  .then(refresh)
+                  .catch((cause: Error) => setError(cause.message))
+                  .finally(() => setBusy(false));
+              },
+              disabled: busy,
+            }
+          : take.status === 'counting'
+            ? {
+                label: 'Finish counting',
+                onClick: () => {
+                  setBusy(true);
+                  void submitStockTake(take.id)
+                    .then(refresh)
+                    .catch((cause: Error) => setError(cause.message))
+                    .finally(() => setBusy(false));
+                },
+                disabled: busy || counted.length === 0,
+              }
+            : undefined
+      }
       rail={
         <>
           {!take ? (

@@ -11,6 +11,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { PatientSafety } from '@/components/PatientSafety';
 import { Badge, Notice, PageHeader, Token } from '@/components/ui';
 import { DrugSearch } from '@/components/DrugSearch';
 import { QtyPad } from '@/components/QtyPad';
@@ -228,6 +229,15 @@ function ConsultScreen() {
 
   return (
     <ThreePane
+      safety={
+        <PatientSafety
+          token={entry?.token_no}
+          name={entry?.patient_name}
+          age={entry?.age}
+          sex={entry?.sex}
+          allergies={entry?.allergies}
+        />
+      }
       context={
         <div className="space-y-6">
           <div>

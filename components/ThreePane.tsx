@@ -50,6 +50,7 @@ export function ThreePane({
   context,
   rail,
   primary,
+  safety,
   children,
 }: {
   context?: React.ReactNode;
@@ -68,6 +69,21 @@ export function ThreePane({
     disabled?: boolean;
     tone?: 'primary' | 'danger';
   };
+  /**
+   * Who this screen is about, and what would harm them.
+   *
+   * Rendered at every width, above the work, and never inside the `Details`
+   * disclosure. That disclosure was a mistake applied uniformly: folding the
+   * context pane away on a phone is right for a supplier's lead time and wrong
+   * for an allergy, and /consult and /counter/dispense kept both in the same
+   * pane. So a doctor on a phone could reach the prescribe button with the
+   * allergy banner one tap out of sight, which is the one thing this shell must
+   * not allow.
+   *
+   * Sticky, because scrolling a long prescription must not scroll it away
+   * either.
+   */
+  safety?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -118,6 +134,11 @@ export function ThreePane({
           className="flex min-w-0 flex-col gap-4 overflow-y-auto p-4 lg:p-5"
           data-pane="work"
         >
+          {safety ? (
+            <div className="sticky -top-4 z-30 -mx-4 border-b-2 border-ink bg-paper px-4 py-2 lg:-top-5 lg:-mx-5 lg:px-5">
+              {safety}
+            </div>
+          ) : null}
           {/* The context pane's content is not optional information — it is who
               the patient is and what the total comes to. On a phone it folds
               rather than disappears. */}

@@ -157,6 +157,19 @@ export default function RegisterWalkInPage() {
           ) : null}
         </div>
       }
+      primary={
+        active
+          ? { label: 'Done', onClick: () => setActive(null) }
+          : {
+              label: busy
+                ? 'Registering…'
+                : existing
+                  ? 'Give today’s token'
+                  : 'Register & get token',
+              onClick: () => void submit(),
+              disabled: !canRegister || busy,
+            }
+      }
       rail={
         active ? (
           <>

@@ -299,6 +299,17 @@ export default function ReportsPage() {
           </p>
         </div>
       }
+      primary={{
+        label: 'Download CSV',
+        onClick: () =>
+          downloadCsv(
+            `${register?.file ?? 'batch-trace'}-${
+              tab === 'recall' ? batchNo.trim() : `${range.from}-to-${range.to}`
+            }.csv`,
+            toCsv(rows, columns),
+          ),
+        disabled: rows.length === 0,
+      }}
       rail={
         <>
           <RailButton

@@ -25,6 +25,7 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
+import { PatientSafety } from '@/components/PatientSafety';
 import { Button, Modal, Notice, PageHeader } from '@/components/ui';
 import { ScanField } from '@/components/ScanField';
 import {
@@ -244,6 +245,13 @@ function CounterPrescriptionScreen() {
 
   return (
     <ThreePane
+      safety={
+        <PatientSafety
+          token={header?.token_no}
+          name={header?.patient_name}
+          allergies={header?.allergies}
+        />
+      }
       context={
         <div>
           <h2 className="text-xl font-semibold">{header?.patient_name ?? '…'}</h2>

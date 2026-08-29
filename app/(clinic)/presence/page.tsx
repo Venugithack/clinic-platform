@@ -154,6 +154,11 @@ export default function PresencePage() {
           ) : null}
         </div>
       }
+      primary={
+        isDoctor
+          ? { label: 'In clinic', onClick: () => void set('in_clinic'), disabled: busy }
+          : undefined
+      }
       rail={
         <>
           {isDoctor ? (

@@ -238,6 +238,19 @@ export default function BillingPage() {
           </p>
         </div>
       }
+      primary={
+        till
+          ? {
+              label: 'Close till',
+              onClick: () => { setPad('count'); setCash(''); },
+              disabled: busy,
+            }
+          : {
+              label: 'Open till',
+              onClick: () => { setPad('float'); setCash(''); },
+              disabled: busy,
+            }
+      }
       rail={
         <>
           {!till ? (

@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
-import { Notice, PageHeader } from '@/components/ui';
+import { Button, Notice, PageHeader } from '@/components/ui';
 import { ScanField } from '@/components/ScanField';
 import { QtyPad } from '@/components/QtyPad';
 import { DrugSearch } from '@/components/DrugSearch';
@@ -199,6 +199,24 @@ export default function CounterSalePage() {
 
       {basket.length === 0 && !pending ? (
         <p className="mt-6 text-ink-2">Scan a strip, or search for the medicine.</p>
+      ) : null}
+
+      {/*
+        The same two controls the rail carries, in the work pane, below the
+        width where the rail exists.
+
+        Telling somebody to "scan a strip, or search" while both are folded
+        into an `Actions` sheet is an instruction they cannot follow. The rail
+        keeps them on a landscape stand, where it is always on screen; here
+        they are the first thing under the sentence that asks for them.
+      */}
+      {!soldAt ? (
+        <div className="mt-4 flex flex-col gap-3 lg:hidden" data-print="hide">
+          <ScanField label="Scan the strip" onCode={(code) => void onCode(code)} />
+          <Button variant="default" size="lg" onClick={() => setSearching(true)}>
+            Search medicines
+          </Button>
+        </div>
       ) : null}
 
       <ul className="mt-6 max-w-2xl">

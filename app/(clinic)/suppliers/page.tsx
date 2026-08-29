@@ -301,6 +301,7 @@ export default function SuppliersPage() {
           </div>
         </div>
       }
+      primary={{ label: 'Add supplier', onClick: openAdd, disabled: busy }}
       rail={
         <>
           <RailButton tone="primary" disabled={busy} onClick={openAdd}>

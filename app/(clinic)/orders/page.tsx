@@ -230,6 +230,15 @@ export default function OrdersPage() {
           </p>
         </div>
       }
+      primary={
+        picked && (picked.status === 'draft' || picked.status === 'sent')
+          ? {
+              label: picked.status === 'draft' ? 'Approve & send' : 'Send again',
+              onClick: () => void send(),
+              disabled: busy || !canSend,
+            }
+          : undefined
+      }
       rail={
         <>
           {picked && (picked.status === 'draft' || picked.status === 'sent') ? (

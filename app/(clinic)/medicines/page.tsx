@@ -242,6 +242,7 @@ export default function MedicinesPage() {
           </div>
         </div>
       }
+      primary={{ label: 'Add medicine', onClick: openAdd, disabled: busy }}
       rail={
         <>
           <RailButton tone="primary" disabled={busy} onClick={openAdd}>
