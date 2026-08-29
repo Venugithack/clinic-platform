@@ -4,6 +4,15 @@
 -- decides whether stock can go back to the supplier is NOT the expiry date. It
 -- is `expiry - return_window_days`, it differs per supplier, and it passes
 -- while the stock still looks perfectly fine on the shelf.
+-- Every date below is the CLINIC's day, not PostgreSQL's.
+--
+-- `current_date` is UTC on a CI runner and IST on a clinic tablet, and the two
+-- disagree from 00:00 to 05:30 IST. A fixture written in `current_date` and
+-- asserted against `app.clinic_today()` therefore passes for eighteen and a
+-- half hours a day and fails for five and a half — the same divergence
+-- 20260827090100 was written to close, and the same one that made the H1
+-- register specs look haunted. See the note in A2_presence.sql.
+
 begin;
 select * from no_plan();
 
@@ -38,29 +47,42 @@ values
   -- Expires in 200 days. Kumar wants it back 180 days before that, so the door
   -- shuts in 20 days — long before anything would call this "expiring soon".
   ('b0000000-0000-0000-0000-0000000000e1', 'd0000000-0000-0000-0000-0000000000e2',
-   'SC1', current_date + 200, 15, 10, 112.00, 'strip', 6.00, 300, 300,
+   'SC1', app.clinic_today() + 200, 15, 10, 112.00, 'strip', 6.00, 300, 300,
    '50990000-0000-0000-0000-0000000000e1'),
   -- Expires in 45 days and is still perfectly good, but Kumar's window closed
   -- 135 days ago. Pure loss, and nobody was told.
   ('b0000000-0000-0000-0000-0000000000e2', 'd0000000-0000-0000-0000-0000000000e1',
-   'ZV1', current_date + 45, 15, 10, 98.00, 'strip', 5.00, 150, 150,
+   'ZV1', app.clinic_today() + 45, 15, 10, 98.00, 'strip', 5.00, 150, 150,
    '50990000-0000-0000-0000-0000000000e1'),
   -- Already expired: excluded from availability, and therefore invisible unless
   -- something goes looking for it.
   ('b0000000-0000-0000-0000-0000000000e3', 'd0000000-0000-0000-0000-0000000000e3',
-   'BD1', current_date - 40, 1, 1, 148.00, 'strip', 90.00, 12, 12,
+   'BD1', app.clinic_today() - 40, 1, 1, 148.00, 'strip', 90.00, 12, 12,
    '50990000-0000-0000-0000-0000000000e1'),
   -- Same 200-day expiry, different supplier: Reddy's shorter window means this
   -- one is returnable for another 110 days. Same stock, different deadline.
   ('b0000000-0000-0000-0000-0000000000e4', 'd0000000-0000-0000-0000-0000000000e2',
-   'SC2', current_date + 200, 15, 10, 112.00, 'strip', 6.00, 100, 100,
+   'SC2', app.clinic_today() + 200, 15, 10, 112.00, 'strip', 6.00, 100, 100,
    '50990000-0000-0000-0000-0000000000e2');
 
 insert into stock_movements (drug_id, batch_id, qty_base, type, staff_id)
 select b.drug_id, b.id, b.qty_base_received, 'receipt', '50000000-0000-0000-0000-0000000000e2'
 from stock_batches b;
 
+-- app.current_staff_id() resolves auth.uid() for administrators only since
+-- 20260827224500 (device-free access); every other role now arrives with the
+-- opaque PIN session token app.unlock_pin() issues. Give each seeded staff
+-- member that session so this pre-rework fixture still acts as the role it
+-- declares. The token tracks the actor on every switch below, because the
+-- session branch is checked before the auth.uid() one.
+insert into staff_sessions (staff_id, token_hash, expires_at)
+select id, encode(digest('sess-' || auth_user_id::text, 'sha256'), 'hex'),
+       now() + interval '10 hours'
+  from staff
+ where auth_user_id is not null;
+
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000e2', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000e2', true);
 
 -- ---------------------------------------------------------------------------
 -- The list, and why it is not an expiry list.
@@ -225,7 +247,7 @@ select * from app.receive_goods(
   '[{"drug_id": "d0000000-0000-0000-0000-0000000000e2", "batch_no": "SC3",
      "expiry": "2027-12-01", "units_per_strip": 15, "strips_per_box": 10,
      "mrp": 112.00, "cost_per_base_unit": 6.00, "qty_packs": 10}]'::jsonb,
-  '50990000-0000-0000-0000-0000000000e1', 'INV-9001', current_date);
+  '50990000-0000-0000-0000-0000000000e1', 'INV-9001', app.clinic_today());
 
 select throws_ok(
   format($$ select app.settle_credit(%L, %L, 2000.00) $$,

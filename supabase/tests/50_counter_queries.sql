@@ -66,8 +66,21 @@ insert into prescriptions (id, encounter_id, patient_id, doctor_id, items, signe
      jsonb_build_object('drug_id', 'd0000000-0000-0000-0000-0000000000a1', 'qty_base', 10)),
    null, 'pending');
 
+-- app.current_staff_id() resolves auth.uid() for administrators only since
+-- 20260827224500 (device-free access); every other role now arrives with the
+-- opaque PIN session token app.unlock_pin() issues. Give each seeded staff
+-- member that session so this pre-rework fixture still acts as the role it
+-- declares. The token tracks the actor on every switch below, because the
+-- session branch is checked before the auth.uid() one.
+insert into staff_sessions (staff_id, token_hash, expires_at)
+select id, encode(digest('sess-' || auth_user_id::text, 'sha256'), 'hex'),
+       now() + interval '10 hours'
+  from staff
+ where auth_user_id is not null;
+
 -- The pharmacist is at the counter.
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000c1', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000c1', true);
 
 -- ---------------------------------------------------------------------------
 -- The pharmacy queue's colour (TABLET.md §7).
@@ -193,6 +206,7 @@ select throws_ok(
 );
 
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d2', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000d2', true);
 
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'approved') $$,
@@ -202,6 +216,7 @@ select throws_ok(
 );
 
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d1', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000d1', true);
 
 select throws_ok(
   $$ select app.answer_counter_query((select id from t_query), 'amended',
@@ -255,6 +270,7 @@ select is(
 
 -- The line is free to be queried again once the first question is closed.
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000c1', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000c1', true);
 
 select lives_ok(
   $$ select app.raise_counter_query('90000000-0000-0000-0000-0000000000fa',
@@ -272,6 +288,7 @@ select * from app.raise_counter_query(
   'out_of_stock', null, 'Only 4 of 10');
 
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d1', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000d1', true);
 
 select throws_ok(
   $$ select app.withdraw_counter_query((select id from t_short)) $$,
@@ -281,6 +298,7 @@ select throws_ok(
 );
 
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000c1', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000c1', true);
 
 select lives_ok(
   $$ select app.withdraw_counter_query((select id from t_short), 'Found another box') $$,

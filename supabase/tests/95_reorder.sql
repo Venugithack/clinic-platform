@@ -50,7 +50,20 @@ select 'd0000000-0000-0000-0000-0000000000a1', 'b0000000-0000-0000-0000-00000000
        now() - (n || ' days')::interval
 from generate_series(1, 30) as n;
 
+-- app.current_staff_id() resolves auth.uid() for administrators only since
+-- 20260827224500 (device-free access); every other role now arrives with the
+-- opaque PIN session token app.unlock_pin() issues. Give each seeded staff
+-- member that session so this pre-rework fixture still acts as the role it
+-- declares. The token tracks the actor on every switch below, because the
+-- session branch is checked before the auth.uid() one.
+insert into staff_sessions (staff_id, token_hash, expires_at)
+select id, encode(digest('sess-' || auth_user_id::text, 'sha256'), 'hex'),
+       now() + interval '10 hours'
+  from staff
+ where auth_user_id is not null;
+
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000a1', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-0000000000a1', true);
 
 -- ---------------------------------------------------------------------------
 -- Velocity, and what does not count as demand.

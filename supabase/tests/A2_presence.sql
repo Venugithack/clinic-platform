@@ -8,6 +8,15 @@
 --
 -- All three are asserted here by moving the clock rather than waiting on it,
 -- because the whole design computes presence on read instead of storing it.
+-- Every date below is the CLINIC's day, not PostgreSQL's.
+--
+-- `current_date` is UTC on a CI runner and IST on a clinic tablet, and the two
+-- disagree from 00:00 to 05:30 IST. A fixture written in `current_date` and
+-- asserted against `app.clinic_today()` therefore passes for eighteen and a
+-- half hours a day and fails for five and a half — the same divergence
+-- 20260827090100 was written to close, and the same one that made the H1
+-- register specs look haunted. See the note in A2_presence.sql.
+
 begin;
 select * from no_plan();
 
@@ -185,7 +194,7 @@ select is(
 insert into patients (id, name, consent_given_at) values
   ('70000000-0000-0000-0000-0000000000d1', 'Ravi Kumar', now());
 insert into appointments (patient_id, date, token_no, status) values
-  ('70000000-0000-0000-0000-0000000000d1', current_date, 1, 'booked');
+  ('70000000-0000-0000-0000-0000000000d1', app.clinic_today(), 1, 'booked');
 
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d2', true);
 select set_config('app.staff_session', '', true);
@@ -197,7 +206,11 @@ select throws_ok(
   'the counter does not close the clinic'
 );
 
+-- He is back at the cabin tablet. Since 20260827224500 a doctor resolves only
+-- through his PIN session, so the identity the closure tests need is the
+-- session token, not the bare auth claim the line above still carries.
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000d1', true);
+select set_config('app.staff_session', 'sess-cabin', true);
 
 select throws_ok(
   $$ select app.close_clinic_today('   ') $$,
@@ -251,7 +264,7 @@ select is(
 update clinic set timezone = 'Pacific/Kiritimati';
 
 -- Keep the fixture on the same local day the function is about to close. The
--- old test left it on PostgreSQL's UTC current_date, making the expected count
+-- old test left it on PostgreSQL's UTC app.clinic_today(), making the expected count
 -- depend on what hour CI happened to run.
 update appointments
 set date = app.clinic_today()
