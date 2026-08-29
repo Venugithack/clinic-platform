@@ -50,23 +50,22 @@ comment on function app.register_device(text, boolean, int) is
 -- ---------------------------------------------------------------------------
 -- unlock_pin, with an optional marker.
 --
--- The third argument is the browser's clinic-screen token. A wrong, revoked or
+-- The third argument carries NO default, deliberately. A default would make
+-- `unlock_pin(a, b)` match both this and the two-argument wrapper below, and
+-- Postgres refuses an ambiguous call outright — "function app.unlock_pin(unknown,
+-- unknown) is not unique". Two exact arities resolve cleanly; one arity plus a
+-- default does not.
+--
+-- The token itself is the browser's clinic-screen marker. A wrong, revoked or
 -- absent token is not an error and never blocks sign-in: it simply leaves
 -- `device_id` null, which is exactly the state every browser is in today. The
 -- only consequence is that presence stays refused there, which is the existing
 -- behaviour and the safe direction to fail in.
 -- ---------------------------------------------------------------------------
--- The two-argument form has to GO, not merely be superseded. A default argument
--- creates an overload rather than replacing anything, and leaving both means
--- PostgREST has two candidates for `unlock_pin` — it resolves on the exact
--- argument set, so a client that stops sending the marker would silently get
--- the old body back and every session would go deviceless again. One function.
-drop function if exists app.unlock_pin(uuid, text);
-
 create or replace function app.unlock_pin(
   p_staff_id     uuid,
   p_pin          text,
-  p_screen_token text default null
+  p_screen_token text
 ) returns jsonb
 language plpgsql
 security definer
@@ -163,6 +162,41 @@ comment on function app.unlock_pin(uuid, text, text) is
   'Name + PIN sign-in from any browser. The third argument is an optional '
   'clinic-screen marker; its absence is normal and never blocks sign-in, it only '
   'leaves the session unable to assert presence.';
+
+-- ---------------------------------------------------------------------------
+-- The two-argument form stays, as a wrapper. This is a deployment decision.
+--
+-- A default argument makes an OVERLOAD rather than replacing anything, and
+-- PostgREST resolves on the exact argument names it is sent. So the two forms
+-- are not interchangeable across a rollout: drop the old one and the currently
+-- deployed bundle — which sends two arguments — cannot sign anybody in until
+-- Cloudflare finishes building; keep only the old one and the new bundle, which
+-- always sends `p_screen_token`, cannot either.
+--
+-- Either way round there is a window where nobody at the clinic can sign in,
+-- and the window is however long a deploy takes. That is not a risk worth
+-- taking on a live surgery to save one function, so both shapes answer, and
+-- there is still exactly one body: this delegates.
+--
+-- It can be dropped once nothing calls it, which is any time after the app that
+-- sends three arguments is live everywhere.
+-- ---------------------------------------------------------------------------
+create or replace function app.unlock_pin(p_staff_id uuid, p_pin text)
+returns jsonb
+language sql
+security definer
+set search_path = public, extensions, pg_catalog
+as $$
+  select app.unlock_pin(p_staff_id, p_pin, null::text);
+$$;
+
+revoke all on function app.unlock_pin(uuid, text) from public;
+grant execute on function app.unlock_pin(uuid, text) to anon, authenticated, service_role;
+
+comment on function app.unlock_pin(uuid, text) is
+  'Compatibility shape for the bundle deployed before the clinic-screen marker '
+  'existed. Delegates; carries no marker. Removable once no client sends two '
+  'arguments.';
 
 -- ---------------------------------------------------------------------------
 -- Which screens are marked, for the administrator who has to manage them.

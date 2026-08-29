@@ -37,20 +37,33 @@ insert into staff (id, name, role, auth_user_id, pin_hash, pin_set_at) values
    crypt('481920', gen_salt('bf', 4)), now());
 
 -- ---------------------------------------------------------------------------
--- One function, not two.
+-- Two shapes, one body — and that is a deployment decision, not an accident.
 --
--- A default argument creates an overload rather than replacing anything, so the
--- two-argument form had to be dropped outright. PostgREST resolves on the exact
--- argument set, so leaving both would mean a client that stopped sending the
--- marker silently got the old body back and every session went deviceless
--- again — the exact failure this migration exists to end.
+-- A default argument makes an overload rather than replacing anything, and
+-- PostgREST resolves on the exact argument names it is sent. Dropping the
+-- two-argument form would mean the bundle already deployed could not sign
+-- anybody in until Cloudflare finished building; never adding the three-
+-- argument form would mean the new bundle could not. Either way there is a
+-- window where nobody at the clinic can sign in, lasting as long as a deploy.
+--
+-- So both shapes answer during the rollover. What must stay true is that they
+-- cannot DISAGREE, which is what the delegation below is checked for.
 -- ---------------------------------------------------------------------------
 select is(
   (select count(*)::int from pg_proc p
      join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'app' and p.proname = 'unlock_pin'),
+  2,
+  'both call shapes answer, so a deploy never has a sign-in gap'
+);
+
+select is(
+  (select count(*)::int from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'app' and p.proname = 'unlock_pin'
+      and pg_get_functiondef(p.oid) ilike '%select app.unlock_pin(p_staff_id, p_pin, null::text)%'),
   1,
-  'there is exactly one app.unlock_pin'
+  'and the older one delegates rather than keeping a second body'
 );
 
 -- ---------------------------------------------------------------------------
