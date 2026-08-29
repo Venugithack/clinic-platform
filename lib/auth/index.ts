@@ -31,15 +31,27 @@ interface PinUnlockResult {
 }
 
 export async function unlock(staffId: string, pin: string): Promise<StaffSession> {
-  const { data, error } = await appSchema().rpc('unlock_pin', {
-    p_staff_id: staffId,
-    p_pin: pin,
-    // Only some browsers carry this, and that is the design. It says "this
-    // screen stands in the clinic" and nothing else — it cannot refuse a
-    // sign-in, and its absence is the ordinary case. All it buys the session is
-    // the right to say the doctor is present (lib/db/clinicScreen.ts).
-    p_screen_token: readClinicScreenToken(),
-  });
+  // Only some browsers carry a marker, and that is the design: it says "this
+  // screen stands in the clinic" and nothing else — it cannot refuse a sign-in,
+  // and its absence is the ordinary case (lib/db/clinicScreen.ts).
+  //
+  // The argument is OMITTED rather than sent as null when there is none, and
+  // that is a deployment property rather than a tidiness one. PostgREST picks
+  // the function by the exact argument names in the body, so a request carrying
+  // `p_screen_token: null` needs a three-argument unlock_pin to exist before it
+  // can succeed. Sending two arguments when there is nothing to say means this
+  // bundle signs staff in against a database that has not had the migration yet,
+  // and a browser can only be holding a marker if that migration is already
+  // there — so the app and the database can go out in either order, and a
+  // clinic that is open never has a window where nobody can sign in.
+  const screenToken = readClinicScreenToken();
+
+  const { data, error } = await appSchema().rpc(
+    'unlock_pin',
+    screenToken
+      ? { p_staff_id: staffId, p_pin: pin, p_screen_token: screenToken }
+      : { p_staff_id: staffId, p_pin: pin },
+  );
 
   if (error) throw new Error(error.message);
   const result = data as PinUnlockResult | null;
