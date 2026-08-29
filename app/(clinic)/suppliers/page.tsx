@@ -14,6 +14,12 @@ import {
   type SupplierMedicineRow,
 } from '@/lib/db/suppliers';
 import { addSupplier, setDrugSupplier, updateSupplier } from '@/lib/transitions/suppliers';
+import { numberProblem } from '@/lib/whatsapp';
+
+/** Blank is allowed and means "we do not have one"; anything typed must dial. */
+function whatsappProblem(entered: string): string | null {
+  return entered.trim() === '' ? null : numberProblem(entered);
+}
 
 type EditorMode = 'add' | 'edit' | null;
 
@@ -128,6 +134,17 @@ export default function SuppliersPage() {
 
   const saveSupplier = async () => {
     if (!allowed || !form.name.trim()) return;
+
+    // A supplier may legitimately have no WhatsApp number — purchasing refuses
+    // the order later (CL022) and that refusal names them. What must not get in
+    // is a number that looks entered and cannot be dialled: the order goes out
+    // to nobody and nothing downstream can see it (WHATSAPP.md §0).
+    const problem = whatsappProblem(form.whatsappNumber);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -302,8 +319,8 @@ export default function SuppliersPage() {
           ) : null}
           <RailButton disabled={busy} onClick={() => void refresh(pickedId)}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/admin')}>People & tablets</RailButton>
-          <RailButton onClick={() => router.push('/queue')}>Back to queue</RailButton>
+          <RailButton onClick={() => router.push('/admin')}>Staff access</RailButton>
+          <RailButton onClick={() => router.push('/admin/home')}>Control panel</RailButton>
         </>
       }
     >
@@ -486,6 +503,11 @@ function SupplierEditor({
         </Field>
         <Field label="WhatsApp number">
           <input inputMode="tel" value={form.whatsappNumber} onChange={(e) => set('whatsappNumber', e.target.value)} aria-label="WhatsApp number" placeholder="+91…" className="blank h-14 w-full px-3" />
+          {whatsappProblem(form.whatsappNumber) ? (
+            <p role="status" className="mt-1 text-sm text-stop">{whatsappProblem(form.whatsappNumber)}</p>
+          ) : (
+            <p className="mt-1 text-sm text-ink-2">Include the country code — +91 for India.</p>
+          )}
         </Field>
         <Field label="Phone">
           <input inputMode="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} aria-label="Phone" className="blank h-14 w-full px-3" />

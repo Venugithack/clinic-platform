@@ -34,7 +34,7 @@ import {
   sendPurchaseOrder,
   setPoLines,
 } from '@/lib/transitions/purchasing';
-import { deepLink } from '@/lib/whatsapp';
+import { deepLink, numberProblem } from '@/lib/whatsapp';
 import { currentSession } from '@/lib/auth';
 import { formatQty } from '@/lib/units';
 
@@ -133,6 +133,19 @@ export default function OrdersPage() {
 
   const send = async () => {
     if (!picked) return;
+
+    // Before the order is numbered, not after. `send_purchase_order` records the
+    // message and moves the order to `sent` — an assertion the doctor cannot
+    // take back — so a number that cannot address a chat has to be refused
+    // while the order is still a draft. The database already refuses a missing
+    // number (CL022); this is the same refusal for a number that is present and
+    // unusable, which is the commoner mistake and the silent one.
+    const problem = numberProblem(picked.whatsapp_number);
+    if (problem) {
+      setError(`${picked.supplier_name}: ${problem}`);
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -186,9 +199,16 @@ export default function OrdersPage() {
                 about ₹{Number(picked.estimated_total).toFixed(2)}
               </p>
               {picked.whatsapp_number ? (
-                <p className="tabular mt-1 text-sm text-ink-2">
-                  {picked.whatsapp_number}
-                </p>
+                <>
+                  <p className="tabular mt-1 text-sm text-ink-2">
+                    {picked.whatsapp_number}
+                  </p>
+                  {numberProblem(picked.whatsapp_number) ? (
+                    <p className="mt-1 text-sm text-stop">
+                      {numberProblem(picked.whatsapp_number)}
+                    </p>
+                  ) : null}
+                </>
               ) : (
                 <p className="mt-1 text-sm text-stop">
                   No WhatsApp number for this supplier.
