@@ -100,7 +100,7 @@ for _ in $(seq 1 30); do
     'http://127.0.0.1:54321/rest/v1/')"
 
   missing=""
-  for fn in dispense unlock book_appointment sign_prescription \
+  for fn in dispense unlock_pin book_appointment sign_prescription \
             raise_counter_query answer_counter_query withdraw_counter_query \
             receive_goods start_stock_take return_to_supplier \
             write_off_expired draft_purchase_orders; do

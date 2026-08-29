@@ -119,7 +119,7 @@ export default function CounterPage() {
               void lock().then(() => router.replace('/'));
             }}
           >
-            Lock tablet
+            Sign out
           </RailButton>
         </>
       }

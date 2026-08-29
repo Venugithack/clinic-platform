@@ -67,7 +67,7 @@ export function ScanField({
         />
       ) : (
         <p className="mt-3 text-sm text-ink-2">
-          This tablet cannot scan. Type the code from the strip.
+          This device cannot scan. Type the code from the strip.
         </p>
       )}
 

@@ -1,4 +1,13 @@
 -- M1 — the clinic core transitions.
+-- Every date below is the CLINIC's day, not PostgreSQL's.
+--
+-- `current_date` is UTC on a CI runner and IST on a clinic tablet, and the two
+-- disagree from 00:00 to 05:30 IST. A fixture written in `current_date` and
+-- asserted against `app.clinic_today()` therefore passes for eighteen and a
+-- half hours a day and fails for five and a half — the same divergence
+-- 20260827090100 was written to close, and the same one that made the H1
+-- register specs look haunted. See the note in A2_presence.sql.
+
 begin;
 select * from no_plan();
 
@@ -22,7 +31,20 @@ insert into drugs (id, name, salt_composition, strength, form, base_unit, schedu
   ('d0000000-0000-0000-0000-00000000001a', 'Dolo 650', 'Paracetamol', '650mg',
    'tablet', 'tablet', 'OTC');
 
+-- app.current_staff_id() resolves auth.uid() for administrators only since
+-- 20260827224500 (device-free access); every other role now arrives with the
+-- opaque PIN session token app.unlock_pin() issues. Give each seeded staff
+-- member that session so this pre-rework fixture still acts as the role it
+-- declares. The token tracks the actor on every switch below, because the
+-- session branch is checked before the auth.uid() one.
+insert into staff_sessions (staff_id, token_hash, expires_at)
+select id, encode(digest('sess-' || auth_user_id::text, 'sha256'), 'hex'),
+       now() + interval '10 hours'
+  from staff
+ where auth_user_id is not null;
+
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000001c', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-00000000001c', true);
 
 -- ---------------------------------------------------------------------------
 -- The daily token.
@@ -57,7 +79,7 @@ select is(
 -- Tomorrow is a different day and starts its own sequence.
 create temporary table t_tomorrow as
 select * from app.book_appointment(
-  '60000000-0000-0000-0000-00000000001a', current_date + 1, 'phone', 'follow-up');
+  '60000000-0000-0000-0000-00000000001a', app.clinic_today() + 1, 'phone', 'follow-up');
 
 select is(
   (select token_no from t_tomorrow),
@@ -81,7 +103,7 @@ select * from app.book_appointment(
 
 select is(
   (select date from t_explicit_null),
-  current_date,
+  app.clinic_today(),
   'an explicitly null date still books for today'
 );
 
@@ -92,7 +114,7 @@ select is(
 );
 
 select throws_ok(
-  $$ select app.book_appointment('60000000-0000-0000-0000-00000000001a', current_date - 1) $$,
+  $$ select app.book_appointment('60000000-0000-0000-0000-00000000001a', app.clinic_today() - 1) $$,
   'CL006',
   null,
   'a clinic does not take bookings for last week'
@@ -240,6 +262,7 @@ select throws_ok(
 -- Signing.
 -- ---------------------------------------------------------------------------
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000001a', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-00000000001a', true);
 
 insert into encounters (id, patient_id, doctor_id, appointment_id) values
   ('e0000000-0000-0000-0000-00000000001a', '60000000-0000-0000-0000-00000000001a',
@@ -281,6 +304,7 @@ select throws_ok(
 
 -- The other doctor tries to sign it.
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000001b', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-00000000001b', true);
 
 select throws_ok(
   $$ select app.sign_prescription('90000000-0000-0000-0000-00000000001a') $$,
@@ -290,6 +314,7 @@ select throws_ok(
 );
 
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000001a', true);
+select set_config('app.staff_session', 'sess-a0000000-0000-0000-0000-00000000001a', true);
 
 select lives_ok(
   $$ select app.sign_prescription('90000000-0000-0000-0000-00000000001a') $$,
@@ -322,7 +347,7 @@ set local role authenticated;
 
 select throws_ok(
   $$ insert into appointments (patient_id, date, token_no)
-     values ('60000000-0000-0000-0000-00000000001a', current_date, 99) $$,
+     values ('60000000-0000-0000-0000-00000000001a', app.clinic_today(), 99) $$,
   '42501',
   null,
   'a token cannot be handed out by a direct write — that is how two people get number 7'

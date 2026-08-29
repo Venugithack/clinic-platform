@@ -63,7 +63,20 @@ insert into prescriptions (id, encounter_id, patient_id, doctor_id, items, signe
      'drug_id', 'd1000000-0000-0000-0000-000000000001', 'name', 'Dolo 650', 'qty_base', 15)),
    now());
 
+-- app.current_staff_id() resolves auth.uid() for administrators only since
+-- 20260827224500 (device-free access); every other role now arrives with the
+-- opaque PIN session token app.unlock_pin() issues. Give each seeded staff
+-- member that session so this pre-rework fixture still acts as the role it
+-- declares. The token tracks the actor on every switch below, because the
+-- session branch is checked before the auth.uid() one.
+insert into staff_sessions (staff_id, token_hash, expires_at)
+select id, encode(digest('sess-' || auth_user_id::text, 'sha256'), 'hex'),
+       now() + interval '10 hours'
+  from staff
+ where auth_user_id is not null;
+
 select set_config('request.jwt.claim.sub', 'a1000000-0000-0000-0000-000000000002', true);
+select set_config('app.staff_session', 'sess-a1000000-0000-0000-0000-000000000002', true);
 
 -- ---------------------------------------------------------------------------
 -- The bug, stated as an assertion: dispense it once, then try again.
@@ -289,6 +302,7 @@ select is_empty(
 );
 
 select set_config('request.jwt.claim.sub', '', true);
+select set_config('app.staff_session', '', true);
 
 select * from finish();
 rollback;
