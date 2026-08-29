@@ -177,7 +177,7 @@ export default function QueuePage() {
               void lock().then(() => router.replace('/'));
             }}
           >
-            Lock tablet
+            Sign out
           </RailButton>
         </>
       }
@@ -203,7 +203,7 @@ export default function QueuePage() {
           title="Nobody is waiting yet"
           direction={
             canIntake
-              ? 'Register a walk-in. Their token appears immediately on every clinic tablet.'
+              ? 'Register a walk-in. Their token appears immediately on every clinic screen.'
               : 'New prescriptions appear at the pharmacy counter after the doctor signs them.'
           }
         />
