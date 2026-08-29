@@ -128,17 +128,47 @@ Eight, matching the house style of `PLAN.md` §5.3.
 | 3 | **Numbers get a custom on-screen numpad, never the OS keyboard** | the OS keyboard eats half a 10" screen to type "6" |
 | 4 | **Search is a full-screen overlay, results above the keyboard** | otherwise the keyboard covers exactly the list being chosen from |
 | 5 | **Two panes, no stacked modals** | landscape has the room. A modal over a modal on a tablet is a dead end |
-| 6 | **Primary actions live in a fixed right-hand rail** | reachable, never scrolled away, never behind the keyboard |
-| 7 | **Landscape locked on both clinic screens** | they are on stands. Rotation is only a source of layout bugs |
+| 6 | **Primary actions are always reachable** — a fixed right-hand rail on a landscape stand, a fixed bottom bar below it | never scrolled away, never behind the keyboard. Which edge they sit on is a matter of which edge the thumb is near |
+| 7 | ~~Landscape locked on both clinic screens~~ — **withdrawn, 29 Aug 2026.** See §3 | it stopped being true before it stopped being written down |
 | 8 | **Every destructive action needs a deliberate second gesture** | pockets, sleeves and counters all press glass |
+
+Rule 6 was "primary actions live in a fixed right-hand rail", and rule 7 locked
+landscape. Both were written for two registered tablets on stands. PR #29
+deleted device trust, and rule 7 went with it — see §3.
 
 ---
 
 ## 3. Layout
 
-Target viewport: **1024–1366 CSS px, landscape.** Not a phone breakpoint that
-grew; a design that starts here. The doctor's phone gets exactly one screen —
-the presence toggle (`PLAN.md` §13.2) — and nothing else.
+**Revised 29 Aug 2026.** What this section said, and what the app was built to,
+was: *"1024–1366 CSS px, landscape. Not a phone breakpoint that grew; a design
+that starts here. The doctor's phone gets exactly one screen — the presence
+toggle (`PLAN.md` §13.2) — and nothing else."*
+
+That was correct for as long as the app ran on two registered tablets. PR #29
+deleted device trust: staff now open the clinic URL on whatever is in their
+hand, and in practice that is the two stands, personal phones, and a tablet
+held in portrait. The premise expired without anybody editing the brief, and
+524px of fixed furniture on a 390px phone is not a cramped screen — it is a
+broken one.
+
+So the target is now **390–1366 CSS px, either orientation**, and the three
+panes are what the layout becomes when there is room for them rather than what
+it always is:
+
+| Width | Context | Work | Actions |
+|---|---|---|---|
+| **< 768** phone | folds into a `Details` disclosure | full width | bottom bar: the screen's one primary action, plus `Actions` for the rest |
+| **768–1023** portrait tablet | a 240px column | beside it | bottom bar |
+| **1024–1279** landscape stand | 280px | flexible | 200px right-hand rail |
+| **≥ 1280** | 320px | flexible | 220px rail |
+
+Navigation is `lib/nav.ts`, rendered by the shell on every screen at every
+width — never by the screen itself. The twenty-six hand-rolled rails that
+preceded it left `/stock-take` with no exit at all, and sent administrators to
+the pharmacy counter eleven different ways.
+
+The three panes as they still look above 1024px:
 
 ```
 ┌────────────────────────────────────────────────┬──────────────┐
