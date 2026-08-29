@@ -15,7 +15,6 @@
  * A drawer that is fifty rupees short every Tuesday is a fact about a Tuesday.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
@@ -32,7 +31,6 @@ import { paiseToRupees } from '@/lib/units';
 const money = (value: number | string) => `₹${Number(value).toFixed(2)}`;
 
 export default function DayBookPage() {
-  const router = useRouter();
   const [days, setDays] = useState<DayBookRow[]>([]);
   const [tills, setTills] = useState<TillReconciliation[]>([]);
   const [open, setOpen] = useState<TillReconciliation | null>(null);
@@ -161,10 +159,8 @@ export default function DayBookPage() {
           >
             Cash out
           </RailButton>
-          <RailButton onClick={() => router.push('/billing')}>Billing</RailButton>
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >

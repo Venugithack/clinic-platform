@@ -158,11 +158,8 @@ export default function ReorderPage() {
           >
             Draft {suppliers.size || ''} order{suppliers.size === 1 ? '' : 's'}
           </RailButton>
-          <RailButton onClick={() => router.push('/orders')}>Purchase orders</RailButton>
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/admin/home')}>Admin</RailButton>
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >

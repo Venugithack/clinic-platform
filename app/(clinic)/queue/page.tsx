@@ -15,7 +15,7 @@ import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Badge, EmptyState, Notice, PageHeader, Token } from '@/components/ui';
 import { todaysQueue, type QueueEntry } from '@/lib/db/queue';
 import { setAppointmentStatus } from '@/lib/transitions/clinic';
-import { currentSession, lock } from '@/lib/auth';
+import { currentSession } from '@/lib/auth';
 
 const STATUS_LABEL: Record<QueueEntry['status'], string> = {
   booked: 'Booked',
@@ -144,6 +144,11 @@ export default function QueuePage() {
           ) : null}
         </div>
       }
+      primary={
+        canIntake
+          ? { label: 'Register walk-in', onClick: () => router.push('/queue/new') }
+          : undefined
+      }
       rail={
         <>
           {canIntake ? (
@@ -151,34 +156,7 @@ export default function QueuePage() {
               Register walk-in
             </RailButton>
           ) : null}
-
-          {isCounter ? (
-            <RailButton tone="primary" onClick={() => router.push('/counter')}>
-              Pharmacy counter
-            </RailButton>
-          ) : null}
-
-          {isDoctor || isAdmin ? (
-            <RailButton onClick={() => router.push('/presence')}>Clinic status</RailButton>
-          ) : null}
-
-          {isDoctor || isAdmin ? (
-            <RailButton onClick={() => router.push('/reports')}>Reports</RailButton>
-          ) : null}
-
-          {isAdmin ? (
-            <RailButton onClick={() => router.push('/admin/home')}>Administration</RailButton>
-          ) : null}
-
           <RailButton onClick={refresh}>Refresh</RailButton>
-          <div className="flex-1" />
-          <RailButton
-            onClick={() => {
-              void lock().then(() => router.replace('/'));
-            }}
-          >
-            Sign out
-          </RailButton>
         </>
       }
     >

@@ -320,7 +320,6 @@ export default function ReportsPage() {
           </RailButton>
           <RailButton onClick={load}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >

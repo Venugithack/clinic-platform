@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Field, Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
@@ -56,7 +55,6 @@ function intOrUndefined(value: string): number | undefined {
 }
 
 export default function MedicinesPage() {
-  const router = useRouter();
   const session = currentSession();
   const allowed = session?.role === 'admin';
 
@@ -198,7 +196,6 @@ export default function MedicinesPage() {
     return (
       <ThreePane
         context={<div />}
-        rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}
       >
         <PageHeader eyebrow="Administration" title="Medicines" />
         <Notice tone="bad">Only an administrator can manage the medicine master.</Notice>
@@ -260,9 +257,6 @@ export default function MedicinesPage() {
           ) : null}
           <RailButton disabled={busy} onClick={() => void refresh(pickedId)}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/suppliers')}>Suppliers</RailButton>
-          <RailButton onClick={() => router.push('/import')}>Import file</RailButton>
-          <RailButton onClick={() => router.push('/admin/home')}>Admin home</RailButton>
         </>
       }
     >

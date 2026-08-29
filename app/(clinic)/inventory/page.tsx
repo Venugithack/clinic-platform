@@ -28,7 +28,6 @@
  *     screen in the build that may see it.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Badge, EmptyState, Notice, PageHeader } from '@/components/ui';
 import {
@@ -48,7 +47,6 @@ const asPrinted = (date: string) =>
   new Date(date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 
 export default function InventoryPage() {
-  const router = useRouter();
   const [rows, setRows] = useState<ShelfRow[]>([]);
   const [query, setQuery] = useState('');
   const [openDrug, setOpenDrug] = useState<string | null>(null);
@@ -141,11 +139,7 @@ export default function InventoryPage() {
       rail={
         <>
           <RailButton onClick={refresh}>Refresh</RailButton>
-          <RailButton onClick={() => router.push('/expiry')}>Expiry</RailButton>
-          <RailButton onClick={() => router.push('/reorder')}>Reorder</RailButton>
-          <RailButton onClick={() => router.push('/receiving')}>Receiving</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >

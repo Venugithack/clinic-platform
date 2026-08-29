@@ -262,10 +262,8 @@ export default function BillingPage() {
               Close till
             </RailButton>
           )}
-          <RailButton onClick={() => router.push('/day-book')}>Day-book</RailButton>
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >

@@ -12,7 +12,7 @@ import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Badge, EmptyState, Notice, PageHeader, Token } from '@/components/ui';
 import { pharmacyQueue, type PharmacyQueueEntry, type StockState } from '@/lib/db/pharmacy';
 import { subscribe } from '@/lib/realtime';
-import { currentSession, lock } from '@/lib/auth';
+import { currentSession } from '@/lib/auth';
 
 const STOCK_LABEL: Record<StockState, string> = {
   full: 'All in stock',
@@ -83,7 +83,7 @@ export default function CounterPage() {
           </dl>
 
           <p className="text-sm leading-6 text-ink-2">
-            Open a prescription, verify each medicine against the pack, then dispense. Stock and purchasing tools are secondary work below the counter actions.
+            Open a prescription, verify each medicine against the pack, then dispense. Stock and purchasing live under Go to.
           </p>
 
           {session ? (
@@ -94,33 +94,16 @@ export default function CounterPage() {
           ) : null}
         </div>
       }
+      primary={{
+        label: 'Counter sale',
+        onClick: () => router.push('/counter/sale'),
+      }}
       rail={
         <>
-          <p className="eyebrow px-1 pt-1">Counter</p>
           <RailButton tone="primary" onClick={() => router.push('/counter/sale')}>
             Counter sale
           </RailButton>
-          <RailButton onClick={() => router.push('/billing')}>Billing</RailButton>
-          <RailButton onClick={() => router.push('/inventory')}>Inventory</RailButton>
-
-          <p className="eyebrow px-1 pt-3">Stock work</p>
-          <RailButton onClick={() => router.push('/receiving')}>Receiving</RailButton>
-          <RailButton onClick={() => router.push('/stock-take')}>Stock-take</RailButton>
-          <RailButton onClick={() => router.push('/expiry')}>Expiry</RailButton>
-
-          <p className="eyebrow px-1 pt-3">Purchasing</p>
-          <RailButton onClick={() => router.push('/reorder')}>Low stock</RailButton>
-          <RailButton onClick={() => router.push('/orders')}>Purchase orders</RailButton>
-
           <RailButton onClick={refresh}>Refresh</RailButton>
-          <div className="flex-1" />
-          <RailButton
-            onClick={() => {
-              void lock().then(() => router.replace('/'));
-            }}
-          >
-            Sign out
-          </RailButton>
         </>
       }
     >
@@ -135,7 +118,7 @@ export default function CounterPage() {
       {queue.length === 0 && !error ? (
         <EmptyState
           title="No prescriptions waiting"
-          direction="When the doctor signs a prescription it appears here automatically. You can still use Counter sale, Billing or Inventory from the action rail."
+          direction="When the doctor signs a prescription it appears here automatically. Counter sale is on the right; everything else is under Go to."
         />
       ) : null}
 

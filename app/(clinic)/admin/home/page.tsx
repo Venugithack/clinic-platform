@@ -2,9 +2,9 @@
 
 import { useRouter } from 'next/navigation';
 import type { Route } from 'next';
-import { RailButton, ThreePane } from '@/components/ThreePane';
+import { ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
-import { currentSession, lock } from '@/lib/auth';
+import { currentSession } from '@/lib/auth';
 
 interface AdminDestination {
   title: string;
@@ -75,11 +75,6 @@ export default function AdminHomePage() {
   const session = typeof window === 'undefined' ? null : currentSession();
   const allowed = session?.role === 'admin';
 
-  const signOutAdmin = async () => {
-    await lock();
-    router.replace('/');
-  };
-
   return (
     <ThreePane
       context={
@@ -90,21 +85,9 @@ export default function AdminHomePage() {
             Configuration and back-office work lives here. Doctor, nurse and pharmacy workflows stay on their own operational screens.
           </p>
           <p className="mt-4 text-sm text-ink-2">
-            Sign out before handing a shared computer to another staff member. Their PIN will then identify their work separately.
+            Sign out — under Go to — before handing a shared computer to another staff member. Their PIN will then identify their work separately.
           </p>
         </div>
-      }
-      rail={
-        <>
-          <RailButton tone="primary" onClick={() => router.push('/admin')}>Staff access</RailButton>
-          <RailButton onClick={() => router.push('/medicines')}>Medicines</RailButton>
-          <RailButton onClick={() => router.push('/suppliers')}>Suppliers</RailButton>
-          <RailButton onClick={() => router.push('/reorder')}>Low stock</RailButton>
-          <RailButton onClick={() => router.push('/import')}>Import data</RailButton>
-          <div className="flex-1" />
-          <RailButton onClick={() => router.push('/settings')}>Clinic settings</RailButton>
-          <RailButton onClick={() => void signOutAdmin()}>Sign out administrator</RailButton>
-        </>
       }
     >
       <PageHeader eyebrow="Administration" title="Clinic control center" sub={session?.staffName} />

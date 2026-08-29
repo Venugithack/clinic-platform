@@ -18,7 +18,6 @@
  * database, so the pharmacist is told the actual reason and the date it passed.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
@@ -52,7 +51,6 @@ function rupees(amount: number): string {
 }
 
 export default function ExpiryPage() {
-  const router = useRouter();
   const [expiring, setExpiring] = useState<ExpiringBatch[]>([]);
   const [expired, setExpired] = useState<ExpiredBatch[]>([]);
   const [credits, setCredits] = useState<OpenCredit[]>([]);
@@ -236,7 +234,6 @@ export default function ExpiryPage() {
 
           <RailButton onClick={refresh}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >
