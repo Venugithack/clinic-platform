@@ -94,6 +94,30 @@ select lives_ok(
 -- Marking a screen. Administrator only — this is the one browser claim left in
 -- the system and it is not self-service.
 -- ---------------------------------------------------------------------------
+-- The counter cannot mark its own screen. 34_device_free_pin_access asserts the
+-- GRANT is back; this is the gate behind it, which is the half that matters —
+-- a marker anyone could mint would make presence a claim about nothing.
+insert into staff (id, name, role, auth_user_id, pin_hash, pin_set_at) values
+  ('35000000-0000-0000-0000-000000000002', 'Marker Counter', 'counter',
+   'a3500000-0000-0000-0000-000000000002',
+   crypt('481920', gen_salt('bf', 4)), now());
+
+create temporary table t_counter as
+select app.unlock_pin('35000000-0000-0000-0000-000000000002', '481920') as result;
+
+select set_config('app.staff_session',
+  (select result->>'session_token' from t_counter), true);
+
+select throws_ok(
+  $$ select app.register_device('Counter screen', true, null) $$,
+  'CL005',
+  null,
+  'the counter cannot mark a screen as being in the clinic'
+);
+
+select set_config('app.staff_session',
+  (select result->>'session_token' from t_plain), true);
+
 create temporary table t_screen as
 select app.register_device('Consulting room', true, null) as device;
 

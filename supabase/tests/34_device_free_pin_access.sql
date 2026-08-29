@@ -173,9 +173,23 @@ select ok(
   not has_function_privilege('authenticated', 'app.trust_device_by_email(text,boolean,integer)', 'EXECUTE'),
   'email can no longer trust a device'
 );
+-- Registration is callable again, and narrowly. 20260829130000 granted it back
+-- so an administrator can mark a screen as standing in the clinic, which is the
+-- only thing app.set_presence will accept "in clinic" from.
+--
+-- What this file is really asserting is unchanged and is asserted above: no
+-- device can SIGN ANYBODY IN. app.unlock and app.trust_device_by_email stay
+-- closed, so a marker cannot become a way past the PIN. Registration itself is
+-- administrator-gated in its own body — 36_clinic_screen_marker.sql drives
+-- that, and the refusal, against a real session.
 select ok(
-  not has_function_privilege('authenticated', 'app.register_device(text,boolean,integer)', 'EXECUTE'),
-  'registration cannot create trusted devices'
+  has_function_privilege('authenticated', 'app.register_device(text,boolean,integer)', 'EXECUTE'),
+  'registration exists again, for marking a clinic screen'
+);
+
+select ok(
+  not has_function_privilege('anon', 'app.register_device(text,boolean,integer)', 'EXECUTE'),
+  'but never from the public sign-in page'
 );
 
 select * from finish();
