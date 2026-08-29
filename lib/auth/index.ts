@@ -2,12 +2,15 @@
  *
  * Owner/admin: verified email OTP through Supabase Auth.
  * Staff: public name picker + six-digit PIN, producing a short-lived opaque
- * staff session. There is intentionally no device identity or registration.
+ * staff session. There is intentionally no device identity in sign-in: the
+ * optional clinic-screen marker it passes cannot refuse anyone, and only
+ * decides whether this browser may assert the doctor is present.
  */
 import {
   appSchema,
   clearStoredSession,
   db,
+  readClinicScreenToken,
   readStoredSession,
   writeStoredSession,
   type StoredSession,
@@ -31,6 +34,11 @@ export async function unlock(staffId: string, pin: string): Promise<StaffSession
   const { data, error } = await appSchema().rpc('unlock_pin', {
     p_staff_id: staffId,
     p_pin: pin,
+    // Only some browsers carry this, and that is the design. It says "this
+    // screen stands in the clinic" and nothing else — it cannot refuse a
+    // sign-in, and its absence is the ordinary case. All it buys the session is
+    // the right to say the doctor is present (lib/db/clinicScreen.ts).
+    p_screen_token: readClinicScreenToken(),
   });
 
   if (error) throw new Error(error.message);

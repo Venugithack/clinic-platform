@@ -219,3 +219,4 @@ export function resetDb(): void {
 
 export type { SupabaseClient };
 export * from './session';
+export * from './clinicScreen';
