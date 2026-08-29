@@ -16,11 +16,29 @@ interface NumpadProps {
   onDigit: (digit: string) => void;
   onBackspace: () => void;
   disabled?: boolean;
+  /**
+   * Move to the next number this screen wants, without leaving the pad.
+   *
+   * A screen that collects several numbers through one pad otherwise costs a
+   * round trip each time — reach up to the field, tap it, come back down to the
+   * keys. On the goods receipt that was four round trips per medicine, on a
+   * delivery of ten. The key goes in the pad's own empty corner, so the layout
+   * and the target sizes are unchanged; screens that collect one number pass
+   * nothing and get the pad they always had.
+   */
+  onNext?: () => void;
+  nextLabel?: string;
 }
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-export function Numpad({ onDigit, onBackspace, disabled = false }: NumpadProps) {
+export function Numpad({
+  onDigit,
+  onBackspace,
+  disabled = false,
+  onNext,
+  nextLabel = 'Next',
+}: NumpadProps) {
   return (
     <div className="grid grid-cols-3 gap-3" role="group" aria-label="Number pad">
       {KEYS.map((key) => (
@@ -35,7 +53,18 @@ export function Numpad({ onDigit, onBackspace, disabled = false }: NumpadProps) 
         </button>
       ))}
 
-      <div aria-hidden="true" />
+      {onNext ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onNext}
+          className="h-14 rounded-box border border-ink bg-sheet px-2 text-xs font-semibold uppercase tracking-[0.08em] text-ink active:bg-paper-2 disabled:opacity-40"
+        >
+          {nextLabel}
+        </button>
+      ) : (
+        <div aria-hidden="true" />
+      )}
 
       <button
         type="button"

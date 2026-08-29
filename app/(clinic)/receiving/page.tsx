@@ -35,6 +35,7 @@ import { DrugSearch } from '@/components/DrugSearch';
 import { getDrug, type DrugRow } from '@/lib/db/drugs';
 import { lookupBarcode } from '@/lib/db/barcodes';
 import { activeSuppliers, type SupplierRow } from '@/lib/db/suppliers';
+import { priceHistory, type PurchasePrice } from '@/lib/db/reorder';
 import { openOrders, orderLines, type OpenOrder, type OrderLine } from '@/lib/db/purchasing';
 import {
   learnBarcode,
@@ -50,6 +51,18 @@ const MONTHS = [
 ];
 
 type Field = 'qty' | 'free' | 'mrp' | 'cost';
+
+/**
+ * The order an invoice line is read in: how many, what it retails at, what it
+ * cost. Free strips join the end only when the pharmacist has asked for them,
+ * so the common line is three numbers and the pad walks them without anybody
+ * reaching back up to the fields.
+ */
+function nextField(current: Field, withFree: boolean): Field {
+  const order: Field[] = withFree ? ['qty', 'mrp', 'cost', 'free'] : ['qty', 'mrp', 'cost'];
+  const at = order.indexOf(current);
+  return order[(at + 1) % order.length] ?? 'qty';
+}
 
 interface DraftLine {
   drug: DrugRow;
@@ -102,6 +115,8 @@ function Receiving() {
 
   const [po, setPo] = useState<OpenOrder | null>(null);
   const [poLines, setPoLines] = useState<OrderLine[]>([]);
+  const [lastPaid, setLastPaid] = useState<PurchasePrice | null>(null);
+  const [showFree, setShowFree] = useState(false);
   const [searching, setSearching] = useState(false);
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +176,8 @@ function Receiving() {
     setBatchNo('');
     setField('qty');
     setValues({ qty: '', free: '', mrp: '', cost: '' });
+    setLastPaid(null);
+    setShowFree(false);
   }, []);
 
   const onCode = async (code: string) => {
@@ -178,7 +195,9 @@ function Receiving() {
       const found = await getDrug(mapping.drug_id);
       if (found) {
         setDrug(found);
+        setField('qty');
         setNotice(`${found.name} scanned`);
+        await prefillFrom(found, supplier?.id);
       }
     } catch (cause) {
       setError((cause as Error).message);
@@ -188,7 +207,9 @@ function Receiving() {
   const pick = async (picked: DrugRow) => {
     setSearching(false);
     setDrug(picked);
+    setField('qty');
     setValues({ qty: '', free: '', mrp: '', cost: '' });
+    await prefillFrom(picked, supplier?.id);
 
     if (unknownCode) {
       try {
@@ -206,6 +227,49 @@ function Receiving() {
     unitsPerStrip: drug?.default_units_per_strip ?? 1,
     stripsPerBox: drug?.default_strips_per_box ?? 1,
   };
+
+  /**
+   * What this drug cost last time, offered rather than asked for.
+   *
+   * MRP and the invoice rate are the two numbers that change least between
+   * deliveries and cost the most to type — eight taps of numpad for figures
+   * that are usually identical to the last receipt. The app already knows them:
+   * `supplier_price_history` is what the reorder screen prints as "₹1.60 Kumar
+   * Distributors", and it is the same fact.
+   *
+   * The selected supplier's own last price wins over anybody else's, because a
+   * rate is a rate FROM someone. Where there is no history the fields stay
+   * empty and the pharmacist types, exactly as before.
+   *
+   * It is filled in as a real value, not a placeholder, because it is one — and
+   * where it came from is printed under the fields, so it is a figure to check
+   * against the invoice rather than a guess to accept blindly. Nothing is
+   * posted until "Add to receipt", and the invoice always wins.
+   */
+  const prefillFrom = useCallback(
+    async (picked: DrugRow, supplierId: string | undefined) => {
+      setLastPaid(null);
+      try {
+        const history = (await priceHistory([picked.id])).get(picked.id) ?? [];
+        if (history.length === 0) return;
+
+        const best =
+          history.find((row) => supplierId && row.supplier_id === supplierId) ?? history[0];
+        if (!best) return;
+        const ups = picked.default_units_per_strip ?? 1;
+
+        setLastPaid(best);
+        setValues((current) => ({
+          ...current,
+          mrp: String(Math.round(Number(best.mrp) * 100)),
+          cost: String(Math.round(Number(best.cost_per_base_unit) * ups * 100)),
+        }));
+      } catch {
+        // A missing price history is not a reason to block a delivery.
+      }
+    },
+    [],
+  );
 
   /**
    * Why the line cannot be added yet, in the order the form is filled in.
@@ -572,10 +636,36 @@ function Receiving() {
 
           <div className="mt-4 flex gap-3">
             {fieldButton('qty', 'Strips', false)}
-            {fieldButton('free', 'Free strips', false)}
             {fieldButton('mrp', 'MRP per strip', true)}
             {fieldButton('cost', 'Rate per strip', true)}
+            {showFree ? fieldButton('free', 'Free strips', false) : null}
           </div>
+
+          {/* Free strips are a real thing and almost always none, so they stop
+              occupying a quarter of the row that is filled on every line. */}
+          {!showFree ? (
+            <button
+              type="button"
+              onClick={() => { setShowFree(true); setField('free'); }}
+              className="mt-2 h-11 rounded-box px-2 text-sm text-ink-2 active:bg-paper-2"
+            >
+              + Free strips
+            </button>
+          ) : null}
+
+          {/* Where the two money figures came from. Offered, not assumed: it is
+              the last receipt for this drug, and the invoice in the
+              pharmacist's hand overrules it. */}
+          {lastPaid ? (
+            <p className="mt-2 text-sm text-ink-2">
+              Filled from the last receipt
+              {lastPaid.supplier_name ? ` from ${lastPaid.supplier_name}` : ''} on{' '}
+              {new Date(lastPaid.received_at).toLocaleDateString('en-IN', {
+                day: 'numeric', month: 'short', year: 'numeric',
+              })}
+              . Check it against the invoice.
+            </p>
+          ) : null}
 
           <p className="mt-2 text-sm text-ink-2">
             {Number(values.qty || '0') * pack.unitsPerStrip +
@@ -602,6 +692,8 @@ function Receiving() {
                   [field]: current[field].slice(0, -1),
                 }))
               }
+              onNext={() => setField(nextField(field, showFree))}
+              nextLabel="Next"
             />
           </div>
 
