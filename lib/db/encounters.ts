@@ -232,5 +232,23 @@ export async function prescriptionForPrint(id: string): Promise<PrescriptionForP
     .limit(1)
     .single();
 
-  return { ...(data as PrescriptionForPrint), clinic: clinic as PrescriptionForPrint['clinic'] };
+  const row = data as PrescriptionForPrint;
+  const clinicRow = clinic as PrescriptionForPrint['clinic'];
+
+  // There are two registration numbers in this schema and only one of them is
+  // obvious. Clinic settings has "Doctor registration number"
+  // (`clinic.doctor_reg_no`) and that is the one an administrator fills in;
+  // `staff.reg_no` is a per-person field tucked behind "Registration no.
+  // (optional)" on the add-staff form, and it is the one this prescription
+  // prints. A single-doctor clinic fills in the first, prints a prescription,
+  // and the prescriber line comes out blank — which §15.2 requires against
+  // every Schedule H1 line, and A7 makes legally load-bearing.
+  //
+  // So the person's own number wins where it exists, and the clinic's stands in
+  // where it does not. Nothing is invented: both were typed by the clinic.
+  return {
+    ...row,
+    doctor: { ...row.doctor, reg_no: row.doctor?.reg_no ?? clinicRow?.doctor_reg_no ?? null },
+    clinic: clinicRow,
+  };
 }
