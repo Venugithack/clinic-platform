@@ -43,9 +43,26 @@ export default function SignInPage() {
     void (async () => {
       try {
         const setup = await needsSetup();
-        setFirstRun(setup === true);
-        if (setup === false) setStaff(await listActiveStaff());
-        else setStaff([]);
+
+        // `undefined` is "the read failed", and lib/db/settings goes out of its
+        // way to say so: "A failed read is unknown, never permission to
+        // bootstrap." That care was being thrown away one line later — the
+        // `else` swept unknown in with "this clinic is new" and set the staff
+        // list to empty, so an unreachable database rendered "No staff have
+        // been configured yet. Sign in as administrator to add them."
+        //
+        // Which is the worst available sentence. It invites the owner to
+        // re-bootstrap a clinic that already exists, over a dropped Wi-Fi
+        // connection, on the screen every staff member starts their day on.
+        if (setup === undefined) {
+          setError(
+            'Could not reach the clinic database. Check the connection and try again — nothing has been lost.',
+          );
+          return;
+        }
+
+        setFirstRun(setup);
+        setStaff(setup ? [] : await listActiveStaff());
       } catch (cause) {
         setError((cause as Error).message);
       }
