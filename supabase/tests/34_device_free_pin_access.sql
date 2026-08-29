@@ -104,42 +104,66 @@ select isnt_empty(
 -- End the successful session so the remaining tests isolate the rate limiter.
 update staff_sessions set ended_at = now() where ended_at is null;
 
--- Four bad PINs remain usable but count down. The fifth applies a ten-minute
--- lock. These are JSON results, not exceptions, so the counter persists.
+-- Rate limiting is charged to the CALLER, not to the account. 20260830090000.
+--
+-- What these seven assertions used to say was that five wrong PINs lock the
+-- staff member out for ten minutes. That was the behaviour, and it was a
+-- denial of service: the sign-in page publishes every staff member and their
+-- id, unlock_pin is granted to anon, so anybody could post five wrong PINs per
+-- person and lock the whole clinic out of its own app, indefinitely, from
+-- anywhere.
+--
+-- The limit still exists — a six-digit PIN is a million guesses and needs one
+-- — but it now belongs to whoever is guessing.
 select is(
   (app.unlock_pin((select id from staff where name = 'Clinic Owner'), '000001')->>'attempts_remaining')::int,
-  4,
-  'first wrong PIN leaves four attempts'
+  app.pin_attempt_limit() - 1,
+  'a wrong PIN counts against the caller'
 );
 select is(
   (app.unlock_pin((select id from staff where name = 'Clinic Owner'), '000002')->>'attempts_remaining')::int,
-  3,
-  'second wrong PIN leaves three attempts'
+  app.pin_attempt_limit() - 2,
+  'and keeps counting down'
 );
-select is(
-  (app.unlock_pin((select id from staff where name = 'Clinic Owner'), '000003')->>'attempts_remaining')::int,
-  2,
-  'third wrong PIN leaves two attempts'
-);
-select is(
-  (app.unlock_pin((select id from staff where name = 'Clinic Owner'), '000004')->>'attempts_remaining')::int,
-  1,
-  'fourth wrong PIN leaves one attempt'
-);
-select is(
-  app.unlock_pin((select id from staff where name = 'Clinic Owner'), '000005')->>'code',
-  'locked',
-  'fifth wrong PIN locks the account temporarily'
-);
+
+-- The account is untouched by any of it. This is the assertion the old file was
+-- missing, and the one that would have caught the hole.
 select ok(
-  (select pin_locked_until > now() from staff where name = 'Clinic Owner'),
-  'server stores the temporary PIN lock'
+  (select coalesce(pin_locked_until < now(), true) from staff where name = 'Clinic Owner'),
+  'a stranger guessing wrong does NOT lock the staff member out'
 );
 select is(
   app.unlock_pin((select id from staff where name = 'Clinic Owner'), '481920')->>'code',
-  'locked',
-  'even the correct PIN waits until an active brute-force lock ends'
+  null,
+  'so the right PIN still works while somebody else is guessing'
 );
+
+-- A success clears the caller's record, so a clinic that mistypes through the
+-- morning never walks into a lock of its own making.
+select is(
+  (select count(*)::int from pin_attempts where client = app.current_client_ip()),
+  0,
+  'and signing in clears what the caller had accumulated'
+);
+
+-- Exhausting the allowance locks the CALLER. Driven directly rather than
+-- through twenty round trips.
+insert into pin_attempts (client, failures, window_from, last_at)
+values (app.current_client_ip(), app.pin_attempt_limit() - 1, now(), now())
+on conflict (client) do update set failures = app.pin_attempt_limit() - 1;
+
+select is(
+  app.unlock_pin((select id from staff where name = 'Clinic Owner'), '000006')->>'code',
+  'locked',
+  'the caller is locked once their own allowance is gone'
+);
+select ok(
+  (select coalesce(pin_locked_until < now(), true) from staff where name = 'Clinic Owner'),
+  'and the staff member is still not locked, even then'
+);
+
+-- Clear it so the rest of the file runs as itself.
+delete from pin_attempts where client = app.current_client_ip();
 
 -- Re-establish the verified admin identity. Resetting the PIN must clear the
 -- lock, invalidate existing PIN sessions, and make the new PIN usable anywhere.

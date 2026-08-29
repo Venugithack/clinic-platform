@@ -141,7 +141,11 @@ select is(
    where n.nspname = 'app' and not p.prosecdef
      and p.proname not in ('touch_updated_at', 'refuse_mutation', 'changed_fields',
                            'units_in_pack', 'month_end', 'financial_year',
-                           'notify_change', 'clinic_day', 'parse_expiry')),
+                           'notify_change', 'clinic_day', 'parse_expiry',
+                          -- Rate-limiting helpers (20260830090000): one reads a
+                          -- GUC, two are constants. No table between them.
+                          'current_client_ip', 'pin_attempt_limit',
+                          'pin_attempt_window')),
   0,
   'every transition runs as definer; the exceptions are pure helpers that touch no table'
 );
