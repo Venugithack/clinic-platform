@@ -32,7 +32,7 @@ export default function AdminPeoplePage() {
   const [adding, setAdding] = useState(false);
   const [resetting, setResetting] = useState<StaffAdminRow | null>(null);
   const [name, setName] = useState('');
-  const [role, setRole] = useState<StaffRole>('counter');
+  const [role, setRole] = useState<StaffRole | null>(null);
   const [phone, setPhone] = useState('');
   const [regNo, setRegNo] = useState('');
   const [pin, setPin] = useState('');
@@ -65,10 +65,12 @@ export default function AdminPeoplePage() {
   };
 
   const validPin = /^\d{6}$/.test(pin) && pin === confirmPin;
+  const pinMismatch = /^\d{6}$/.test(pin) && confirmPin.length === 6 && pin !== confirmPin;
 
   const doAdd = () =>
     run(async () => {
       if (!name.trim()) throw new Error('Enter the staff member name.');
+      if (!role) throw new Error('Choose what this person does.');
       if (!validPin) throw new Error('Enter the same 6-digit PIN twice.');
       const added = await addStaff({
         name: name.trim(),
@@ -81,7 +83,7 @@ export default function AdminPeoplePage() {
       setName('');
       setPhone('');
       setRegNo('');
-      setRole('counter');
+      setRole(null);
       clearPin();
       return `${added.name} is ready to sign in from the clinic home page.`;
     });
@@ -107,6 +109,18 @@ export default function AdminPeoplePage() {
         <span className="block text-sm text-ink-2">PIN again</span>
         <input type="password" inputMode="numeric" maxLength={6} value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="Confirm PIN" className="blank mt-1 h-14 w-full px-3 text-center text-xl tracking-[0.3em]" />
       </label>
+      {/*
+        Say why the button is dead. Both PIN boxes are masked, so a typo is
+        invisible by design and the only feedback was a greyed-out "Add staff" —
+        which reads as "this screen is broken", not "you mistyped". The message
+        waits until the second box has six digits, so it does not accuse anyone
+        mid-keystroke.
+      */}
+      {pinMismatch ? (
+        <p role="status" className="text-sm text-stop sm:col-span-2">
+          The two PINs do not match.
+        </p>
+      ) : null}
     </div>
   );
 
@@ -117,7 +131,7 @@ export default function AdminPeoplePage() {
           <h2 className="eyebrow">People</h2>
           <p className="tabular mt-1 text-lg">{staff.filter((row) => row.active).length} active staff</p>
           <p className="mt-6 text-sm leading-6 text-ink-2">
-            There are no trusted devices. Staff can open the clinic URL on any browser, choose their name and use their PIN.
+            Staff open the clinic URL on any browser, choose their name and use their PIN. There is nothing to register and no device to trust.
           </p>
           <p className="mt-4 text-sm leading-6 text-ink-2">
             The administrator email OTP is reserved for the control panel and recovery.
@@ -169,7 +183,7 @@ export default function AdminPeoplePage() {
           </div>
           {pinFields}
           <div className="mt-5 flex gap-3">
-            <button type="button" disabled={busy || !name.trim() || !validPin} onClick={() => void doAdd()} className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40">Add staff</button>
+            <button type="button" disabled={busy || !name.trim() || !role || !validPin} onClick={() => void doAdd()} className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40">Add staff</button>
             <button type="button" disabled={busy} onClick={() => { setAdding(false); clearPin(); }} className="h-14 rounded-box border border-rule bg-sheet px-5">Cancel</button>
           </div>
         </section>
