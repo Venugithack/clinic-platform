@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M5 gate (PLAN.md §8).
@@ -21,21 +22,6 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 /** The WhatsApp hand-off opens a tab. Close it; the assertion is the href. */
 function swallowPopups(page: Page) {
   page.context().on('page', (opened) => void opened.close().catch(() => {}));
@@ -44,7 +30,7 @@ function swallowPopups(page: Page) {
 test('low stock has one order per supplier, and the counter cannot send them', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
 
   await page.goto('/reorder');
 
@@ -54,11 +40,20 @@ test('low stock has one order per supplier, and the counter cannot send them', a
   // case the product invariant is the same: one open order covers the medicine
   // and the reorder screen will not create another one.
   const draftButton = page.getByRole('button', { name: /^Draft \d+ orders?$/ });
+  const alreadyOnOrder = page.getByText(/Already on order:/).first();
+
+  // Wait for the screen to have decided what it is showing before branching on
+  // it. `count()` does not wait — it answers about the DOM as it stands — and
+  // the suggestions arrive from the database a moment after navigation, so a
+  // bare count() here reads 0 off the loading state every time and takes the
+  // "already on order" path on a run that has nothing on order yet.
+  await expect(draftButton.or(alreadyOnOrder).first()).toBeVisible();
+
   if ((await draftButton.count()) > 0) {
     await draftButton.click();
     await expect(page.getByText(/draft orders? saved/)).toBeVisible();
   } else {
-    await expect(page.getByText(/Already on order:/).first()).toBeVisible();
+    await expect(alreadyOnOrder).toBeVisible();
   }
 
   await page.goto('/orders');
@@ -78,7 +73,7 @@ test('low stock has one order per supplier, and the counter cannot send them', a
 });
 
 test('a supplier with no WhatsApp number is refused, by name', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   swallowPopups(page);
 
   await page.goto('/orders');
@@ -97,7 +92,7 @@ test('a supplier with no WhatsApp number is refused, by name', async ({ page }) 
 test('the doctor approves, and WhatsApp opens with the order already written', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   swallowPopups(page);
 
   await page.goto('/orders');
@@ -128,7 +123,7 @@ test('the doctor approves, and WhatsApp opens with the order already written', a
 test('the supplier replies, the goods arrive, and the order closes itself', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
 
   await page.goto('/orders');
   await page

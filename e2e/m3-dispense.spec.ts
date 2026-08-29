@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M3 gate (BUILD.md §2).
@@ -19,21 +20,6 @@ import { expect, test, type Page } from '@playwright/test';
  * denied permission has to leave the counter working. The camera itself is
  * tested on the tablets, alongside the LAN certificate in BUILD.md §1.3.
  */
-
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
 
 /** A signed prescription for one drug, straight through the doctor's screens. */
 async function prescribe(page: Page, patient: string, drug: string, chip: string) {
@@ -65,10 +51,10 @@ test('FEFO takes the earlier expiry, and the scan stops the wrong box', async ({
 
   const patient = `E2E Dispense ${Date.now()}`;
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
   await prescribe(doctorPage, patient, 'Dolo 650', '10');
 
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(counterPage, 'Counter');
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(patient) }).click();
   await expect(counterPage.getByRole('heading', { name: 'Dispense', exact: true }))
@@ -109,10 +95,10 @@ test('a pack that is not on the prescription is refused, loudly', async ({ brows
 
   const patient = `E2E WrongBox ${Date.now()}`;
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
   await prescribe(doctorPage, patient, 'Cetzine', '10');
 
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(counterPage, 'Counter');
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(patient) }).click();
 
@@ -151,8 +137,8 @@ test('the patient stays named after the medicine is handed over', async ({ brows
   const doctorPage = await cabin.newPage();
   const counterPage = await counter.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(doctorPage, 'Dr Seed');
+  await signIn(counterPage, 'Counter');
 
   const patient = `Named ${Date.now()}`;
   await prescribe(doctorPage, patient, 'Glycomet 500', '1 strip');
@@ -184,7 +170,7 @@ test('the patient stays named after the medicine is handed over', async ({ brows
   // A fresh tab is a fresh unlock: the device token is in localStorage and
   // shared, but the PIN session is in sessionStorage and is not.
   const cold = await cabin.newPage();
-  await signIn(cold, 'seed-device-cabin', 'Dr Seed');
+  await signIn(cold, 'Dr Seed');
   await cold.goto(counterPage.url());
   await expect(cold.getByRole('heading', { name: 'Dispense', exact: true })).toBeVisible();
   await expect(cold.locator('[data-pane="context"]')).toContainText(patient);

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -11,27 +12,25 @@ async function typePin(page: Page, pin: string) {
   }
 }
 
-async function signIn(page: Page, staffName: string, pin = '481920') {
-  await page.goto('/');
-  await page.getByRole('button', { name: new RegExp(staffName, 'i') }).click();
-  await typePin(page, pin);
-  await expect(page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) })).toBeVisible();
-}
-
 test('admin can add pharmacy staff who can then sign in from another browser', async ({ browser }) => {
   const admin = await browser.newContext();
   const page = await admin.newPage();
   await signIn(page, 'Admin');
   await page.goto('/admin');
 
-  await page.getByRole('button', { name: 'Add staff' }).click();
+  // The rail's button opens the form; the form's own button submits it. Both
+  // say "Add staff", so each one is addressed by where it lives rather than
+  // by .first()/.last() — the rail is the last <aside> in the document, so
+  // .last() was reaching back up and re-opening the form, which clears the
+  // PIN boxes and leaves the submit disabled.
+  await page.getByRole('complementary').getByRole('button', { name: 'Add staff' }).click();
   await page.getByLabel('Name', { exact: true }).fill(PHARMACIST);
   await page.getByLabel('Phone').fill('+91 90000 00009');
   await page.getByRole('button', { name: /Pharmacy \/ Counter/ }).click();
   await page.getByLabel('PIN', { exact: true }).fill('246810');
   await page.getByLabel('Confirm PIN').fill('246810');
-  await page.getByRole('button', { name: 'Add staff', exact: true }).last().click();
-  await expect(page.getByRole('status')).toContainText('ready to sign in');
+  await page.getByRole('main').getByRole('button', { name: 'Add staff', exact: true }).click();
+  await expect(page.getByRole('main').getByRole('status')).toContainText('ready to sign in');
 
   const counter = await browser.newContext();
   const theirs = await counter.newPage();
@@ -57,7 +56,7 @@ test('admin can reset a PIN and the replacement PIN works', async ({ browser }) 
   await page.getByLabel('PIN', { exact: true }).fill('135790');
   await page.getByLabel('Confirm PIN').fill('135790');
   await page.getByRole('button', { name: 'Set new PIN' }).click();
-  await expect(page.getByRole('status')).toContainText('PIN was changed');
+  await expect(page.getByRole('main').getByRole('status')).toContainText('PIN was changed');
 
   const counter = await browser.newContext();
   const theirs = await counter.newPage();
@@ -79,7 +78,7 @@ test('deactivated staff disappear from the public sign-in list', async ({ browse
 
   const row = page.getByRole('listitem').filter({ hasText: PHARMACIST });
   await row.getByRole('button', { name: 'Deactivate' }).click();
-  await expect(page.getByRole('status')).toContainText('can no longer sign in');
+  await expect(page.getByRole('main').getByRole('status')).toContainText('can no longer sign in');
 
   const other = await browser.newContext();
   const theirs = await other.newPage();
@@ -94,5 +93,5 @@ test('counter cannot change staff or PINs', async ({ page }) => {
   await signIn(page, 'Counter');
   await page.goto('/admin');
   await expect(page.getByText(/Only the administrator/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Add staff' })).toBeDisabled();
+  await expect(page.getByRole('complementary').getByRole('button', { name: 'Add staff' })).toBeDisabled();
 });

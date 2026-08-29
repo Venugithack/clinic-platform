@@ -1,24 +1,5 @@
 import { expect, test } from '@playwright/test';
-
-const DEVICE = 'seed-device-cabin';
-const PIN = '481920';
-
-async function signIn(page: import('@playwright/test').Page) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', DEVICE] as const,
-  );
-  await page.goto('/');
-
-  await page.getByRole('button', { name: 'Dr Seed' }).click();
-  for (const digit of PIN) {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-
-  await expect(page.getByRole('heading', { name: /Signed in as Dr Seed/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Open the queue' }).click();
-  await expect(page.getByRole('heading', { name: 'Today’s queue', exact: true })).toBeVisible();
-}
+import { signInAndOpen } from './support/session';
 
 async function register(page: import('@playwright/test').Page, patient: string) {
   await page.getByRole('button', { name: 'Register walk-in' }).click();
@@ -30,7 +11,7 @@ async function register(page: import('@playwright/test').Page, patient: string) 
 }
 
 test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', async ({ page }) => {
-  await signIn(page);
+  await signInAndOpen(page, 'Dr Seed');
 
   const patient = `E2E Patient ${Date.now()}`;
   await page.getByRole('button', { name: 'Register walk-in' }).click();
@@ -101,7 +82,7 @@ test('a walk-in becomes a token, a consult, a signed Rx and a printable sheet', 
 });
 
 test('a signed prescription cannot be edited from the consult screen', async ({ page }) => {
-  await signIn(page);
+  await signInAndOpen(page, 'Dr Seed');
 
   const patient = `E2E Locked ${Date.now()}`;
   await register(page, patient);
@@ -125,7 +106,7 @@ test('a signed prescription cannot be edited from the consult screen', async ({ 
 });
 
 test('finish visit saves diagnosis and advice before returning to the queue', async ({ page }) => {
-  await signIn(page);
+  await signInAndOpen(page, 'Dr Seed');
 
   const patient = `E2E Finish ${Date.now()}`;
   await register(page, patient);

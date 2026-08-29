@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M11d gate (PLAN.md §15.2, §16).
@@ -21,21 +22,6 @@ test.describe.configure({ mode: 'serial' });
 const STAMP = Date.now();
 const PATIENT = `E2E Fix ${STAMP}`;
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('an H1 row with no address is fixed from the register that flagged it', async ({
   browser,
 }) => {
@@ -44,7 +30,7 @@ test('an H1 row with no address is fixed from the register that flagged it', asy
   const doctorPage = await cabin.newPage();
   const counterPage = await counter.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
 
   // Registered WITHOUT an address, which is the whole point: it is a required
   // field on a register nobody looks at until an inspection.
@@ -65,7 +51,7 @@ test('an H1 row with no address is fixed from the register that flagged it', asy
   await doctorPage.getByRole('button', { name: 'Sign Rx' }).click();
   await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(counterPage, 'Counter');
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(PATIENT) }).click();
 
@@ -132,7 +118,7 @@ test('an H1 row with no address is fixed from the register that flagged it', asy
 test('a bill made out to the wrong patient is cancelled, with a reason', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/billing');
 
   // Bill the dispense from the first test.

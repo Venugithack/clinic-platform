@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn, signInAndOpen } from './support/session';
 
 /**
  * The M2 gate (BUILD.md §2), and the feature the clinic actually bought.
@@ -9,21 +10,6 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 const LATENCY_BUDGET_MS = 1500;
-
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }))
-    .toBeVisible();
-}
 
 async function registerWalkIn(page: Page, name: string) {
   await page.getByRole('button', { name: 'Open the queue' }).click();
@@ -44,10 +30,8 @@ test('a signed prescription reaches the counter, and the answer comes back', asy
 
   const patient = `E2E Link ${Date.now()}`;
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
-
-  await counterPage.getByRole('button', { name: 'Open the counter' }).click();
+  await signIn(doctorPage, 'Dr Seed');
+  await signInAndOpen(counterPage, 'Counter');
   await expect(counterPage.getByRole('heading', { name: 'Counter', exact: true }))
     .toBeVisible();
 
@@ -116,7 +100,7 @@ test('the counter cannot propose a drug that is not an equivalent', async ({ bro
 
   const patient = `E2E Equiv ${Date.now()}`;
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
   await registerWalkIn(doctorPage, patient);
   await doctorPage.getByRole('button', { name: new RegExp(patient) }).click();
 
@@ -129,7 +113,7 @@ test('the counter cannot propose a drug that is not an equivalent', async ({ bro
   await doctorPage.getByRole('button', { name: 'Sign Rx' }).click();
   await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(counterPage, 'Counter');
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(patient) }).click();
   await counterPage.getByRole('button', { name: 'Ask doctor' }).click();

@@ -1,51 +1,27 @@
-import { expect, test, type Page } from '@playwright/test';
-
-/**
- * The inventory window (INVENTORY.md §4).
- *
- * Read-only, so this spec is parallel-safe and does not need `serial` — nothing
- * here moves stock.
- *
- * It asserts against Augmentin 625 and Ascoril LS specifically, and that choice
- * is load-bearing rather than arbitrary. The suite runs fully parallel against
- * one seeded database, so any figure a *different* spec can move is a figure
- * this one must not assert on: m3-inventory sells Cetzine and counts Telma,
- * m3-expiry writes off Shelcal and Zincovit, m3-dispense draws Dolo and
- * Glycomet. Those two drugs are touched by no other spec, which is what makes
- * "180" and "₹5400.00" safe to write down.
- *
- * For the same reason there is no assertion on the shelf total or the number of
- * drugs on it: both are sums over the whole seed, and both legitimately change
- * when a spec in another worker writes off a batch.
- */
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
+import { expect, test } from '@playwright/test';
+import { signIn, signInAndOpen } from './support/session';
 
 test.describe('inventory', () => {
   /**
    * The reachability half of the feature, and the reason it is the first test.
    *
-   * A screen only a URL can reach does not exist on a tablet with no keyboard.
-   * This walks the same path the pharmacist has — sign in, land on the counter,
-   * tap the rail — rather than calling page.goto('/inventory').
+   * A screen only a URL can reach does not exist on a tablet with no keyboard,
+   * so this walks the path the pharmacist actually has rather than calling
+   * page.goto('/inventory').
+   *
+   * That path has moved. It used to be a rail button on the counter, which is
+   * why the counter's rail had grown to eight destinations under three
+   * headings — a navigation menu wearing an action rail's clothes. Destinations
+   * now live in the Go to sheet, filtered by role, on every screen; the counter
+   * rail keeps only what the counter does. The assertion is the same one it
+   * always was: reachable by tapping, from where the pharmacist starts.
    */
   test('the counter can reach it without typing a URL', async ({ page }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
-    await page.goto('/counter');
+    await signInAndOpen(page, 'Counter');
+    await expect(page.getByRole('heading', { name: 'Counter', level: 1 })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Inventory', exact: true }).click();
+    await page.getByRole('button', { name: 'Go to another screen' }).click();
+    await page.getByRole('link', { name: /^What is on the shelf/ }).click();
 
     await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
     await expect(page.getByText('Pharmacy')).toBeVisible();
@@ -54,7 +30,7 @@ test.describe('inventory', () => {
   test('a drug on the shelf shows its quantity, its packs and what it cost', async ({
     page,
   }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
+    await signIn(page, 'Counter');
     await page.goto('/inventory');
 
     const augmentin = page.getByTestId('inventory-Augmentin 625');
@@ -80,7 +56,7 @@ test.describe('inventory', () => {
    * worse than neither having it.
    */
   test('searches by salt, not only by the name on the box', async ({ page }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
+    await signIn(page, 'Counter');
     await page.goto('/inventory');
 
     await page.getByLabel('Search the shelf').fill('amoxicillin');
@@ -95,7 +71,7 @@ test.describe('inventory', () => {
    * argued with and not checked.
    */
   test('a row opens into the batches behind it', async ({ page }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
+    await signIn(page, 'Counter');
     await page.goto('/inventory');
 
     const augmentin = page.getByTestId('inventory-Augmentin 625');
@@ -123,7 +99,7 @@ test.describe('inventory', () => {
   test('says why a search found nothing, rather than just finding nothing', async ({
     page,
   }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
+    await signIn(page, 'Counter');
     await page.goto('/inventory');
 
     await page.getByLabel('Search the shelf').fill('qqzz-not-a-medicine');

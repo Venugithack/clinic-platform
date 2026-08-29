@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn, signInAndOpen } from './support/session';
 
 /**
  * Printerless go-live rehearsal.
@@ -7,22 +8,6 @@ import { expect, test, type Page } from '@playwright/test';
  * to billing, against the real database/RLS/transitions. Physical printing is
  * deliberately outside this gate until clinic hardware exists.
  */
-const PIN = '481920';
-
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of PIN) {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
 
 async function shelfQty(page: Page, drug: string): Promise<number> {
   await page.goto('/inventory');
@@ -43,11 +28,10 @@ test('one clinic day crosses intake, consult, pharmacy, stock and billing', asyn
   const counterPage = await counter.newPage();
   const patient = `Clinic Day ${Date.now()}`;
 
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(counterPage, 'Counter');
   const before = await shelfQty(counterPage, 'Cetzine');
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
-  await doctorPage.getByRole('button', { name: 'Open the queue' }).click();
+  await signInAndOpen(doctorPage, 'Dr Seed');
 
   await doctorPage.getByRole('button', { name: 'Register walk-in' }).click();
   await expect(doctorPage.getByRole('heading', { name: 'Register walk-in', exact: true })).toBeVisible();

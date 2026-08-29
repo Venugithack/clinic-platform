@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M6 gate (PLAN.md §8, §13).
@@ -16,28 +17,13 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('he taps "in clinic" and the public page says so, with an as-of', async ({
   browser,
 }) => {
   const cabin = await browser.newContext();
   const doctorPage = await cabin.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
   await doctorPage.goto('/presence');
   await doctorPage.getByRole('button', { name: 'In clinic', exact: true }).click();
   await expect(doctorPage.getByText('Patients now see: in the clinic.')).toBeVisible();
@@ -65,7 +51,7 @@ test('his laptop at home signs in fine, and cannot say he is in the clinic', asy
   // The seed registers a third device that is not a clinic device. This is the
   // weekly "logged in from home to check something", which on a naive presence
   // model tells every patient he is at his desk in the clinic.
-  await signIn(page, 'seed-device-home', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/presence');
   await page.getByRole('button', { name: 'In clinic', exact: true }).click();
 
@@ -80,7 +66,7 @@ test('stepping out says when he is back, and closing the clinic beats all of it'
   const publicCtx = await browser.newContext();
   const phone = await publicCtx.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
   await doctorPage.goto('/presence');
 
   // "Back by 14:30" — one tap on the way out, and it survives the tablet

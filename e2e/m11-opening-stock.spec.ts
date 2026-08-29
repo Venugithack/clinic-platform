@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M11e gate (PLAN.md §16 step 1, INVENTORY.md §1 and §4).
@@ -43,21 +44,6 @@ const STOCK_FILE =
   'Drug Name,Batch,Expiry,Qty,Unit,Rate,Rate Basis,MRP,Supplier\r\n' +
   `${DRUG},${BATCH},03/2028,20,strips,150.00,box,22.50,Kumar Distributors\r\n`;
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 /**
  * What the shelf says at the counter.
  *
@@ -81,7 +67,7 @@ async function atTheCounter(page: Page, query: string, badge: string) {
 test('the shelf is loaded from a file, and the counter can sell out of it', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/import');
 
   // Step one, on the same screen and in the stated order.
@@ -129,7 +115,7 @@ test('the shelf is loaded from a file, and the counter can sell out of it', asyn
 });
 
 test('loading the same file twice does not double the shelf', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/import');
   await page.getByRole('button', { name: '2 · Opening stock' }).click();
 
@@ -151,7 +137,7 @@ test('loading the same file twice does not double the shelf', async ({ page }) =
 test('a stock file loaded before its drug master is refused, row by row', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/import');
   await page.getByRole('button', { name: '2 · Opening stock' }).click();
 
@@ -169,7 +155,7 @@ test('a stock file loaded before its drug master is refused, row by row', async 
 });
 
 test('the counter cannot load the shelf', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/import');
   await page.getByRole('button', { name: '2 · Opening stock' }).click();
 

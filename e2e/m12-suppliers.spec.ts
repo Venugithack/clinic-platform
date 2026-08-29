@@ -1,29 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
-
-const DEVICE = 'seed-device-cabin';
-const PIN = '481920';
-
-async function signIn(page: Page, staffName: string, deviceToken = DEVICE) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', deviceToken] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of PIN) {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }))
-    .toBeVisible();
-}
+import { expect, test } from '@playwright/test';
+import { signIn, signInAndOpen } from './support/session';
 
 test('admin can add a WhatsApp supplier, link a medicine and stop using the supplier', async ({ page }) => {
   const supplier = `E2E Supplier ${Date.now()}`;
 
-  await signIn(page, 'Admin');
-  await page.getByRole('button', { name: 'Open the queue' }).click();
-  await page.getByRole('button', { name: 'Administration', exact: true }).click();
-  await page.getByRole('button', { name: 'Suppliers', exact: true }).click();
+  await signInAndOpen(page, 'Admin');
+  await page.getByRole('button', { name: /^Suppliers/ }).click();
   await expect(page.getByRole('heading', { name: 'Suppliers', level: 1 })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add supplier' }).click();
@@ -50,7 +32,7 @@ test('admin can add a WhatsApp supplier, link a medicine and stop using the supp
 });
 
 test('non-admin staff cannot manage supplier configuration', async ({ page }) => {
-  await signIn(page, 'Counter', 'seed-device-counter');
+  await signIn(page, 'Counter');
   await page.goto('/suppliers');
   await expect(page.getByText('Only an administrator can manage suppliers.')).toBeVisible();
 });
