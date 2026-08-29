@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { markClinicScreen, signIn } from './support/session';
 
 /**
  * The M6 gate (PLAN.md §8, §13).
@@ -16,28 +17,19 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('he taps "in clinic" and the public page says so, with an as-of', async ({
   browser,
 }) => {
   const cabin = await browser.newContext();
   const doctorPage = await cabin.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  // The consulting-room screen is marked first, by the administrator, the way
+  // it would be on the day the clinic opens. Presence is refused from an
+  // unmarked browser — see the test below, which is the same rule from the
+  // other side — so without this step the doctor cannot say he is here at all.
+  await markClinicScreen(doctorPage, 'Consulting room');
+
+  await signIn(doctorPage, 'Dr Seed');
   await doctorPage.goto('/presence');
   await doctorPage.getByRole('button', { name: 'In clinic', exact: true }).click();
   await expect(doctorPage.getByText('Patients now see: in the clinic.')).toBeVisible();
@@ -62,10 +54,15 @@ test('he taps "in clinic" and the public page says so, with an as-of', async ({
 test('his laptop at home signs in fine, and cannot say he is in the clinic', async ({
   page,
 }) => {
-  // The seed registers a third device that is not a clinic device. This is the
-  // weekly "logged in from home to check something", which on a naive presence
-  // model tells every patient he is at his desk in the clinic.
-  await signIn(page, 'seed-device-home', 'Dr Seed');
+  // A browser nobody has marked, which is every browser by default — the weekly
+  // "logged in from home to check something", which on a naive presence model
+  // tells every patient he is at his desk in the clinic.
+  //
+  // This assertion was passing for the wrong reason until the marker came back:
+  // with device identity gone from sign-in, NO screen could set presence, so a
+  // test that the laptop cannot was true of the consulting room too. It only
+  // means something now that the test above passes.
+  await signIn(page, 'Dr Seed');
   await page.goto('/presence');
   await page.getByRole('button', { name: 'In clinic', exact: true }).click();
 
@@ -80,7 +77,7 @@ test('stepping out says when he is back, and closing the clinic beats all of it'
   const publicCtx = await browser.newContext();
   const phone = await publicCtx.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+  await signIn(doctorPage, 'Dr Seed');
   await doctorPage.goto('/presence');
 
   // "Back by 14:30" — one tap on the way out, and it survives the tablet

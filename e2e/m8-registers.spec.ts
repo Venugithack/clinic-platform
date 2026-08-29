@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { signIn, signInAndOpen } from './support/session';
 
 /**
  * The M8 gate (PLAN.md §8, §15.2).
@@ -9,30 +10,13 @@ test.describe.configure({ mode: 'serial' });
 
 const PATIENT = `E2E H1 ${Date.now()}`;
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('a Schedule H1 medicine reaches a patient, with an address on file', async ({ browser }) => {
   const cabin = await browser.newContext();
   const counter = await browser.newContext();
   const doctorPage = await cabin.newPage();
   const counterPage = await counter.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
-
-  await doctorPage.getByRole('button', { name: 'Open the queue' }).click();
+  await signInAndOpen(doctorPage, 'Dr Seed');
   await doctorPage.getByRole('button', { name: 'Register walk-in' }).click();
   await expect(
     doctorPage.getByRole('heading', { name: 'Register walk-in', exact: true }),
@@ -53,7 +37,7 @@ test('a Schedule H1 medicine reaches a patient, with an address on file', async 
   await doctorPage.getByRole('button', { name: /Sign Rx/ }).click();
   await expect(doctorPage).toHaveURL(/\/rx\/print\?rx=[0-9a-f-]+$/);
 
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(counterPage, 'Counter');
   await counterPage.goto('/counter');
   await counterPage.getByRole('button', { name: new RegExp(PATIENT) }).click();
 
@@ -74,7 +58,7 @@ test('a Schedule H1 medicine reaches a patient, with an address on file', async 
 });
 
 test('the register carries every column the rule names, and downloads', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/reports');
 
   const register = page.getByTestId('register');
@@ -103,7 +87,7 @@ test('the register carries every column the rule names, and downloads', async ({
 });
 
 test('a recall finds everyone who was given a batch', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/reports');
 
   const row = page.getByTestId('register').locator('tbody tr', { hasText: PATIENT });

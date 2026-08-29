@@ -1,29 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
-
-const PIN = '481920';
-
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of PIN) {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
+import { expect, test } from '@playwright/test';
+import { signIn, signInAndOpen } from './support/session';
 
 test('admin adds a medicine and configures its reorder threshold', async ({ page }) => {
   const stamp = Date.now();
   const name = `E2E Med ${stamp}`;
 
-  await signIn(page, 'seed-device-cabin', 'Admin');
-  await page.getByRole('button', { name: 'Open the queue' }).click();
-  await page.getByRole('button', { name: 'Administration', exact: true }).click();
+  await signInAndOpen(page, 'Admin');
   await page.getByRole('button', { name: /Medicines/ }).first().click();
 
   await expect(page.getByRole('heading', { name: 'Medicines', level: 1 })).toBeVisible();
@@ -59,7 +41,7 @@ test('admin adds a medicine and configures its reorder threshold', async ({ page
 });
 
 test('counter cannot manage the medicine master', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/medicines');
   await expect(page.getByText('Only an administrator can manage the medicine master.'))
     .toBeVisible();

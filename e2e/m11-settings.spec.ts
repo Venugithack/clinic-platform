@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -7,23 +8,8 @@ async function reloaded(page: Page) {
   await expect(page.getByLabel('Clinic name')).toHaveValue('Seed Clinic');
 }
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('the details that print on a bill are typed once and kept', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   // Settings owns its own permission contract. Reaching it through a transient
   // queue shortcut made this test fail whenever the clinical workspace was
   // simplified, even though settings itself was unchanged.
@@ -49,7 +35,7 @@ test('the details that print on a bill are typed once and kept', async ({ page }
 });
 
 test('a GSTIN that is one character short is refused before it reaches a bill', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/settings');
 
   await page.getByLabel('GSTIN').fill('37ABCDE1234F1Z');
@@ -62,7 +48,7 @@ test('a GSTIN that is one character short is refused before it reaches a bill', 
 });
 
 test('a timetable nobody can read is refused, by day, rather than meaning "closed"', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/settings');
 
   await page.getByLabel('Wednesday').fill('9:30 am - 1 pm');
@@ -74,7 +60,7 @@ test('a timetable nobody can read is refused, by day, rather than meaning "close
 });
 
 test('the hours the doctor keeps reach the public page', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/settings');
 
   for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']) {
@@ -94,7 +80,7 @@ test('the hours the doctor keeps reach the public page', async ({ page }) => {
 });
 
 test('the counter cannot change the fee or the licence numbers', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/settings');
 
   await expect(page.getByText(/changed by the doctor or an administrator/)).toBeVisible();

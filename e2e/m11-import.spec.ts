@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M11a gate (PLAN.md §16 go-live step 1, BUILD.md §3).
@@ -46,21 +47,6 @@ const DIRTY_FILE =
   `${DRUG} Bad B,100mg,,tablet\r\n` +
   `${DRUG} Bad C,200mg,Ibuprofen,tablet\r\n`;
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 /**
  * What the counter can find — asserted against the number the search itself
  * reports.
@@ -87,7 +73,7 @@ async function matchesAtTheCounter(page: Page, query: string, expected: string) 
 test('a file with one unreadable row is refused whole, and says which row', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/import');
 
   await page.getByLabel('Paste the CSV').fill(DIRTY_FILE);
@@ -115,7 +101,7 @@ test('a file with one unreadable row is refused whole, and says which row', asyn
 test('the dry run counts the file without writing it, then the import writes it', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/import');
 
   await page.getByLabel('Paste the CSV').fill(CLEAN_FILE);
@@ -151,7 +137,7 @@ test('the dry run counts the file without writing it, then the import writes it'
 });
 
 test('the same file again updates instead of duplicating', async ({ page }) => {
-  await signIn(page, 'seed-device-cabin', 'Dr Seed');
+  await signIn(page, 'Dr Seed');
   await page.goto('/import');
 
   // He will run it twice. Usually after fixing three rows, and usually in a
@@ -174,7 +160,7 @@ test('the same file again updates instead of duplicating', async ({ page }) => {
 });
 
 test('the counter cannot load the drug master', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/import');
 
   await expect(

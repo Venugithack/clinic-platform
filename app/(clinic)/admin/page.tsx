@@ -5,7 +5,13 @@ import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
 import { allStaff, type StaffAdminRow, type StaffRole } from '@/lib/db/admin';
-import { addStaff, setStaffPin, updateStaff } from '@/lib/transitions/admin';
+import { addStaff, registerDevice, revokeDevice, setStaffPin, updateStaff } from '@/lib/transitions/admin';
+import {
+  clearClinicScreenToken,
+  readClinicScreen,
+  writeClinicScreen,
+  type ClinicScreen,
+} from '@/lib/db';
 
 const ROLES: Array<{ value: StaffRole; label: string; hint: string }> = [
   { value: 'doctor', label: 'Doctor', hint: 'Queue, consultation and prescriptions' },
@@ -56,6 +62,59 @@ export default function AdminPeoplePage() {
       setBusy(false);
     }
   };
+
+  /**
+   * Whether THIS browser is marked as standing in the clinic.
+   *
+   * Read after mount, never during render: localStorage does not exist where
+   * the export is prerendered, and reading it in render hydrates to different
+   * markup than was shipped.
+   */
+  const [screen, setScreen] = useState<ClinicScreen | null>(null);
+  const [screenLabel, setScreenLabel] = useState('');
+  useEffect(() => setScreen(readClinicScreen()), []);
+
+  const markScreen = () =>
+    run(async () => {
+      const label = screenLabel.trim() || 'Clinic screen';
+      const device = await registerDevice(label, true);
+      const marked = { id: device.id, label: device.label, token: device.device_token };
+      writeClinicScreen(marked);
+      setScreen(marked);
+      setScreenLabel('');
+      return `${device.label} is marked. Sign in again on this screen for it to take effect.`;
+    });
+
+  const unmarkScreen = () =>
+    run(async () => {
+      const current = screen;
+
+      // The browser's marker goes first, and it is the part that matters: it is
+      // read when a session is minted, so the next sign-in here carries no
+      // device and presence is refused again.
+      clearClinicScreenToken();
+      setScreen(null);
+
+      // Revoking the row as well is tidiness — a token nobody holds is already
+      // inert, but a list of clinic screens that fills up with screens nobody
+      // has is a list nobody reads.
+      //
+      // It is allowed to fail, and one failure is expected. app.revoke_device
+      // raises CL027 against the device the caller is sitting on ("that is the
+      // tablet you are using — revoke it from the other one"), which is right
+      // for a tablet left in an auto-rickshaw and wrong here: unmarking the
+      // screen you are standing at is the ordinary case. The marker is already
+      // gone, so that refusal is not an error to show anybody.
+      if (current) {
+        try {
+          await revokeDevice(current.id);
+        } catch (cause) {
+          if ((cause as { code?: string }).code !== 'WOULD_LOCK_OUT') throw cause;
+        }
+      }
+
+      return 'This screen no longer counts as being in the clinic.';
+    });
 
   const clearPin = () => {
     setPin('');
@@ -129,7 +188,10 @@ export default function AdminPeoplePage() {
           <h2 className="eyebrow">People</h2>
           <p className="tabular mt-1 text-lg">{staff.filter((row) => row.active).length} active staff</p>
           <p className="mt-6 text-sm leading-6 text-ink-2">
-            Staff open the clinic URL on any browser, choose their name and use their PIN. There is nothing to register and no device to trust.
+            Staff open the clinic URL on any browser, choose their name and use their PIN. Nothing has to be registered to sign in.
+          </p>
+          <p className="mt-4 text-sm leading-6 text-ink-2">
+            The one exception is below: marking a screen as standing in the clinic, which decides nothing except whether the doctor can say he is here.
           </p>
           <p className="mt-4 text-sm leading-6 text-ink-2">
             The administrator email OTP is reserved for the control panel and recovery.
@@ -150,6 +212,64 @@ export default function AdminPeoplePage() {
       {!allowed ? <Notice tone="bad">Only the administrator can change staff or PINs.</Notice> : null}
       {error ? <Notice tone="bad" className="max-w-3xl">{error}</Notice> : null}
       {notice ? <p role="status" className="mt-4 max-w-3xl rounded-box bg-free-wash p-3 text-free">{notice}</p> : null}
+
+      {/*
+        The one place a browser is still identified, and it decides exactly one
+        thing. app.set_presence refuses "in clinic" from an unmarked screen, so
+        that the doctor's laptop at home cannot tell a waiting room he is here.
+        Signing in does not need this and never will — an unmarked screen is an
+        ordinary screen that simply cannot make that one claim.
+      */}
+      {allowed ? (
+        <section className="mt-6 max-w-3xl rounded-box border border-rule bg-sheet p-4">
+          <h2 className="eyebrow">This screen</h2>
+          {screen ? (
+            <>
+              <p className="mt-2 text-lg">{screen.label} — in the clinic</p>
+              <p className="mt-1 text-sm leading-6 text-ink-2">
+                The doctor can say he is present from this screen. Unmark it if it
+                stops living in the clinic.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void unmarkScreen()}
+                className="mt-4 h-14 rounded-box border border-stop px-5 text-stop disabled:opacity-40"
+              >
+                Unmark this screen
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-sm leading-6 text-ink-2">
+                This screen is not in the clinic, so the doctor cannot say he is
+                present from it. Mark the consulting-room and counter screens —
+                a phone or a laptop at home should stay unmarked.
+              </p>
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="block text-sm text-ink-2">Name this screen</span>
+                  <input
+                    value={screenLabel}
+                    onChange={(event) => setScreenLabel(event.target.value)}
+                    placeholder="Consulting room"
+                    aria-label="Screen name"
+                    className="blank mt-1 h-14 w-64 px-3"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void markScreen()}
+                  className="h-14 rounded-box border border-ink bg-ink px-5 font-medium text-paper disabled:opacity-40"
+                >
+                  This screen is in the clinic
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      ) : null}
 
       {adding ? (
         <section className="mt-6 max-w-2xl rounded-box border border-rule bg-sheet p-4">

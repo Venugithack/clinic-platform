@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * One prescription, one deduction — proved across two devices.
@@ -17,23 +18,6 @@ import { expect, test, type Page } from '@playwright/test';
  * Both screens are opened and verified BEFORE either dispenses, which is the
  * whole point — neither has seen the other's write.
  */
-
-const PIN = '481920';
-
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of PIN) {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
 
 /** Open the prescription and clear every verification gate on it. */
 async function openAndVerify(page: Page, patient: string, drug: string) {
@@ -67,8 +51,8 @@ test('two tablets reaching for one prescription dispense it once', async ({ brow
   const doctorPage = await cabin.newPage();
   const counterPage = await counter.newPage();
 
-  await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
-  await signIn(counterPage, 'seed-device-counter', 'Counter');
+  await signIn(doctorPage, 'Dr Seed');
+  await signIn(counterPage, 'Counter');
 
   // ---- one prescription, one strip -----------------------------------------
   await doctorPage.getByRole('button', { name: 'Open the queue' }).click();

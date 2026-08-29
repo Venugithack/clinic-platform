@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * Expiry, worked all the way through (INVENTORY.md §6).
@@ -19,25 +20,10 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('the list is ordered by the supplier deadline, not the expiry date', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/expiry');
 
   // Shelcal expires in about seven months and Zincovit in six weeks, so an
@@ -61,7 +47,7 @@ test('the list is ordered by the supplier deadline, not the expiry date', async 
 test('a return after the window shut is refused, with the date it shut', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/expiry');
 
   await page.getByRole('button', { name: /Zincovit/ }).click();
@@ -73,7 +59,7 @@ test('a return after the window shut is refused, with the date it shut', async (
 });
 
 test('good stock cannot be written off as expired', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/expiry');
 
   // Zincovit is six weeks from expiry and cannot go back to Kumar, so the
@@ -87,7 +73,7 @@ test('good stock cannot be written off as expired', async ({ page }) => {
 });
 
 test('a return moves stock through the ledger and opens a credit', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/expiry');
 
   await page.getByRole('button', { name: /Shelcal 500/ }).click();
@@ -104,7 +90,7 @@ test('a return moves stock through the ledger and opens a credit', async ({ page
 });
 
 test('expired stock is on exactly one screen, and it is this one', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/expiry');
 
   // Betadine expired six weeks ago. available_stock excludes it by design, so

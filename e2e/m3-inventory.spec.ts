@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * Counter sale and the blind stock-take (INVENTORY.md §3, §5).
@@ -10,24 +11,9 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test.describe('counter sale', () => {
   test('a walk-in buys an OTC medicine, and the total is right', async ({ page }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
+    await signIn(page, 'Counter');
     await page.goto('/counter/sale');
 
     await page.getByRole('button', { name: 'Search' }).click();
@@ -56,7 +42,7 @@ test.describe('counter sale', () => {
   // Every transition refusal in the build was affected and none of them could
   // reach a screen. See the note in 20260816090600_transition_dispense.sql.
   test('Schedule H1 is refused, by the database rather than the screen', async ({ page }) => {
-    await signIn(page, 'seed-device-counter', 'Counter');
+    await signIn(page, 'Counter');
     await page.goto('/counter/sale');
 
     await page.getByRole('button', { name: 'Search' }).click();
@@ -84,7 +70,7 @@ test.describe('blind stock-take', () => {
     const counterPage = await counterCtx.newPage();
     const doctorPage = await cabinCtx.newPage();
 
-    await signIn(counterPage, 'seed-device-counter', 'Counter');
+    await signIn(counterPage, 'Counter');
     await counterPage.goto('/stock-take');
 
     await counterPage.getByRole('button', { name: 'Start a count' }).click();
@@ -116,7 +102,7 @@ test.describe('blind stock-take', () => {
     ).toHaveCount(0);
 
     // The doctor can.
-    await signIn(doctorPage, 'seed-device-cabin', 'Dr Seed');
+    await signIn(doctorPage, 'Dr Seed');
     await doctorPage.goto('/stock-take');
     await expect(doctorPage.getByRole('table')).toBeVisible();
 

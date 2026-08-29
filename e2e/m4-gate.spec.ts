@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * The M4 gate (BUILD.md §2, PLAN.md §8).
@@ -14,21 +15,6 @@ import { expect, test, type Page } from '@playwright/test';
  * Serial: it opens a till, and there can only be one.
  */
 test.describe.configure({ mode: 'serial' });
-
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
 
 async function tap(page: Page, digits: string) {
   for (const digit of digits) {
@@ -55,7 +41,7 @@ async function sell(page: Page, items: Array<[drug: string, chip: string]>) {
 }
 
 test('cash cannot be taken into a drawer nobody has opened', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
 
   await sell(page, [['Cetzine', '1 strip']]);
 
@@ -89,7 +75,7 @@ test('cash cannot be taken into a drawer nobody has opened', async ({ page }) =>
  * finishes: a read landing says nothing about whether the last write worked.
  */
 test('a refusal is not erased by a refresh landing behind it', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await sell(page, [['Cetzine', '1 strip']]);
   await page.goto('/billing');
 
@@ -117,7 +103,7 @@ test('a refusal is not erased by a refresh landing behind it', async ({ page }) 
 test('a bill for a consult and medicines across two batches, and it prints', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
 
   // Four medicines. Dolo seeds as two batches — DL2503B (10 to a strip, MRP
   // 24.00, expiring first) and DL2411A (15 to a strip, MRP 34.50) — so FEFO
@@ -182,7 +168,7 @@ test('a bill for a consult and medicines across two batches, and it prints', asy
 test('the day total matches its bills, and the till reconciles against a count', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/day-book');
 
   // Part one: arithmetic. The day-book is derived from the bills, so this is a

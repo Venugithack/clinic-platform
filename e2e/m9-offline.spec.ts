@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * Offline write and reflush — the sixth Playwright path in PLAN.md §16.
@@ -23,21 +24,6 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 test('a sale made with no network is kept, and goes in when it returns', async ({
   browser,
 }) => {
@@ -48,7 +34,7 @@ test('a sale made with no network is kept, and goes in when it returns', async (
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/counter/sale');
 
   await page.getByRole('button', { name: 'Search' }).click();
@@ -102,7 +88,7 @@ test('a refusal is never queued — the database answered, so it decided', async
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/counter/sale');
 
   await page.getByRole('button', { name: 'Search' }).click();

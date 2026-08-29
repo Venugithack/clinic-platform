@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { signIn } from './support/session';
 
 /**
  * Goods receipt and reordering — the two ends of the purchasing loop
@@ -14,21 +15,6 @@ import { expect, test, type Page } from '@playwright/test';
  */
 test.describe.configure({ mode: 'serial' });
 
-async function signIn(page: Page, device: string, staffName: string) {
-  await page.addInitScript(
-    ([key, token]) => window.localStorage.setItem(key, token),
-    ['clinic.deviceToken', device] as const,
-  );
-  await page.goto('/');
-  await page.getByRole('button', { name: staffName, exact: true }).click();
-  for (const digit of '481920') {
-    await page.getByRole('button', { name: digit, exact: true }).click();
-  }
-  await expect(
-    page.getByRole('heading', { name: new RegExp(`Signed in as ${staffName}`) }),
-  ).toBeVisible();
-}
-
 /** Tap a number into whichever field is active on the receiving screen. */
 async function type(page: Page, label: string, digits: string) {
   await page.getByRole('button', { name: label, exact: true }).click();
@@ -38,7 +24,7 @@ async function type(page: Page, label: string, digits: string) {
 }
 
 test('a mistyped expiry year is refused at the door', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/receiving');
 
   await page.getByRole('button', { name: 'Kumar Distributors' }).click();
@@ -69,7 +55,7 @@ test('a mistyped expiry year is refused at the door', async ({ page }) => {
 });
 
 test('the invoice is in strips, and the ledger is in tablets', async ({ page }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/receiving');
 
   await page.getByRole('button', { name: 'Kumar Distributors' }).click();
@@ -102,7 +88,7 @@ test('the invoice is in strips, and the ledger is in tablets', async ({ page }) 
 test('the reorder screen shows its working, and orders nothing by itself', async ({
   page,
 }) => {
-  await signIn(page, 'seed-device-counter', 'Counter');
+  await signIn(page, 'Counter');
   await page.goto('/reorder');
 
   const calpol = page.getByTestId('reorder-Calpol 650');
