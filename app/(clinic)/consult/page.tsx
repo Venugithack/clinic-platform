@@ -300,6 +300,25 @@ function ConsultScreen() {
           </div>
         </div>
       }
+      primary={
+        signedAt
+          ? {
+              label: 'Open signed Rx',
+              onClick: () =>
+                prescriptionId && router.push(`/rx/print?rx=${prescriptionId}` as Route),
+            }
+          : hasUnsignedMedicines
+            ? {
+                label: busy ? 'Signing…' : 'Sign Rx & finish',
+                onClick: () => void sign(),
+                disabled: busy,
+              }
+            : {
+                label: busy ? 'Finishing…' : 'Finish visit',
+                onClick: () => void finishVisit(),
+                disabled: !encounter || busy,
+              }
+      }
       rail={
         <>
           <div className="flex justify-center pb-1">

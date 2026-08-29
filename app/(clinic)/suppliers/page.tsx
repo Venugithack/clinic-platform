@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Field, Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
@@ -48,7 +47,6 @@ const EMPTY_FORM: FormState = {
 };
 
 export default function SuppliersPage() {
-  const router = useRouter();
   const session = currentSession();
   const allowed = session?.role === 'admin';
 
@@ -264,7 +262,6 @@ export default function SuppliersPage() {
     return (
       <ThreePane
         context={<div />}
-        rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}
       >
         <PageHeader eyebrow="Administration" title="Suppliers" />
         <Notice tone="bad">Only an administrator can manage suppliers.</Notice>
@@ -319,8 +316,6 @@ export default function SuppliersPage() {
           ) : null}
           <RailButton disabled={busy} onClick={() => void refresh(pickedId)}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/admin')}>Staff access</RailButton>
-          <RailButton onClick={() => router.push('/admin/home')}>Control panel</RailButton>
         </>
       }
     >

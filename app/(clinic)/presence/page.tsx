@@ -13,7 +13,6 @@
  * page rather than argue with it.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { Numpad } from '@/components/Numpad';
@@ -45,7 +44,6 @@ function asOf(at: string | null): string {
 }
 
 export default function PresencePage() {
-  const router = useRouter();
   const [now, setNow] = useState<ClinicNow | null>(null);
   const [rows, setRows] = useState<PresenceDetail[]>([]);
   const [backBy, setBackBy] = useState<string | null>(null);
@@ -187,10 +185,6 @@ export default function PresencePage() {
           )}
 
           <RailButton onClick={refresh}>Refresh</RailButton>
-          <div className="flex-1" />
-          <RailButton onClick={() => router.push(isDoctor ? '/queue' : '/counter')}>
-            Back
-          </RailButton>
         </>
       }
     >

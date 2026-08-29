@@ -22,7 +22,6 @@
  * still: it is wrong in a way that only a stock-take finds.
  */
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
@@ -153,7 +152,6 @@ const rupees = (value: number) =>
   `₹${Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
 export default function ImportPage() {
-  const router = useRouter();
   const session = typeof window === 'undefined' ? null : currentSession();
   // The database refuses anybody else (CL005). This just means the counter
   // sees a sentence instead of a screen it cannot use.
@@ -349,7 +347,6 @@ export default function ImportPage() {
           </RailButton>
 
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >

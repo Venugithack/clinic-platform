@@ -25,7 +25,7 @@
  * become base units.
  */
 import { Suspense, useCallback, useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { clinicToday, isoDay } from '@/lib/clinic/day';
@@ -79,7 +79,6 @@ export default function ReceivingPage() {
 }
 
 function Receiving() {
-  const router = useRouter();
   const now = new Date();
   const poId = useSearchParams().get('po');
 
@@ -208,6 +207,24 @@ function Receiving() {
     stripsPerBox: drug?.default_strips_per_box ?? 1,
   };
 
+  /**
+   * Why the line cannot be added yet, in the order the form is filled in.
+   *
+   * Nothing here is new validation. These are exactly the three conditions
+   * that already disabled "Add to receipt" — said out loud instead of left to
+   * be inferred from a grey button. It is the same fault the add-staff PIN box
+   * had: a dead control reads as "this screen is broken", not "you have not
+   * finished yet", and a pharmacist holding a box does not get a third guess.
+   */
+  const lineProblem = (): string | null => {
+    if (batchNo.trim() === '') return 'Type the batch number printed on the strip.';
+    if (Number(values.qty || '0') + Number(values.free || '0') <= 0) {
+      return 'Enter how many strips arrived.';
+    }
+    if (values.cost === '') return 'Enter the rate per strip, as the invoice prints it.';
+    return null;
+  };
+
   const addLine = () => {
     if (!drug) return;
     setLines((current) => [
@@ -315,6 +332,11 @@ function Receiving() {
     </button>
   );
 
+  // `primary` names the one action this screen exists for, so a phone shows it
+  // on the bottom bar rather than behind "Actions". On a 390px screen the
+  // receipt is the whole point of being here; it should not cost a tap to
+  // reach the thing you came to do. The rail keeps its own copy for the
+  // landscape stands, where the rail is always on screen anyway.
   return (
     <ThreePane
       context={
@@ -377,6 +399,11 @@ function Receiving() {
           </p>
         </div>
       }
+      primary={{
+        label: busy ? 'Posting…' : 'Post receipt',
+        onClick: () => void post(),
+        disabled: busy || lines.length === 0,
+      }}
       rail={
         <>
           <ScanField label="Scan the box" onCode={(code) => void onCode(code)} />
@@ -388,8 +415,6 @@ function Receiving() {
           >
             {busy ? 'Posting…' : 'Post receipt'}
           </RailButton>
-          <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >
@@ -580,14 +605,16 @@ function Receiving() {
             />
           </div>
 
+          {lineProblem() ? (
+            <p role="status" className="mt-4 text-sm text-ink-2">
+              {lineProblem()}
+            </p>
+          ) : null}
+
           <div className="mt-4 flex gap-3">
             <button
               type="button"
-              disabled={
-                batchNo.trim() === '' ||
-                Number(values.qty || '0') + Number(values.free || '0') <= 0 ||
-                values.cost === ''
-              }
+              disabled={lineProblem() !== null}
               onClick={addLine}
               className="h-14 flex-1 rounded-box border border-ink bg-ink px-4 font-medium text-paper disabled:opacity-40"
             >

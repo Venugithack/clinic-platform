@@ -27,6 +27,13 @@ Thumbs.db
 *.dump
 *.sql.gz
 
+# The running handover note. Written for whoever picks the work up next, which
+# means it accumulates exactly what this repository must not carry now that it
+# is public (§3 of the note itself): live staff PINs, the Supabase project ref,
+# supplier numbers and a test patient's phone number. It survived one `git add
+# -A` on 29 Aug 2026 only because it was read before it was staged.
+/NEXT.md
+
 # ── secret material ─────────────────────────────────────────────
 # mkcert LAN certificates (BUILD.md §1.3). A local CA private key in
 # git history is tedious to scrub and trusted on both tablets.

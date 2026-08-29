@@ -21,7 +21,6 @@
  * is a question somebody asks three months later.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { RailButton, ThreePane } from '@/components/ThreePane';
 import { Notice, PageHeader } from '@/components/ui';
 import { currentSession } from '@/lib/auth';
@@ -107,7 +106,6 @@ function Field({
 }
 
 export default function SettingsPage() {
-  const router = useRouter();
   const session = typeof window === 'undefined' ? null : currentSession();
   const allowed = session?.role === 'doctor' || session?.role === 'admin';
 
@@ -182,7 +180,7 @@ export default function SettingsPage() {
 
   if (!form) {
     return (
-      <ThreePane rail={<RailButton onClick={() => router.push('/queue')}>Back</RailButton>}>
+      <ThreePane>
         <PageHeader eyebrow="Administration" title="Settings" />
         {error ? <Notice tone="bad">{error}</Notice> : null}
       </ThreePane>
@@ -217,6 +215,11 @@ export default function SettingsPage() {
           </p>
         </div>
       }
+      primary={{
+        label: 'Save',
+        onClick: () => void save(),
+        disabled: busy || !allowed || form.name.trim() === '',
+      }}
       rail={
         <>
           <RailButton
@@ -229,8 +232,6 @@ export default function SettingsPage() {
           <RailButton disabled={busy} onClick={refresh}>
             Undo changes
           </RailButton>
-          <div className="flex-1" />
-          <RailButton onClick={() => router.push('/queue')}>Back</RailButton>
         </>
       }
     >

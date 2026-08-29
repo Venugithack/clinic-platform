@@ -280,11 +280,8 @@ export default function OrdersPage() {
               Cancel order
             </RailButton>
           ) : null}
-
-          <RailButton onClick={() => router.push('/reorder')}>Reorder list</RailButton>
           <RailButton onClick={() => refresh(picked?.po_id)}>Refresh</RailButton>
           <div className="flex-1" />
-          <RailButton onClick={() => router.push('/counter')}>Back</RailButton>
         </>
       }
     >
