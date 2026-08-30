@@ -28,8 +28,10 @@
  *     screen in the build that may see it.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import type { Route } from 'next';
 import { RailButton, ThreePane } from '@/components/ThreePane';
-import { Badge, EmptyState, Notice, PageHeader } from '@/components/ui';
+import { Badge, Button, EmptyState, Notice, PageHeader } from '@/components/ui';
 import {
   batchesForDrug,
   matches,
@@ -48,6 +50,7 @@ const asPrinted = (date: string) =>
   new Date(date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 
 export function ShelfPanel({ chrome }: PanelProps) {
+  const router = useRouter();
   const [rows, setRows] = useState<ShelfRow[]>([]);
   const [query, setQuery] = useState('');
   const [openDrug, setOpenDrug] = useState<string | null>(null);
@@ -162,15 +165,35 @@ export function ShelfPanel({ chrome }: PanelProps) {
 
       {loaded && rows.length === 0 && !error ? (
         <EmptyState
-          title="Nothing on the shelf"
-          direction="Book stock in through Receiving and it appears here, with what it cost."
+          title="Nothing on the shelf yet"
+          direction="A medicine in the list is one this clinic MAY stock. It reaches the shelf when a delivery is booked in against it — with a batch number, an expiry and what it cost, because the counter dispenses the earliest expiry first and cannot do that from a name alone."
+          action={
+            <Button
+              variant="primary"
+              onClick={() =>
+                router.push('/counter?tab=shelf&section=add-stock' as Route)
+              }
+            >
+              Add stock
+            </Button>
+          }
         />
       ) : null}
 
       {loaded && rows.length > 0 && shown.length === 0 ? (
         <EmptyState
           title={`Nothing on the shelf matches "${query.trim()}"`}
-          direction="The drug may still be in the catalogue with none in stock — this screen lists what is physically here, and nothing else."
+          direction="It may still be in the medicine list with none in stock. This screen shows what is physically here and nothing else, so a medicine appears only once a delivery has been booked in against it."
+          action={
+            <Button
+              variant="primary"
+              onClick={() =>
+                router.push('/counter?tab=shelf&section=add-stock' as Route)
+              }
+            >
+              Add stock
+            </Button>
+          }
         />
       ) : null}
 

@@ -58,7 +58,7 @@ const SECTIONS: Array<{ title: string; items: AdminDestination[] }> = [
       { title: 'Suppliers', description: 'Supplier contacts, WhatsApp numbers and medicine-to-supplier mappings.', href: '/suppliers' },
       { title: 'Low stock & reorder', description: 'Review stock suggestions and create draft purchase orders without duplicating medicines already on order.', href: '/reorder' },
       { title: 'Purchase orders', description: 'Review orders, hand them to WhatsApp and record supplier replies.', href: '/orders' },
-      { title: 'Receiving', description: 'Receive deliveries against purchase orders and update batch stock.', href: '/receiving' },
+      { title: 'Add stock', description: 'Receive deliveries against purchase orders and update batch stock.', href: '/receiving' },
     ],
   },
   {
@@ -86,7 +86,7 @@ export function TodayPanel({ chrome }: PanelProps) {
             Configuration and back-office work lives here. Doctor, nurse and pharmacy workflows stay on their own operational screens.
           </p>
           <p className="mt-4 text-sm text-ink-2">
-            Sign out — under Go to — before handing a shared computer to another staff member. Their PIN will then identify their work separately.
+            Sign out — top left, on every screen — before handing a shared computer to another staff member. Their PIN will then identify their work separately.
           </p>
         </div>
       }

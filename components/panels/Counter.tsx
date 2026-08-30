@@ -84,7 +84,7 @@ export function CounterPanel({ chrome }: PanelProps) {
           </dl>
 
           <p className="text-sm leading-6 text-ink-2">
-            Open a prescription, verify each medicine against the pack, then dispense. Stock and purchasing live under Go to.
+            Open a prescription, verify each medicine against the pack, then dispense. The shelf, buying and the day’s money are the tabs along the top.
           </p>
 
           {session ? (
@@ -119,7 +119,7 @@ export function CounterPanel({ chrome }: PanelProps) {
       {queue.length === 0 && !error ? (
         <EmptyState
           title="No prescriptions waiting"
-          direction="When the doctor signs a prescription it appears here automatically. Counter sale is on the right; everything else is under Go to."
+          direction="When the doctor signs a prescription it appears here automatically. Counter sale is on the right; the rest of the pharmacy is on the tabs above."
         />
       ) : null}
 

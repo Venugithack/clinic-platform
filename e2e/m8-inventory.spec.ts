@@ -139,6 +139,13 @@ test.describe('inventory', () => {
     await page.getByLabel('Search the shelf').fill('qqzz-not-a-medicine');
 
     await expect(page.getByText(/Nothing on the shelf matches/)).toBeVisible();
-    await expect(page.getByText(/may still be in the catalogue with none in stock/)).toBeVisible();
+    // "medicine list", not "catalogue": the word has to be the one on the tab
+    // the reader would go and look at, and no tab says Catalogue.
+    await expect(
+      page.getByText(/may still be in the medicine list with none in stock/),
+    ).toBeVisible();
+
+    // And it offers the way out rather than only naming the problem.
+    await expect(page.getByRole('button', { name: 'Add stock' })).toBeVisible();
   });
 });
