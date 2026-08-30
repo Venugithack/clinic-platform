@@ -1,11 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui';
-import { AppNav } from '@/components/AppNav';
-import { currentSession, type StaffSession } from '@/lib/auth';
-import { destinationFor } from '@/lib/nav';
+import { currentSession, lock, type StaffSession } from '@/lib/auth';
+import { workspaceFor } from '@/lib/workspaces';
 
 /**
  * The clinic shell. TABLET.md §3, revised for the devices that actually exist.
@@ -48,12 +47,21 @@ import { destinationFor } from '@/lib/nav';
  */
 export function ThreePane({
   context,
+  tabs,
   rail,
   primary,
   safety,
   children,
 }: {
   context?: React.ReactNode;
+  /**
+   * The other jobs on this desk — see components/WorkspaceTabs.
+   *
+   * Rendered under the top bar at every width and outside the scrolling work
+   * area, so it cannot be scrolled away mid-task. A desk with only one job
+   * passes nothing and gets no strip.
+   */
+  tabs?: React.ReactNode;
   rail?: React.ReactNode;
   /**
    * The one action this screen exists to perform.
@@ -87,7 +95,7 @@ export function ThreePane({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const [navOpen, setNavOpen] = useState(false);
+  const router = useRouter();
   const [actionsOpen, setActionsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [session, setSession] = useState<StaffSession | null>(null);
@@ -104,15 +112,20 @@ export function ThreePane({
     setDetailsOpen(false);
   }, [pathname]);
 
-  const here = destinationFor(pathname);
+  // Whose desk this is. It used to be "which of twenty destinations is this
+  // path", which is a question that stopped existing when the destinations
+  // became tabs on one screen.
+  const desk = workspaceFor(session?.role);
 
   return (
     <div className="flex h-full flex-col">
       <TopBar
-        title={here?.label ?? null}
+        title={desk?.label ?? null}
         session={session}
-        onMenu={() => setNavOpen(true)}
+        onSignOut={() => void lock().then(() => router.replace('/'))}
       />
+
+      {tabs}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] lg:grid-cols-[280px_minmax(0,1fr)_200px] xl:grid-cols-[320px_minmax(0,1fr)_220px]">
         {context ? (
@@ -190,7 +203,6 @@ export function ThreePane({
         </ActionBar>
       ) : null}
 
-      <AppNav open={navOpen} onClose={() => setNavOpen(false)} session={session} />
     </div>
   );
 }
@@ -202,15 +214,21 @@ export function ThreePane({
  * for when they are lost, and a lost person should not have to hunt. It is a
  * 44px target against the edge of the screen, which is the easiest thing on a
  * tablet to hit without looking.
+ *
+ * That control used to be "Go to", opening a drawer of twenty destinations.
+ * With one desk per person there is nowhere else to go, so the leftmost button
+ * is now the only leaving anybody does: signing out. It keeps the position
+ * because the reason for the position has not changed — on a device four people
+ * share, handing it over is the thing you do without looking.
  */
 function TopBar({
   title,
   session,
-  onMenu,
+  onSignOut,
 }: {
   title: string | null;
   session: StaffSession | null;
-  onMenu: () => void;
+  onSignOut: () => void;
 }) {
   return (
     <header
@@ -219,14 +237,14 @@ function TopBar({
     >
       <button
         type="button"
-        onClick={onMenu}
-        aria-label="Go to another screen"
+        onClick={onSignOut}
+        aria-label="Sign out"
         className="flex h-11 items-center gap-2 rounded-box border border-paper/40 px-3 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80"
       >
         <span aria-hidden className="text-base leading-none">
-          ☰
+          ⏻
         </span>
-        <span className="hidden sm:inline">Go to</span>
+        <span className="hidden sm:inline">Sign out</span>
       </button>
 
       <span aria-hidden className="text-base font-semibold">

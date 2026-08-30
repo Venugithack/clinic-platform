@@ -1,4 +1,8 @@
--- Supplier master and medicine↔supplier mapping are admin configuration.
+-- Supplier master and medicine↔supplier mapping belong to the pharmacy.
+--
+-- 20260830120000_pharmacy_owns_the_shelf: the person who phones the supplier is
+-- the person who keeps their number. `counter` joins `admin` here; nobody else
+-- does, which is what the nurse case below exists to hold.
 begin;
 select * from no_plan();
 
@@ -9,7 +13,19 @@ insert into staff (id, name, role, auth_user_id) values
   ('5a000000-0000-0000-0000-000000000001', 'Clinic Admin', 'admin',
    'aa000000-0000-0000-0000-000000000001'),
   ('5a000000-0000-0000-0000-000000000002', 'Counter Staff', 'counter',
-   'aa000000-0000-0000-0000-000000000002');
+   'aa000000-0000-0000-0000-000000000002'),
+  ('5a000000-0000-0000-0000-000000000003', 'Ward Nurse', 'nurse',
+   'aa000000-0000-0000-0000-000000000003');
+
+-- Only an administrator is identified by auth.uid() alone; everybody else is
+-- identified by the PIN session token app.current_staff_id() looks for first.
+-- Without this a counter session resolves to NULL staff and the tests below
+-- measure nothing.
+insert into staff_sessions (staff_id, token_hash, expires_at)
+select id, encode(digest('sess-' || auth_user_id::text, 'sha256'), 'hex'),
+       now() + interval '10 hours'
+  from staff
+ where auth_user_id is not null;
 
 insert into suppliers (id, name, whatsapp_number, active) values
   ('51000000-0000-0000-0000-000000000001', 'Existing Pharma', '+919000000001', true),
@@ -23,21 +39,45 @@ values (
   'd1000000-0000-0000-0000-000000000001', 'Testmed 500', 'Testsalt', '500mg',
   'tablet', 'tablet', 10, 10, null, 20, 100);
 
--- Counter cannot mutate the supplier master through security-definer RPCs.
+-- The pharmacy keeps its own supplier list.
 select set_config('request.jwt.claim.sub', 'aa000000-0000-0000-0000-000000000002', true);
+select set_config('app.staff_session', 'sess-aa000000-0000-0000-0000-000000000002', true);
+set local role authenticated;
+
+select is(
+  (app.add_supplier('Counter Supplier')).name,
+  'Counter Supplier',
+  'counter can add a supplier'
+);
+
+-- Adding without being able to correct is its own dead end: a typo in a
+-- supplier name would need an administrator to fix.
+select lives_ok(
+  $$ select app.update_supplier(
+       (select id from suppliers where name = 'Counter Supplier'),
+       'Counter Supplier Ltd') $$,
+  'counter can correct a supplier it just added'
+);
+
+reset role;
+
+-- Opening the shelf to the pharmacy must not open it to everybody signed in.
+select set_config('request.jwt.claim.sub', 'aa000000-0000-0000-0000-000000000003', true);
+select set_config('app.staff_session', 'sess-aa000000-0000-0000-0000-000000000003', true);
 set local role authenticated;
 
 select throws_ok(
-  $$ select app.add_supplier('Counter Supplier') $$,
+  $$ select app.add_supplier('Nurse Supplier') $$,
   'CL005',
   null,
-  'counter cannot add a supplier'
+  'a nurse still cannot add a supplier'
 );
 
 reset role;
 
 -- Admin creates a supplier with the WhatsApp details the order hand-off needs.
 select set_config('request.jwt.claim.sub', 'aa000000-0000-0000-0000-000000000001', true);
+select set_config('app.staff_session', 'sess-aa000000-0000-0000-0000-000000000001', true);
 set local role authenticated;
 
 select is(
@@ -130,6 +170,24 @@ select is(
    where supplier_id = '51000000-0000-0000-0000-000000000002' and active),
   0,
   'medicine links to an inactive supplier stop being orderable'
+);
+
+-- Nobody at all.
+--
+-- app.current_staff_role() returns NULL for a caller the database does not
+-- recognise as staff, and the first draft of this guard was
+-- `not in ('admin','counter')`, which evaluates to NULL on a NULL role and is
+-- therefore FALSE to an IF. Written that way the check did not fire and an
+-- unrecognised session could add a supplier. This is that bug, kept.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000000', true);
+select set_config('app.staff_session', '', true);
+set local role authenticated;
+
+select throws_ok(
+  $q$ select app.add_supplier('Ghost Supplier') $q$,
+  'CL005',
+  null,
+  'a caller the database does not know as staff cannot add a supplier'
 );
 
 reset role;

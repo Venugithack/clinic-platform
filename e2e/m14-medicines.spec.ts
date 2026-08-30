@@ -40,9 +40,29 @@ test('admin adds a medicine and configures its reorder threshold', async ({ page
   await expect(page.getByText('Inactive', { exact: true }).first()).toBeVisible();
 });
 
-test('counter cannot manage the medicine master', async ({ page }) => {
+/**
+ * The dead end this rework exists to remove, kept as the assertion that it is
+ * gone.
+ *
+ * A delivery arrives containing a medicine the clinic has never stocked. The
+ * pharmacist opened Add stock, could not find it, and could not add it either —
+ * this screen refused them with "Only an administrator can manage the medicine
+ * master." The boxes sat on the counter until somebody reached the owner, who
+ * was not holding the strip and could not read the salt off it.
+ *
+ * See supabase/migrations/20260830120000_pharmacy_owns_the_shelf.sql, which is
+ * the half of this a screen change could not do: the refusal was raised by
+ * Postgres, so opening the UI alone would have produced a form that failed on
+ * save.
+ */
+test('the counter keeps the medicine master, because it is holding the box', async ({
+  page,
+}) => {
   await signIn(page, 'Counter');
   await page.goto('/medicines');
+
+  await expect(page.getByRole('heading', { name: 'Medicines' })).toBeVisible();
   await expect(page.getByText('Only an administrator can manage the medicine master.'))
-    .toBeVisible();
+    .toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add medicine' }).first()).toBeVisible();
 });

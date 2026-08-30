@@ -148,10 +148,16 @@ test('the supplier replies, the goods arrive, and the order closes itself', asyn
   await page.getByRole('button', { name: 'Record reply' }).click();
   await expect(page.getByText('Supplier: Confirmed, sending today')).toBeVisible();
 
-  // Goods against the order — the receiving screen arrives already knowing the
-  // supplier, the drugs and what is still outstanding.
+  // Goods against the order — Add stock arrives already knowing the supplier,
+  // the drugs and what is still outstanding.
   await page.getByRole('button', { name: 'Receive goods' }).click();
-  await expect(page).toHaveURL(/\/receiving\?po=[0-9a-f-]+$/);
+
+  // Add stock is a section of the Shelf tab now rather than a screen of its
+  // own, and the `po` has to survive the move: an Add stock that had forgotten
+  // which order it was answering would be worse than no link at all.
+  await expect(page).toHaveURL(
+    /\/counter\?tab=shelf&section=add-stock&po=[0-9a-f-]+$/,
+  );
   await expect(page.getByText(/Against PO \d{4}-\d{2}\/\d{4}/)).toBeVisible();
 
   await page.getByLabel('Invoice number').fill(`INV-PO-${Date.now()}`);

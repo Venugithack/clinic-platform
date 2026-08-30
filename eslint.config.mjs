@@ -7,7 +7,20 @@ export default tseslint.config(
   {
     // `out/**` is the static export (next.config.ts `output: 'export'`) — the
     // same generated bundles as `.next/**`, just in their shippable form.
-    ignores: ['.next/**', 'out/**', 'node_modules/**', 'next-env.d.ts', 'supabase/**'],
+    ignores: [
+      '.next/**',
+      'out/**',
+      'node_modules/**',
+      'next-env.d.ts',
+      'supabase/**',
+      // The hospital all-in-one prototype, kept beside the app as a reference
+      // for the desk/tab workflow. Not part of this build — see tsconfig.json
+      // and .gitignore, which exclude it for the same reason.
+      'hospital al in one platform/**',
+      // Static HTML mockups of the same role-per-screen idea. Browser globals
+      // in a plain script, no build step, nothing imports it.
+      'clinic-ui-concept/**',
+    ],
   },
 
   js.configs.recommended,

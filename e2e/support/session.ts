@@ -97,7 +97,8 @@ export async function markClinicScreen(page: Page, label = 'Consulting room'): P
   // The marker is read when a session is minted, so the session that created it
   // does not carry it. Signing out here is not tidying up — it is the step that
   // makes the next sign-in count.
-  await page.getByRole('button', { name: 'Go to another screen' }).click();
+  // One tap, not two: with one desk per person there is nowhere else to go, so
+  // the drawer is gone and Sign out took its place in the top bar.
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Who are you?' })).toBeVisible();
 }

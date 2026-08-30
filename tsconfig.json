@@ -38,8 +38,5 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": [
-    "node_modules",
-    "e2e"
-  ]
+  "exclude": ["node_modules", "e2e", "hospital al in one platform"]
 }

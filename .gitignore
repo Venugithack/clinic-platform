@@ -87,3 +87,8 @@ blob-report/
 # `pnpm test:e2e` runs. Nothing needs it in git: it is rewritten from the
 # installed Next version, and `tsc --noEmit` passes without it.
 /next-env.d.ts
+
+# The hospital all-in-one prototype, kept beside the app as a reference for
+# the desk/tab workflow (see lib/workspaces.ts). It carries its own
+# node_modules and .next, and it is not part of this build.
+/hospital al in one platform/

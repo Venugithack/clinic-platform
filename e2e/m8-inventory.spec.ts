@@ -9,22 +9,56 @@ test.describe('inventory', () => {
    * so this walks the path the pharmacist actually has rather than calling
    * page.goto('/inventory').
    *
-   * That path has moved. It used to be a rail button on the counter, which is
+   * That path has moved twice. It was a rail button on the counter, which is
    * why the counter's rail had grown to eight destinations under three
-   * headings — a navigation menu wearing an action rail's clothes. Destinations
-   * now live in the Go to sheet, filtered by role, on every screen; the counter
-   * rail keeps only what the counter does. The assertion is the same one it
-   * always was: reachable by tapping, from where the pharmacist starts.
+   * headings — a navigation menu wearing an action rail's clothes. Then it was
+   * an entry in the Go to sheet, which was the same menu with a door on it: the
+   * counter screen ended up having to say "Stock and purchasing live under Go
+   * to", and a screen giving directions to its own navigation has lost.
+   *
+   * Now the shelf is a tab on the pharmacy desk, on screen at all times. One
+   * tap, and no tap needed first to reveal the thing to tap. The assertion is
+   * the one it always was: reachable by tapping, from where the pharmacist
+   * starts.
    */
   test('the counter can reach it without typing a URL', async ({ page }) => {
     await signInAndOpen(page, 'Counter');
     await expect(page.getByRole('heading', { name: 'Counter', level: 1 })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Go to another screen' }).click();
-    await page.getByRole('link', { name: /^What is on the shelf/ }).click();
+    await page.getByRole('link', { name: 'Shelf', exact: true }).click();
 
     await expect(page.getByRole('heading', { name: 'Inventory' })).toBeVisible();
-    await expect(page.getByText('Pharmacy')).toBeVisible();
+  });
+
+  /**
+   * The tab strip is the navigation, so it has to survive being looked at by
+   * somebody who is not already holding the map. Every job the pharmacist does
+   * is a word on the screen before they touch anything.
+   */
+  test('every pharmacy job is on screen without opening a menu', async ({ page }) => {
+    await signInAndOpen(page, 'Counter');
+
+    for (const job of ['Counter', 'Shelf', 'Buying', 'Medicines', 'Money']) {
+      await expect(page.getByRole('link', { name: job, exact: true })).toBeVisible();
+    }
+  });
+
+  /**
+   * The dead end this rework exists to remove: a delivery arrives containing a
+   * medicine the clinic has never stocked, and the pharmacist could neither
+   * find it nor add it — /medicines refused them with "Only an administrator
+   * can manage the medicine master", so the boxes sat on the counter until
+   * somebody reached the owner. See
+   * supabase/migrations/20260830120000_pharmacy_owns_the_shelf.sql.
+   */
+  test('the counter can open the medicine list and add to it', async ({ page }) => {
+    await signInAndOpen(page, 'Counter');
+
+    await page.getByRole('link', { name: 'Medicines', exact: true }).click();
+
+    await expect(page.getByRole('heading', { name: 'Medicines' })).toBeVisible();
+    await expect(page.getByText('Only an administrator')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add medicine' }).first()).toBeVisible();
   });
 
   test('a drug on the shelf shows its quantity, its packs and what it cost', async ({

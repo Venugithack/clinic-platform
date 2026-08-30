@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { currentSession, ownerSession, touch, type StaffSession } from '@/lib/auth';
+import { homeFor } from '@/lib/workspaces';
 import { presencePing } from '@/lib/transitions/presence';
 import { CounterQueries } from '@/components/CounterQueries';
 import { WriteQueue } from '@/components/WriteQueue';
@@ -15,11 +16,6 @@ const ADMIN_FORBIDDEN_OPERATIONAL_ROUTES = ['/queue', '/counter'] as const;
 // URL got a screen of disabled buttons — inert, but still every colleague's
 // name and role. Guarding one direction and not the other is the bug.
 const ADMINISTRATION_ONLY_ROUTES = ['/admin'] as const;
-
-/** Where a non-administrator belongs when they land somewhere they may not be. */
-function operationalHome(role: StaffSession['role']): '/counter' | '/queue' {
-  return role === 'counter' ? '/counter' : '/queue';
-}
 
 export default function ClinicLayout({
   children,
@@ -49,11 +45,11 @@ export default function ClinicLayout({
     const isOn = (route: string) => pathname === route || pathname.startsWith(`${route}/`);
 
     if (session.role === 'admin') {
-      if (ADMIN_FORBIDDEN_OPERATIONAL_ROUTES.some(isOn)) router.replace('/admin/home');
+      if (ADMIN_FORBIDDEN_OPERATIONAL_ROUTES.some(isOn)) router.replace(homeFor(session.role));
       return;
     }
 
-    if (ADMINISTRATION_ONLY_ROUTES.some(isOn)) router.replace(operationalHome(session.role));
+    if (ADMINISTRATION_ONLY_ROUTES.some(isOn)) router.replace(homeFor(session.role));
   }, [pathname, router, session]);
 
   useEffect(() => {
