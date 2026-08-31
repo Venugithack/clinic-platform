@@ -174,9 +174,20 @@ export function ClinicApp() {
           method: 'POST',
           body: JSON.stringify({ action, payload }),
         })
-        const result = (await response.json()) as CommandResponse
+        const result = (await response.json()) as CommandResponse & {
+          revision?: number
+          snapshot?: ClinicSnapshot
+        }
         setNotice({ tone: result.ok ? 'good' : 'bad', message: result.message })
-        if (result.ok) await loadSnapshot(true)
+
+        // The command already carries the clinic as it now stands. Fetching it
+        // again would double the wait on every action for no new information.
+        if (result.ok && result.snapshot) {
+          if (typeof result.revision === 'number') revision.current = result.revision
+          setData(result.snapshot)
+        } else if (result.ok) {
+          await loadSnapshot(true)
+        }
         return result
       } catch {
         const result = { ok: false, message: 'The clinic server is not reachable.' }
@@ -220,13 +231,25 @@ export function ClinicApp() {
         method: 'POST',
         body: JSON.stringify({ staffId, pin }),
       })
-      const result = (await response.json()) as CommandResponse & { token?: string }
+      const result = (await response.json()) as CommandResponse & {
+        token?: string
+        revision?: number
+        snapshot?: ClinicSnapshot
+      }
       if (!result.ok) setNotice({ tone: 'bad', message: result.message })
       else {
         // The token is the session now — everything after this call carries it.
         if (result.token) writeToken(result.token)
         setView('overview')
-        await loadSnapshot(true)
+
+        // The clinic came back with the PIN. Asking for it again would put a
+        // second wait between tapping six digits and seeing the queue.
+        if (result.snapshot) {
+          if (typeof result.revision === 'number') revision.current = result.revision
+          setData(result.snapshot)
+        } else {
+          await loadSnapshot(true)
+        }
       }
     } catch {
       setNotice({ tone: 'bad', message: 'The clinic server is not reachable.' })

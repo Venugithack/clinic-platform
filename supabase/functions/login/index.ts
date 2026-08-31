@@ -1,3 +1,6 @@
+import { currentRevision } from '../_shared/db.ts'
+import { readSnapshot } from '../_shared/snapshot.ts'
+import type { Role } from '../_shared/types.ts'
 import postgres from 'npm:postgres@3.4.5'
 import { randomBytes, createHash, scrypt, timingSafeEqual } from 'node:crypto'
 import { Buffer } from 'node:buffer'
@@ -122,17 +125,25 @@ Deno.serve(async (request) => {
               values (${tokenHash(token)}, ${staff.id}, ${now()}, ${now()}, ${expires})`
     await sql`update staff set last_login = ${now()} where id = ${staff.id}`
 
+    const session = {
+      staffId: String(staff.id),
+      name: String(staff.name),
+      username: String(staff.username),
+      roles: JSON.parse(String(staff.roles_json)) as Role[],
+      lastSeen: now(),
+    }
+
+    // Signing in used to show the lock screen, wait, and only then go and ask
+    // what the clinic looked like — two full trips before anybody saw a queue.
+    // The session is already in hand here, so the first screen comes back with
+    // the PIN.
     return json({
       ok: true,
       message: 'Signed in.',
       token,
-      session: {
-        staffId: String(staff.id),
-        name: String(staff.name),
-        username: String(staff.username),
-        roles: JSON.parse(String(staff.roles_json)),
-        lastSeen: now(),
-      },
+      session,
+      revision: await currentRevision(),
+      snapshot: await readSnapshot(session),
     })
   } catch (error) {
     console.error('sign-in failed:', error)
