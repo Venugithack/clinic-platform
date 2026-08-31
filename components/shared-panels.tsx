@@ -591,6 +591,7 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
       />
 
       <Card data-print="sheet">
+        <ClinicLetterhead settings={data.settings} kind="register" />
         <CardHeader title="Bill register" sub={`${data.bills.length} bills`} />
         {data.bills.length === 0 ? (
           <CardBody>
@@ -924,5 +925,179 @@ export function PrinterPanel() {
         </CardBody>
       </Card>
     </Stack>
+  )
+}
+
+/**
+ * The details that print.
+ *
+ * A pharmacy bill carries the drug licence number and the GSTIN; a prescription
+ * carries the prescriber's council registration. Without them a printed sheet
+ * is a piece of paper with numbers on it, not a receipt or a prescription —
+ * which is why this screen leads with a warning rather than a form when the
+ * two required numbers are missing, and why the letterhead on every printed
+ * sheet says so out loud rather than printing a blank.
+ */
+export function ClinicSettingsPanel({
+  data,
+  run,
+}: {
+  data: ClinicSnapshot
+  run: ActionRunner
+}) {
+  const busy = useBusy()
+  const s = data.settings
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const values = new FormData(event.currentTarget)
+    await run('update_clinic_settings', {
+      name: values.get('name'),
+      address: values.get('address'),
+      phone: values.get('phone'),
+      email: values.get('email'),
+      drugLicenceNumber: values.get('drugLicenceNumber'),
+      doctorRegistrationNumber: values.get('doctorRegistrationNumber'),
+      gstin: values.get('gstin'),
+      consultationFee: Number(values.get('consultationFee') ?? 0),
+      footerNote: values.get('footerNote'),
+    })
+  }
+
+  return (
+    <Stack>
+      <PageHeader
+        eyebrow="Clinic"
+        title="Details that print"
+        sub={s.updatedAt ? `Last changed ${s.updatedAt.slice(0, 10)}` : 'Never set'}
+      />
+
+      {!s.complete ? (
+        <Notice tone="bad">
+          Bills and prescriptions are printing without a drug licence number or a
+          doctor registration number. Until both are filled in below, what comes
+          out of the printer is not a valid receipt or prescription.
+        </Notice>
+      ) : null}
+
+      <Card variant="record">
+        <CardHeader title="Clinic identity" sub="Printed at the top of every sheet" />
+        <CardBody>
+          <form onSubmit={submit} className="space-y-4">
+            <FieldRow cols={2}>
+              <Field label="Clinic name" required>
+                <Input name="name" defaultValue={s.name} required />
+              </Field>
+              <Field label="Phone">
+                <Input name="phone" type="tel" inputMode="tel" defaultValue={s.phone} />
+              </Field>
+            </FieldRow>
+
+            <Field label="Address" hint="Printed under the name on bills and prescriptions.">
+              <Input name="address" defaultValue={s.address} />
+            </Field>
+
+            <FieldRow cols={2}>
+              <Field
+                label="Drug licence number"
+                required
+                hint="Form 20/21. A pharmacy bill without it is not a valid receipt."
+              >
+                <Input name="drugLicenceNumber" defaultValue={s.drugLicenceNumber} required />
+              </Field>
+              <Field
+                label="Doctor registration number"
+                required
+                hint="The prescriber's council registration. Prints on every prescription."
+              >
+                <Input
+                  name="doctorRegistrationNumber"
+                  defaultValue={s.doctorRegistrationNumber}
+                  required
+                />
+              </Field>
+            </FieldRow>
+
+            <FieldRow cols={3}>
+              <Field label="GSTIN">
+                <Input name="gstin" autoCapitalize="characters" defaultValue={s.gstin} />
+              </Field>
+              <Field label="Consultation fee" hint="In rupees.">
+                <Input
+                  name="consultationFee"
+                  inputMode="decimal"
+                  defaultValue={String(s.consultationFee)}
+                />
+              </Field>
+              <Field label="Email">
+                <Input name="email" type="email" defaultValue={s.email} />
+              </Field>
+            </FieldRow>
+
+            <Field
+              label="Footer note"
+              hint="Printed small at the foot of a bill — return policy, timings, anything."
+            >
+              <Input name="footerNote" defaultValue={s.footerNote} />
+            </Field>
+
+            <ActionButton type="submit" variant="primary" busy={busy} busyLabel="Saving…">
+              Save clinic details
+            </ActionButton>
+          </form>
+        </CardBody>
+      </Card>
+    </Stack>
+  )
+}
+
+/**
+ * What sits at the top of a printed sheet.
+ *
+ * Hidden on screen — the clinic knows its own name, and the space is better
+ * spent on the work — and present on every sheet that leaves the printer,
+ * because that is the difference between a document and a printout.
+ *
+ * When the licence numbers are missing it says so on the paper rather than
+ * printing a blank line. A bill that silently omits the drug licence looks
+ * valid and is not; one that says the number is missing gets fixed.
+ */
+export function ClinicLetterhead({
+  settings,
+  kind,
+}: {
+  settings: ClinicSnapshot['settings']
+  kind: 'bill' | 'prescription' | 'register'
+}) {
+  const required =
+    kind === 'prescription' ? settings.doctorRegistrationNumber : settings.drugLicenceNumber
+  const label =
+    kind === 'prescription' ? 'Doctor registration' : 'Drug licence'
+
+  return (
+    <header data-print="letterhead" className="hidden border-b-2 border-ink pb-3">
+      <h1 className="text-[18px] font-semibold tracking-tight">{settings.name}</h1>
+
+      {settings.address ? (
+        <p className="mt-0.5 text-[12px] text-ink-2">{settings.address}</p>
+      ) : null}
+
+      <p className="mt-0.5 font-mono text-[11px] text-ink-2">
+        {[
+          settings.phone,
+          required ? `${label} ${required}` : null,
+          settings.gstin ? `GSTIN ${settings.gstin}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </p>
+
+      {!required ? (
+        <p className="mt-1 font-mono text-[11px]">
+          {label} number is not set — this sheet is not a valid{' '}
+          {kind === 'prescription' ? 'prescription' : 'receipt'}.
+        </p>
+      ) : null}
+    </header>
   )
 }

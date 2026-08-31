@@ -3,7 +3,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import type { ClinicSnapshot, PrescriptionItemView, VitalView } from '@/lib/types'
 import { useBusy, type ActionRunner } from './clinic-context'
-import { Stack } from './shared-panels'
+import { ClinicLetterhead, Stack } from './shared-panels'
 import {
   ActionButton,
   Badge,
@@ -528,6 +528,7 @@ export function RecordsPanel({ data }: { data: ClinicSnapshot }) {
       />
 
       <Card data-print="sheet">
+          <ClinicLetterhead settings={data.settings} kind="prescription" />
         <CardHeader title="Consultation register" />
         {data.encounters.length === 0 ? (
           <CardBody>

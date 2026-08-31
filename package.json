@@ -24,6 +24,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "agent-browser": "^0.35.1",
+    "postgres": "^3.4.9",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.0",
     "wrangler": "^4.127.1"

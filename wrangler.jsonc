@@ -15,5 +15,14 @@
 
   "assets": {
     "directory": "./out"
-  }
+  },
+
+  // The address the clinic actually opens. Cloudflare terminates TLS and serves
+  // the files; there is no origin server behind this.
+  "routes": [
+    {
+      "pattern": "app.jayamuruganclinic.online",
+      "custom_domain": true
+    }
+  ]
 }

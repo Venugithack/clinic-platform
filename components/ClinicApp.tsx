@@ -12,6 +12,7 @@ import {
   PatientsPanel,
   PrinterPanel,
   StaffPanel,
+  ClinicSettingsPanel,
 } from './shared-panels'
 import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
@@ -38,6 +39,7 @@ type View =
   | 'beds'
   | 'billing'
   | 'staff'
+  | 'clinic'
   | 'counter'
   | 'inventory'
   | 'suppliers'
@@ -52,6 +54,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
     { id: 'staff', label: 'Staff', eyebrow: 'Admin control' },
+    { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print' },
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
@@ -419,6 +422,8 @@ function renderPanel(
       return <BedsPanel data={data} run={run} />
     case 'billing':
       return <BillingPanel data={data} run={run} />
+    case 'clinic':
+      return <ClinicSettingsPanel data={data} run={run} />
     case 'staff':
       return <StaffPanel data={data} run={run} />
     case 'counter':

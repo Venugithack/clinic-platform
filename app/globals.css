@@ -144,6 +144,13 @@
     display: none !important;
   }
 
+  /* The letterhead exists only on paper. On screen the clinic knows its own
+     name and the space is better spent on the work; on paper it is the
+     difference between a document and a printout. */
+  [data-print='letterhead'] {
+    display: block !important;
+  }
+
   body {
     background: #fff;
     font-size: 12px;
