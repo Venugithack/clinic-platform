@@ -24,9 +24,14 @@ npm-debug.log*
 *.bak
 .env*.bak
 
-# Supabase CLI scratch state (container secrets, link info). This app does not
-# use Supabase migrations — it owns its schema in lib/server/db.ts.
-/supabase/
+# Supabase CLI scratch state ONLY. .temp/pooler-url holds a working database
+# credential and this repository is PUBLIC, so these two stay out — but the
+# rest of /supabase/ is the backend itself (migrations and edge functions) and
+# belongs in the repository. The old rule ignored the whole directory, which
+# was correct for the app that kept its schema in lib/server/db.ts and quietly
+# untracked the entire backend of the one that replaced it.
+/supabase/.temp/
+/supabase/.branches/
 
 # Build output
 /out/
