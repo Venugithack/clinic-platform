@@ -18,6 +18,7 @@ import {
 import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
 import { ExpiringPanel } from './expiring-panel'
+import { DayBookPanel } from './day-book-panel'
 import { ActionButton, Badge, Button, Card, CardBody, Notice, Numpad } from '@/components/ui'
 
 /**
@@ -44,6 +45,7 @@ type View =
   | 'clinic'
   | 'registers'
   | 'expiring'
+  | 'daybook'
   | 'counter'
   | 'inventory'
   | 'suppliers'
@@ -61,6 +63,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print' },
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
+    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
     { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
@@ -83,6 +86,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
+    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
   ],
   pharmacy: [
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
@@ -92,6 +96,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
     { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
+    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
     { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1' },
   ],
 }
@@ -430,6 +435,8 @@ function renderPanel(
       return <BedsPanel data={data} run={run} />
     case 'billing':
       return <BillingPanel data={data} run={run} />
+    case 'daybook':
+      return <DayBookPanel data={data} run={run} />
     case 'expiring':
       return <ExpiringPanel data={data} run={run} />
     case 'registers':
