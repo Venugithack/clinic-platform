@@ -1,98 +1,96 @@
+import type { ReactNode } from 'react'
+
 /**
- * The register. Eight screens in this clinic are a ruled book with columns, and
- * that is not a coincidence — the software replaces a stack of them.
+ * The register. Compositional rather than data-driven, because each screen
+ * needs different cell contents (tokens, badges, row actions).
  *
- * The scroll container is part of the primitive rather than left to the caller,
- * and that is the fix for the layout bug this system replaced: a bare <table>
- * has an intrinsic minimum width, and inside a grid track that minimum wins.
- * The track refused to shrink, the shell overflowed, and `overflow-hidden` on
- * the shell then clipped the last columns off the screen entirely. A register
- * that silently loses its right-hand columns is worse than one that scrolls, so
- * the wrapper scrolls and `min-w-0` on it lets the track shrink.
+ * `TD` has a `num` prop: any transcription-critical value — a quantity, a
+ * stock count, an amount, a time — is set in mono and right-aligned so a
+ * column of them can be scanned and compared. That is the whole reason for
+ * the register.
  *
- * `num` sends a cell mono, tabular and right-aligned. Every number in a
- * register is compared with the one above it, and a column of quantities that
- * does not line up is a column nobody proof-reads.
+ * Rows are 56px so a row action clears the touch floor, and the table scrolls
+ * inside its own box rather than pushing the page sideways.
  */
-export function Table({
-  className = '',
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
+
+export function Table({ children }: { children: ReactNode }) {
   return (
-    <div
-      className={`min-w-0 overflow-x-auto rounded-box border border-rule bg-sheet ${className}`}
-    >
-      <table className="w-full border-collapse text-left text-sm">{children}</table>
+    <div className="-mx-px overflow-x-auto">
+      <table className="w-full border-collapse text-left">{children}</table>
     </div>
-  );
+  )
 }
 
-export function THead({ children }: { children: React.ReactNode }) {
-  return <thead>{children}</thead>;
+export function THead({ children }: { children: ReactNode }) {
+  return <thead>{children}</thead>
 }
 
-export function TBody({ children }: { children: React.ReactNode }) {
-  return <tbody>{children}</tbody>;
+export function TBody({ children }: { children: ReactNode }) {
+  return <tbody>{children}</tbody>
 }
 
 export function TR({
-  className = '',
   children,
-  ...rest
+  onClick,
+  active = false,
+  muted = false,
 }: {
-  className?: string;
-  children: React.ReactNode;
-} & Omit<React.HTMLAttributes<HTMLTableRowElement>, 'className' | 'children'>) {
+  children: ReactNode
+  onClick?: () => void
+  active?: boolean
+  muted?: boolean
+}) {
+  const interactive = onClick
+    ? 'cursor-pointer hover:bg-paper/60 focus-visible:bg-paper/60'
+    : ''
+  const state = active ? 'bg-active-wash' : muted ? 'opacity-60' : ''
   return (
-    <tr className={`last:[&>td]:border-b-0 ${className}`} {...rest}>
+    <tr
+      className={`border-b border-rule last:border-b-0 ${interactive} ${state}`}
+      onClick={onClick}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onClick()
+              }
+            }
+          : undefined
+      }
+    >
       {children}
     </tr>
-  );
+  )
 }
 
-export function TH({
-  num = false,
-  className = '',
-  children,
-  ...rest
-}: {
-  num?: boolean;
-  className?: string;
-  children?: React.ReactNode;
-} & Omit<React.ThHTMLAttributes<HTMLTableCellElement>, 'className' | 'children'>) {
+export function TH({ children, num = false }: { children: ReactNode; num?: boolean }) {
   return (
     <th
-      className={`eyebrow whitespace-nowrap border-b-2 border-ink px-3 py-2 align-bottom ${
-        num ? 'text-right' : 'text-left'
-      } ${className}`}
-      {...rest}
+      scope="col"
+      className={`eyebrow border-b-2 border-ink px-3 py-2.5 whitespace-nowrap ${num ? 'text-right' : 'text-left'}`}
     >
       {children}
     </th>
-  );
+  )
 }
 
 export function TD({
+  children,
   num = false,
   className = '',
-  children,
-  ...rest
 }: {
-  num?: boolean;
-  className?: string;
-  children?: React.ReactNode;
-} & Omit<React.TdHTMLAttributes<HTMLTableCellElement>, 'className' | 'children'>) {
+  children: ReactNode
+  /** Set for identifiers, quantities, times, amounts. */
+  num?: boolean
+  className?: string
+}) {
   return (
     <td
-      className={`border-b border-rule px-3 py-2 align-top ${
-        num ? 'tabular text-right font-mono' : ''
-      } ${className}`}
-      {...rest}
+      className={`h-[56px] px-3 py-2 align-middle text-[14px] ${num ? 'text-right font-mono tabular-nums' : ''} ${className}`}
     >
       {children}
     </td>
-  );
+  )
 }

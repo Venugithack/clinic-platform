@@ -1,128 +1,49 @@
 name: CI
 
-# Blocking validation for runtime changes. Documentation-only PRs skip this
-# hosted-runner suite entirely; application/database/config changes still get
-# the same type, database and tablet coverage before merge.
+# The previous workflow tested the application this repository used to hold: a
+# static Next export over Supabase, with a 34-file pgTAP suite and a restore
+# drill against a bare Postgres 17. That application is gone (it is still in the
+# history, up to f47273c) and none of those jobs describe what is here now.
+#
+# What is here now is a Node server that talks to Postgres. So this checks the
+# three things that can be checked without a database — the types, the unit
+# tests, and that it builds — and deliberately claims nothing about the rest.
+# A CI that pretends to cover the data layer is worse than one that admits it
+# does not.
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE*'
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE*'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PGPORT: '54329'
-  PGHOST: '127.0.0.1'
-  PGDATABASE: clinic
-
 jobs:
-  static:
-    name: typecheck · lint · unit
+  check:
+    name: typecheck · tests · build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          node-version: 24
+          cache: npm
 
-      - run: pnpm install --frozen-lockfile
+      - run: npm ci
 
       - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint — the seam, the writer, the patient surfaces, the tablet rules
-        run: pnpm lint
+        run: npm run typecheck
 
       - name: Unit tests
-        run: pnpm test:unit
+        run: npm test
 
-  database:
-    # Keep the historical job name stable for branch-protection checks.
-    # PRs run migrations + pgTAP. The full dump/restore remains on main after
-    # merge and nightly in backup.yml, avoiding a duplicate restore drill on
-    # every iterative PR commit.
-    name: pgTAP · restore drill
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Postgres 17 and pgTAP
-        run: |
-          ./scripts/ci-pgdg.sh
-          sudo apt-get install -y postgresql-17 postgresql-17-pgtap
-
-      - name: Migrations, forward-only
-        run: |
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-          ./scripts/db-start.sh
-          ./scripts/db-migrate.sh
-
-      - name: pgTAP
-        run: ./scripts/db-test.sh
-
-      - name: Seed, back up, restore, compare row counts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          ./scripts/db-reset.sh
-          ./scripts/db-seed.sh
-          ./scripts/db-backup.sh daily
-          ./scripts/db-restore-drill.sh
-
-  e2e:
-    # Full tablet E2E remains mandatory for every runtime PR and main push.
-    # This is intentionally not path-filtered more aggressively because SQL,
-    # scripts, config and UI changes can all change the real clinic flow.
-    name: Playwright · 1280x800 touch
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Install Postgres 17
-        run: |
-          ./scripts/ci-pgdg.sh
-          sudo apt-get install -y postgresql-17
-
-      - name: Database, seed and API
-        run: |
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-          ./scripts/dev-stack.sh --reset
-
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: First-run drill — the clinic, from nothing
-        run: pnpm test:first-run
-
-      - name: E2E
-        run: pnpm test:e2e
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 7
+      # The database connection is created on first use, not on import, so the
+      # build needs no DATABASE_URL. If that ever regresses, this job is where
+      # it shows up — as "Failed to collect page data", which is exactly how it
+      # showed up the first time.
+      - name: Build
+        run: npm run build

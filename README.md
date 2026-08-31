@@ -1,322 +1,76 @@
-# Clinic platform
+# Jayamurugan Clinic
 
-Custom build for a single-doctor clinic with an in-house pharmacy. Separate
-product from the hospital prototype in `../hospital al in one platform` — that
-one is a demo, this one has a paying client and a real drug shelf behind it.
+Standalone, tablet-first clinic operations for one clinic and one facility.
 
-**M0–M6, M8, M9 and M11 are built** (17 Aug 2026) — see
-[What is built](#what-is-built) below, and `BUILD.md` §5–19. Seven documents describe the rest:
+## What is included
 
-| File | Audience | |
+- Separate Admin, Doctor, Nurse and Pharmacy tablet workspaces
+- Patients, queue, vitals, consultation, prescriptions and billing
+- Four observation beds
+- Rx dispensing and anonymous OTC sales
+- Batch inventory, fixed-template CSV import/export and stock movements
+- Suppliers, low-stock order drafts, partial/full goods receipt
+- WhatsApp integration boundary with verified webhooks and configuration-gated sending
+- Admin printer setup guide and AirPrint/Mopria-friendly native printing
+
+The folder is intentionally independent from the parent hospital project. It has
+its own package manifest, Next.js configuration, database and environment file.
+
+## Local setup
+
+```powershell
+# Navigate to the new folder first
+cd .\jayamurugan-clinic
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+Open `http://localhost:3000`. On another tablet in the same network, use the
+clinic computer's LAN address, for example `http://192.168.1.20:3000`.
+
+Keep that computer on while the tablets are using the app. Every tablet connects
+to this one server, so they all see the same queue, beds, stock and order states.
+
+## Seeded sign-ins
+
+The first local start creates demonstration accounts. Change these before using
+real data.
+
+| Station | Username | Password |
 |---|---|---|
-| [`PLAN.md`](PLAN.md) | **you only** | the full build plan — architecture, data model, day estimates, risk register, your pricing anchors, and the questions you need to answer yourself. Not for the client |
-| [`PROPOSAL.md`](PROPOSAL.md) | **the client** | the same plan written for the doctor — what he gets, what it costs him, what he must supply, what he must decide. Safe to send as-is once the bracketed placeholders are filled |
-| [`WHATSAPP.md`](WHATSAPP.md) | **you only** | why WhatsApp automation is a grey area — six separate ambiguities, how to spot an unofficial vendor, and every message in this build classified by risk. Decides the supplier-send question |
-| [`HOSTING.md`](HOSTING.md) | **you only** | how this runs for ₹0/month, what free costs in reliability, the backup rig that replaces what free tiers omit, and the one-day exit ramp to paid |
-| [`INVENTORY.md`](INVENTORY.md) | **you only** | the inventory design brief — base units, barcode, costing, blind stock-take, expiry returns, salt-based substitution, reorder intelligence |
-| [`TABLET.md`](TABLET.md) | **you only** | the tablet-first UI/UX brief — layout, touch rules, the three interactions that decide whether it feels good, and the printer trap |
-| [`BUILD.md`](BUILD.md) | **you only** | how the build actually starts — M0 day by day, the gates after it, what is blocked and on whom. **Read §0 first: one decision blocks the first migration** |
+| Admin | `admin` | `clinic1234` |
+| Doctor | `doctor` | `clinic1234` |
+| Nurse | `nurse` | `clinic1234` |
+| Pharmacy | `pharmacy` | `clinic1234` |
 
-Placeholders to fill in `PROPOSAL.md` before sending: clinic name, date, build
-fee (§10). Everything else is complete.
+## WhatsApp status
 
-## What is built
+Drafts, order state, receipt state and inbound/outbound message records are part
+of the application. Real transmission stays disabled until the Meta values in
+`.env.example` are configured. The application never simulates a successful send.
 
-**M0** — foundations. **M1** — clinic core: a walk-in becomes a token, a
-consult, a signed prescription and a printable A4 sheet. **M2** — the
-doctor↔counter live link, the feature the clinic actually bought. **M3** —
-inventory, the centrepiece: goods receipt, barcodes, FEFO dispensing with
-scan-to-verify, the counter sale, the blind stock-take, expiry returns and
-supplier credits, and reordering that learns from measured lead times. **M4** —
-billing: gapless invoice numbers, A4 and 80mm bills, the day-book, and a cash
-till that is counted rather than assumed. **M5** — purchasing: one order per
-supplier, approved and sent by the doctor as a WhatsApp deep link, the reply
-recorded, and goods received against the order. **M6** — presence: a heartbeat,
-a hard close, and a public status page that never says "available". **M8** —
-the legal registers: Schedule H1, purchases, expiry write-offs, sales, and a
-batch trace for recalls, each exporting as a CSV an inspector can open. **M9** —
-hardening: an offline write queue that cannot apply a sale twice, the
-permissions review as a standing test, and a restore drill that stopped lying.
-**M11a** — the drug master import: paste or choose a CSV, see exactly what it
-will do, and load five hundred rows in one go. **M11b** — settings: the fee,
-the licence numbers, the GSTIN and the opening hours, out of psql and onto a
-screen. **M11c** — people and tablets: the new pharmacist who starts on Monday,
-and the tablet left in an auto-rickshaw. **M11d** — the two corrections M4 and
-M8 implied and never built: filling in the address the H1 register is missing,
-and cancelling a bill made out to the wrong patient. **M11e** — opening stock:
-four hundred batches onto the shelf through goods receipt, valued before they
-are committed. **M11f** — first run: a clinic stood up from an empty database,
-on the tablet, by the doctor. **M7** (patient WhatsApp and the
-patient portal) is deferred at the client's request.
+The webhook endpoint is `/api/whatsapp/webhook`. It verifies Meta signatures,
+tracks sent/delivered/read/failed updates, and answers a patient asking whether
+the doctor is in. That answer uses only a current doctor login session; there is
+no manual presence switch.
 
-```
-app/                Next 16 · React 19 · TS strict · Tailwind 4
-  (clinic)/         queue · register walk-in · consult · Rx print · counter
-                    receiving · stock-take · expiry · reorder
-                    billing · bill print (A4 + 80mm) · day-book · orders
-                    presence · reports · import · settings · admin
-                    patient record
-  p/  now/          patient portal and public status page, default-deny
-components/         three-pane shell, numpad, drug search, quantity pad,
-                    the counter's questions
-lib/
-  db/               the ONLY module that imports @supabase/* — lint-enforced
-  transitions/      typed wrappers over the plpgsql RPCs
-  auth/             device session + staff PIN (TABLET.md §5)
-  realtime/         two adapters: Supabase Realtime, and WebSocket over
-                    LISTEN/NOTIFY — the HOSTING.md §7 swap, exercised on
-                    every test run rather than asserted
-  units/            base-unit conversion and costing (INVENTORY.md §1, §4)
-  reports/          CSV both ways — quoting, formula injection, BOM on write;
-                    a hand-written parser for the file the doctor typed
-  offline/          the write queue: keeps what the network ate, never a refusal
-  whatsapp/         deep links — four lines, and the reason M5 needs no Meta
-                    account at all (WHATSAPP.md §0)
-  barcode/          BarcodeDetector, with manual entry beside it
-supabase/
-  migrations/       33 forward-only migrations — the schema
-  tests/            509 pgTAP assertions
-  seed.sql          22-drug development seed
-e2e/                Playwright, 1280×800 with touch, no desktop project
-scripts/            local stack, migrations, backup, restore drill,
-                    first-run drill, LAN HTTPS
-```
+## Inventory CSV
 
-There are two ways to bring the stack up, and which one you get is decided by
-your operating system rather than by preference.
+Use **Inventory → CSV template** for the fixed column layout. Import validates
+the whole file before saving it, remembers the file hash to prevent accidental
+double import, and refuses to overwrite an existing batch balance. Export
+includes medicine, batch and preferred supplier details.
 
-**Docker — macOS, Windows, and any Linux with a daemon.** The real thing:
-Postgres 17, PostgREST, Realtime, Auth and Studio, in the same images a hosted
-project runs. This is the path `BUILD.md` §1.2 intends.
+## Printing
 
-```
-pnpm install
-docker info                        # Docker Desktop must already be running
-./node_modules/.bin/supabase start # all 33 migrations, then seed.sql
-pnpm dev                           # then open the app
-```
+Install an AirPrint-compatible printer for iPads or a Mopria-certified printer
+for Android tablets. Keep printer and tablet on the same private Wi-Fi. Print
+buttons open the tablet's normal system print dialog. Admin can use
+**Printer → Print test page** on each tablet before the clinic opens.
 
-| | |
-|---|---|
-| App | http://localhost:3000 |
-| REST API | http://127.0.0.1:54321 |
-| Postgres | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
-| Studio | http://127.0.0.1:54323 |
+## Local data and backup
 
-`supabase start` is idempotent; `supabase stop` when you are finished, and
-`supabase db reset` to get back to a clean seed.
-
-**The bare-cluster scripts — Linux and CI only.** `scripts/dev-stack.sh` drives
-a plain Postgres 17 cluster with a downloaded PostgREST binary, for CI and for
-machines with no Docker daemon. It downloads a `linux-static-x64` build and uses
-`pgrep`/`pkill`/`setpriv`, so it **cannot run on Windows or macOS** — on those,
-use Docker above.
-
-```
-./scripts/dev-stack.sh --reset    # Postgres, migrations, seed, API, .env.local
-```
-
-Either way:
-
-```
-pnpm test                          # typecheck · lint · unit · pgTAP · e2e
-```
-
-`pnpm test:e2e` and `pnpm test:db` shell out to the bare-cluster scripts, so on
-Docker run `supabase db reset` first and then `pnpm exec playwright test`
-directly — the reset is not optional, and `playwright.config.ts` explains at
-length why the suite only tells the truth on a fresh seed.
-
-### `.env.local`
-
-`.env.*` is gitignored, so this is rebuilt on any fresh checkout. Three lines,
-and the ordinary anon key is the right value for the key:
-
-```
-NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<the anon key from `supabase status`>
-```
-
-Leave `NEXT_PUBLIC_REALTIME_WS_URL` unset when the real stack is up, so
-`lib/realtime` uses Supabase Realtime rather than the `dev-api.mjs` stand-in.
-Point it at `ws://127.0.0.1:54321/realtime` only when running against the
-bare-cluster stand-in, which `scripts/dev-stack.sh` does for you.
-
-**This used to say the opposite**, and the reason is worth keeping. Every grant
-in `20260816270200_tighten_grants.sql` targets `authenticated`, so an anon-role
-key really did get `permission denied for table staff` — and this file told you
-to mint an `authenticated` JWT by hand against the local stack's secret and use
-it as the anon key. That is gone. `lib/db/index.ts` now calls
-`signInAnonymously()`, and the session it gets back is an `authenticated` one;
-the anon key is only what opens the door to ask for it. If you are following
-an older note that mints a JWT, stop — it will work locally and has no
-counterpart on a hosted project, which is exactly how it survived as long as it
-did.
-
-### Signing in
-
-The app looks for a registered device before it will show the PIN pad, and a
-fresh browser has none. In DevTools on the app:
-
-```js
-localStorage.setItem('clinic.deviceToken', 'seed-device-cabin')   // or -counter
-```
-
-Reload, pick a staff member, PIN `481920` — all three seeded staff share it, and
-`supabase/seed.sql` says why.
-
-**The two tests that matter most** are in
-`supabase/tests/20_transition_grants.sql`: a direct write to the stock ledger is
-refused by Postgres with `42501`, and the same role can still call
-`app.dispense`. That is `PLAN.md` §5.3 rules 2 and 3 becoming something the
-database enforces rather than something the team remembers.
-
-**The M1 gate** is `e2e/m1-gate.spec.ts`, driven against a real Postgres with
-real RLS and the real transitions — not a stubbed API.
-
-**The M2 gate** is `e2e/m2-live-link.spec.ts`, driven across two browser
-contexts because one context proves nothing about a link between two devices.
-It measures the latency and fails above 1.5s, so a regression to polling breaks
-the build. It currently runs at ~150ms.
-
-**The M3 gate** is `e2e/m3-dispense.spec.ts`: two batches of one drug with
-different expiries, MRPs and strip sizes, FEFO taking the earlier one, and a
-barcode scan stopping a pack that is not on the prescription.
-
-**The M4 gate** is `e2e/m4-gate.spec.ts`: a bill for a consultation plus four
-medicines, printed at both paper sizes with batch numbers intact; the day's
-total reconciled against the sum of its bills; and a drawer counted ten rupees
-short, recorded as ten rupees short.
-
-**The M5 gate** is `e2e/m5-gate.spec.ts`, and it asserts a `wa.me` link rather
-than a delivery — because a deep link is sent from the doctor's own phone and
-this app cannot see what happened next. That single design decision removes Meta
-business verification, a second number, template approval and opt-in machinery
-from the supplier channel entirely (`WHATSAPP.md` §0).
-
-**The M6 gate** is split on purpose: `A2_presence.sql` moves the clock to prove
-a sleeping laptop reads "away" and that closing time beats a live session, and
-`e2e/m6-presence.spec.ts` asserts the thing a database cannot — that the public
-page never says "available". Presence is computed on read, so no scheduled job
-exists to fail.
-
-**The M8 gate** is `e2e/m8-registers.spec.ts`, and the word it tests is
-*exports*: a Schedule H1 dispense, then a real CSV downloaded off a tablet with
-the six columns the rule names — and its first code unit asserted to be a BOM,
-because Excel on Windows reads UTF-8 without one as Latin-1 and turns every
-Indian name into mojibake. M8 adds **no transitions at all**: every column it
-needed was already in the ledger.
-
-**The M11f deadlock** is the one worth reading twice, because a seeded database
-hides it completely: a screen needs a session, a session needs an unlock, an
-unlock needs a registered device, and registering a device needed an admin
-session. On go-live morning nothing could create the first tablet. `app.first_run`
-runs while `staff` and `devices` are *both* empty and never again — two
-conditions, because a clinic with staff and no tablets is one that revoked
-them, and minting an admin there would be a way past every PIN in the building.
-
-`scripts/first-run-drill.sh` is the only suite here that runs against an empty
-database, and it earned its place immediately: it found that the lock screen
-read the staff list through RLS that requires somebody to already be signed in,
-so on any database where the browser key's subject does not exist the screen
-draws "Who is this?" above nobody, with no error, forever.
-
-**The M11e refusal** is the one that looks like an inconvenience and is not: a
-batch already on the shelf is rejected by name, because `receive_goods` *adds*
-to an existing batch — right for a real delivery, catastrophic for an opening
-balance. Load the file twice without it and the shelf silently doubles, with
-nothing else in the system looking unusual, and the first person to notice is
-doing a stock-take three months later.
-
-**The bug M11e found while running the suite** was in code two milestones old:
-every screen's `refresh()` cleared the error banner *on completion*, so a
-refusal raised while a background read was in flight was erased the moment it
-landed. A read landing is not evidence that the last write succeeded. Errors
-are now cleared when a read starts, never when it finishes — across fourteen
-screens, the worst of them the counter, which refreshes on every realtime
-event.
-
-**The M11d lesson** is smaller and worth stating: a flag nobody can act on is a
-flag nobody reads, and a transition no screen calls is a feature the clinic
-does not have. M8's `address_missing` and M4's `app.void_bill` were both fully
-built, fully tested and unreachable.
-
-**The M11c property** is that revoking a tablet ends the session running on it
-in the same transaction. `revoked_at` alone stops the *next* unlock and does
-nothing about the tablet that is currently unlocked in somebody else's bag —
-which, on a tablet being actively used, is never. `e2e/m11-admin.spec.ts`
-drives the whole loop: register, bring a fresh browser up from the one-time
-code, revoke from the other tablet, and watch the same credential stop working
-— reported as "Incorrect PIN", because the lock screen refuses a wrong PIN, an
-unknown person and a revoked device identically.
-
-**The M11b trap** is that `app.clinic_is_open` treats a timetable it cannot
-parse as *closed* — the right default for a page patients drive to a clinic on,
-and the reason a typo in the opening hours is invisible. `{"mon": ["9:30-1:00
-pm"]}` raises nothing; it quietly means shut on Mondays, forever, on the one
-screen nobody in the clinic ever looks at. `app.update_clinic` refuses it by
-day and by window instead.
-
-**The M11a rule** is in `20260817090100_import.sql`, and it is the one that
-looks wrong until you follow it through: a file with a single unreadable row
-imports **nothing**, not even the four hundred rows above it. A drug missing
-from the master is indistinguishable, at every other screen in this build, from
-a drug the clinic does not stock — so a half-import does not fail in the import
-screen where somebody could act on it. It fails at the counter, mid-sale, with
-the patient standing there.
-
-**The M9 property worth understanding** is in `20260816270100_replay.sql`: a
-queued write carries a key made before its first attempt, and the key row
-commits in the same transaction as the effect. So a sale can never be applied
-twice, and a sale that *failed* rolls its key back with it and stays retryable.
-One property, both guarantees.
-
-**The number that surprised me** is in `e2e/m3-expiry.spec.ts`. Suppliers want
-stock back *months before* it expires — 3 to 6, and it differs per supplier — so
-the date that decides whether a batch can go back is `expiry −
-return_window_days`, not the expiry. A list sorted by expiry date finds out
-after the door has already shut, every time. That one design decision is most of
-what `INVENTORY.md` §6 is worth.
-
-**The bug worth knowing about:** every transition refusal in the build was
-invisible until 16 Aug 2026. PostgREST reserves SQLSTATEs starting `PT` and
-reads the rest as an HTTP status, so `PT003` asked for HTTP status 3 — the
-response never framed and the screen hung instead of showing the refusal. Only
-success paths worked, which is why it survived three milestones. Codes are now
-`CL0xx`; see `BUILD.md` §8.
-
-**Not done, and not code:** `BUILD.md` §1.3 — LAN HTTPS, the root CA on both
-tablets, PWA install, HP Print Service Plugin on both tablets, one real
-prescription printed, and one real bill on each paper size. The A4 is an **HP
-Smart Tank 580**: Wi-Fi and Mopria-certified, with no Ethernet and 2.4 GHz-only
-Wi-Fi, so both tablets have to be on that band with AP isolation off — a
-dual-band router breaks mDNS discovery while every device still pings. The
-**80mm roll printer has not been bought yet** (§18 Q9), so that layout has
-never met a thermal printer. All of it happens in the clinic;
-`scripts/lan-https.sh` is the runbook and carries the checklist.
-
-**Everything on the go-live checklist that is code is built** (`BUILD.md`
-§14–18). What remains is the clinic itself: §1.3 above, and M10's parallel
-run.
-
-Build continues after `PLAN.md` §20 is signed off.
-
-| | |
-|---|---|
-| Client wants | doctor-room ↔ pharmacy live link · inventory with batches and expiry · low-stock alerts · supplier orders over WhatsApp · patient WhatsApp with booking, token, prescriptions and doctor-in-clinic status |
-| Developer constraints | free hosting · tablets are the devices · inventory is the centrepiece |
-| Stack | Next 16 · React 19 · TypeScript · Tailwind 4 · Supabase free (Postgres + Realtime + Auth, ap-south-1) · `plpgsql` transitions · Meta WhatsApp Cloud API · **Cloudflare Workers** |
-| Hosting cost | **₹0/month.** Total running cost ~₹390, most of it the 4G router backup. Patient WhatsApp is a reactive bot inside the free service window; supplier orders go by deep link |
-| Build estimate | ~71 working days · **14–16 weeks calendar** — Meta verification and the client's drug master are still the long poles |
-
-## Before anything is built
-
-1. ~~§3 assumptions A1–A8 confirmed~~ — A2 and A3 confirmed 16 Aug 2026; the rest still open
-2. ~~§18 questions 1–12 answered~~ — 9 of 12 answered 16 Aug 2026. Q7, Q12 and the WhatsApp session (§18.2) remain
-3. ~~§10.4 supplier send mode chosen~~ — **one-tap approval**, chosen 16 Aug 2026
-4. The §18.2 WhatsApp session with the doctor — six decisions, ~30 minutes, gates Meta verification
-5. Free-tier risks accepted in writing (`HOSTING.md` §9) — **not a gate on starting.** `PLAN.md` §18.1 deferred this on 16 Aug 2026: build local, decide with a working system in the room. Due around M4
-6. ~~Check the model number of the clinic's A4 printer~~ — **settled 17 Aug 2026: an HP Smart Tank 580.** Wi-Fi and Mopria-certified, so nothing to buy; Bluetooth alone would not have worked (`TABLET.md` §1). Two things for the tablet setup: it has **no Ethernet**, and its Wi-Fi is **2.4 GHz only**, so both tablets must sit on that band with AP isolation off or discovery fails while everything still pings
-7. Meta business verification started (day 1, and `WHATSAPP.md` §0 may show it is not needed at all)
-8. ~~**`BUILD.md` §0 — Q15, multi-tenant or not**~~ — **single-tenant, decided 16 Aug 2026.** The first migration is applied
-9. §20 signed
+The SQLite database is created at `data/jayamurugan-clinic.db` and is ignored by
+Git. Stop the app before copying the `data` folder as a backup. Keep backup
+copies encrypted and test restoring one before relying on the system.

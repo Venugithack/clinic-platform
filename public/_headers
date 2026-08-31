@@ -1,0 +1,7 @@
+# Applied by Cloudflare at the edge, because a static export has no server to
+# set them. These are the same four the Next config used to send.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: same-origin
+  Permissions-Policy: camera=(self), microphone=(), geolocation=()
