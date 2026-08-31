@@ -171,7 +171,30 @@ export const db = {
  */
 export async function transaction<T>(work: () => Promise<T>): Promise<T> {
   await ready()
-  return sql().begin((t) => openTransaction.run(t, work)) as Promise<T>
+  return sql().begin((t) =>
+    openTransaction.run(t, async () => {
+      const value = await work()
+
+      // Bumped inside the same transaction as the change, so the counter can
+      // never claim a write that rolled back — and done here rather than at
+      // nineteen call sites, so a new command cannot forget to do it.
+      await t`update clinic_revision
+              set revision = revision + 1, changed_at = ${now()}
+              where id = 1`
+
+      return value
+    }),
+  ) as Promise<T>
+}
+
+/**
+ * What the tablets poll. One row, one column, no joins.
+ */
+export async function currentRevision(): Promise<number> {
+  const row = (await db
+    .prepare('select revision from clinic_revision where id = 1')
+    .get()) as { revision: string | number } | undefined
+  return Number(row?.revision ?? 0)
 }
 
 const now = () => new Date().toISOString()
@@ -442,6 +465,19 @@ const SCHEMA = `
     created_at text not null
   );
 
+  -- One row, one number, bumped by every transaction.
+  --
+  -- The tablets poll for changes and the snapshot costs sixteen queries to
+  -- build. Asking "has anything happened?" costs one, and on a quiet afternoon
+  -- the answer is no — which is the difference between about 150,000 queries a
+  -- day and about 10,000, and therefore the difference between paying for the
+  -- database gateway and not.
+  create table if not exists clinic_revision (
+    id integer primary key,
+    revision bigint not null default 0,
+    changed_at text not null
+  );
+
   create table if not exists audit_events (
     id text primary key,
     actor_id text not null references staff(id),
@@ -466,6 +502,9 @@ async function prepareDatabase(): Promise<void> {
 
   // One worker seeds; the others wait and find the staff already there. The
   // key is arbitrary and constant — it only has to be the same in every worker.
+  await sql()`insert into clinic_revision (id, revision, changed_at)
+                values (1, 0, ${now()}) on conflict (id) do nothing`
+
   await sql().begin(async (t) => {
     await t`select pg_advisory_xact_lock(4132024)`
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
 import { BusyContext, type ActionRunner } from './clinic-context'
 import {
@@ -99,15 +99,35 @@ export function ClinicApp() {
   const [view, setView] = useState<View>('overview')
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // The revision the screen is showing. A ref rather than state because it
+  // must not re-create the poll on every tick.
+  const revision = useRef<number | null>(null)
+
   const loadSnapshot = useCallback(async (silent = false) => {
     try {
-      const response = await fetch('/api/snapshot', { cache: 'no-store' })
+      // Telling the server what we already have lets it answer "nothing new" in
+      // one query instead of rebuilding the whole clinic in sixteen. Most polls
+      // in a clinic day are that answer.
+      const since = revision.current
+      const query = silent && since !== null ? `?since=${since}` : ''
+
+      const response = await fetch(`/api/snapshot${query}`, { cache: 'no-store' })
       if (response.status === 401) {
         setData(null)
         return
       }
-      const result = (await response.json()) as { ok: boolean; snapshot?: ClinicSnapshot }
-      if (result.ok && result.snapshot) setData(result.snapshot)
+
+      const result = (await response.json()) as {
+        ok: boolean
+        revision?: number
+        unchanged?: boolean
+        snapshot?: ClinicSnapshot
+      }
+
+      if (!result.ok) return
+      if (typeof result.revision === 'number') revision.current = result.revision
+      if (result.unchanged) return
+      if (result.snapshot) setData(result.snapshot)
     } catch {
       if (!silent) setNotice({ tone: 'bad', message: 'The clinic server is not reachable.' })
     } finally {
