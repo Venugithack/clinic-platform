@@ -17,6 +17,7 @@ import {
 } from './shared-panels'
 import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
+import { ExpiringPanel } from './expiring-panel'
 import { ActionButton, Badge, Button, Card, CardBody, Notice, Numpad } from '@/components/ui'
 
 /**
@@ -42,6 +43,7 @@ type View =
   | 'staff'
   | 'clinic'
   | 'registers'
+  | 'expiring'
   | 'counter'
   | 'inventory'
   | 'suppliers'
@@ -60,6 +62,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
+    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
     { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
     { id: 'printer', label: 'Printer', eyebrow: 'Tablet printing' },
@@ -85,6 +88,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
     { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
+    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
     { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
@@ -426,6 +430,8 @@ function renderPanel(
       return <BedsPanel data={data} run={run} />
     case 'billing':
       return <BillingPanel data={data} run={run} />
+    case 'expiring':
+      return <ExpiringPanel data={data} run={run} />
     case 'registers':
       return <RegistersPanel data={data} />
     case 'clinic':
