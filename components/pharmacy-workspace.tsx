@@ -549,6 +549,18 @@ export function InventoryPanel({
                     <option value="unknown">Unknown</option>
                   </Select>
                 </Field>
+                <Field
+                  label="Schedule"
+                  hint="What the drug legally is. H1 puts every dispense into the register an inspector asks for — leave it unset and it will be missing from that register."
+                >
+                  <Select name="schedule" defaultValue="unset">
+                    <option value="unset">Not set</option>
+                    <option value="OTC">OTC</option>
+                    <option value="H">Schedule H</option>
+                    <option value="H1">Schedule H1</option>
+                    <option value="X">Schedule X</option>
+                  </Select>
+                </Field>
                 <Field label="Preferred supplier">
                   <Select name="preferredSupplierId" defaultValue="">
                     <option value="">None</option>

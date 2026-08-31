@@ -3,6 +3,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { BedView, ClinicSnapshot, PatientView, Role } from '@/lib/types'
 import { useBusy, type ActionRunner } from './clinic-context'
+import { callApi } from '@/lib/api'
 import {
   ActionButton,
   Badge,
@@ -1100,4 +1101,176 @@ export function ClinicLetterhead({
       ) : null}
     </header>
   )
+}
+
+/**
+ * The Schedule H1 register.
+ *
+ * Required by the Drugs and Cosmetics Rules and retained three years. An
+ * inspector asks for a date range and expects a document, so this is a date
+ * range and a document — the letterhead prints above it and the app chrome
+ * does not print at all.
+ *
+ * It reports its own gaps rather than looking complete. A register quietly
+ * missing entries is the failure that matters: nobody discovers it until
+ * somebody official is standing at the counter.
+ */
+export function RegistersPanel({ data }: { data: ClinicSnapshot }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const monthStart = `${today.slice(0, 7)}-01`
+
+  const [from, setFrom] = useState(monthStart)
+  const [to, setTo] = useState(today)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<RegisterResult | null>(null)
+
+  async function load(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault()
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await callApi(`register?from=${from}&to=${to}`)
+      const body = (await response.json()) as RegisterResult & { ok: boolean; message?: string }
+      if (!body.ok) setError(body.message ?? 'The register could not be read.')
+      else setResult(body)
+    } catch {
+      setError('The clinic server is not reachable.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Stack>
+      <PageHeader
+        eyebrow="Registers"
+        title="Schedule H1"
+        sub="Date, patient and address, drug, quantity, prescriber — retained three years"
+        action={
+          result ? (
+            <Button onClick={() => window.print()} title="Opens this tablet's own print sheet">
+              Print register
+            </Button>
+          ) : null
+        }
+      />
+
+      <div data-print="hide">
+        <Card>
+          <CardBody>
+            <form onSubmit={load} className="flex flex-wrap items-end gap-3">
+              <Field label="From">
+                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              </Field>
+              <Field label="To">
+                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              </Field>
+              <ActionButton type="submit" variant="primary" busy={loading} busyLabel="Reading…">
+                Show the register
+              </ActionButton>
+            </form>
+
+            {error ? (
+              <div className="mt-3">
+                <Notice tone="bad">{error}</Notice>
+              </div>
+            ) : null}
+          </CardBody>
+        </Card>
+      </div>
+
+      {result ? (
+        <>
+          {result.unsetMedicines > 0 ? (
+            <div data-print="hide">
+              <Notice tone="bad">
+                {result.unsetMedicines} medicine{result.unsetMedicines === 1 ? ' has' : 's have'} no
+                schedule recorded, so {result.unsetMedicines === 1 ? 'it is' : 'they are'} missing
+                from this register whether {result.unsetMedicines === 1 ? 'it belongs' : 'they belong'}{' '}
+                in it or not. Set the schedule on each from the Inventory screen before treating this
+                as complete.
+              </Notice>
+            </div>
+          ) : null}
+
+          {result.counterExceptions.length > 0 ? (
+            <Notice tone="bad">
+              {result.counterExceptions.length} Schedule H1 item
+              {result.counterExceptions.length === 1 ? '' : 's'} left on a counter sale rather than
+              against a prescription. An inspector will find these.
+            </Notice>
+          ) : null}
+
+          <Card data-print="sheet">
+            <ClinicLetterhead settings={data.settings} kind="register" />
+            <CardHeader
+              title="Schedule H1 register"
+              sub={`${result.from} to ${result.to} · ${result.rows.length} ${
+                result.rows.length === 1 ? 'entry' : 'entries'
+              }`}
+            />
+            <CardBody>
+              {result.rows.length === 0 ? (
+                <EmptyState
+                  title="No Schedule H1 medicine left the counter in this range"
+                  direction="Widen the dates, or check that the medicines you expect here have their schedule set to H1 on the Inventory screen."
+                />
+              ) : (
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Date</TH>
+                      <TH>Patient</TH>
+                      <TH>Address</TH>
+                      <TH>Drug</TH>
+                      <TH num>Qty</TH>
+                      <TH>Batch</TH>
+                      <TH>Prescriber</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {result.rows.map((row, index) => (
+                      <TR key={`${row.prescriptionId}-${index}`}>
+                        <TD>
+                          {row.date} {row.time}
+                        </TD>
+                        <TD>{row.patientName}</TD>
+                        <TD>{row.patientAddress || '—'}</TD>
+                        <TD>{row.drug}</TD>
+                        <TD num>
+                          {row.quantity} {row.unit}
+                        </TD>
+                        <TD>{row.batchNumber}</TD>
+                        <TD>{row.prescriber}</TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              )}
+            </CardBody>
+          </Card>
+        </>
+      ) : null}
+    </Stack>
+  )
+}
+
+interface RegisterResult {
+  from: string
+  to: string
+  rows: Array<{
+    date: string
+    time: string
+    patientName: string
+    patientAddress: string
+    drug: string
+    batchNumber: string
+    quantity: number
+    unit: string
+    prescriber: string
+    prescriptionId: string
+  }>
+  unsetMedicines: number
+  counterExceptions: Array<{ date: string; drug: string; quantity: number; receiptNumber: string }>
 }
