@@ -1,5 +1,6 @@
 import type {
   AppointmentView,
+  PatientRecordView,
   StockTakeHistoryView,
   StockTakeLineView,
   StockTakeView,
@@ -30,6 +31,19 @@ import { doctorLoggedIn } from './auth.ts'
 import { whatsappStatus } from './whatsapp.ts'
 
 type Row = Record<string, unknown>
+
+/**
+ * Midnight in the clinic, as the ISO string the text timestamp columns hold.
+ *
+ * Not `current_date`: the server thinks in UTC and the clinic thinks in IST,
+ * and between midnight and 05:30 the two disagree about which day it is. A
+ * queue that empties itself at midnight because the database changed its mind
+ * about the date is the kind of bug nobody reports and everybody works around.
+ */
+const CLINIC_DAY_START = `to_char(
+  (date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')
+    at time zone 'UTC',
+  'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 const all = async (sql: string, ...params: unknown[]) =>
   (await db.prepare(sql).all(...params)) as Row[]
 const text = (value: unknown) => String(value ?? '')
@@ -228,31 +242,48 @@ export async function readSnapshot(session: SessionView): Promise<ClinicSnapshot
     phone: text(r.phone), address: text(r.address), whatsappConsent: flag(r.whatsapp_consent), createdAt: text(r.created_at),
   }))
 
+  // Anything still waiting or in consult, whatever day it was booked — a
+  // patient sitting in the corridor must never drop off the queue because the
+  // date rolled over — plus everything else from today, so the day reads back.
   const appointments: AppointmentView[] = (await all(`select a.*,p.name patient_name from appointments a
-    join patients p on p.id=a.patient_id order by a.scheduled_at`)).map((r) => ({
+    join patients p on p.id=a.patient_id
+    where a.status in ('waiting','in_consult') or a.scheduled_at >= ${CLINIC_DAY_START}
+    order by a.scheduled_at`)).map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), token: text(r.token),
       reason: text(r.reason), scheduledAt: text(r.scheduled_at), status: text(r.status) as AppointmentView['status'],
     }))
 
+  // Enough for the queue to show each waiting patient their latest reading.
+  // A patient's full run of readings comes with their record.
   const vitals: VitalView[] = (await all(`select v.*,s.name recorded_by_name from vitals v
-    join staff s on s.id=v.recorded_by order by v.recorded_at desc`)).map((r) => ({
+    join staff s on s.id=v.recorded_by order by v.recorded_at desc limit 200`)).map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), bp: text(r.bp), temperature: num(r.temperature), pulse: num(r.pulse),
       spo2: num(r.spo2), weight: num(r.weight), recordedBy: text(r.recorded_by_name), recordedAt: text(r.recorded_at),
     }))
 
   const encounters: EncounterView[] = (await all(`select e.*,p.name patient_name,s.name doctor_name from encounters e
-    join patients p on p.id=e.patient_id join staff s on s.id=e.doctor_id order by e.created_at desc`)).map((r) => ({
+    join patients p on p.id=e.patient_id join staff s on s.id=e.doctor_id
+    order by e.created_at desc limit 100`)).map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), doctorName: text(r.doctor_name),
       diagnosis: text(r.diagnosis), notes: text(r.notes), advice: text(r.advice), createdAt: text(r.created_at),
     }))
 
+  // Every prescription still waiting to be dispensed, however old, plus a
+  // recent tail. The pharmacy queue is the one list that must be complete:
+  // a prescription that scrolls off it is a patient who never got their
+  // medicine.
   const prescriptions: PrescriptionView[] = (await all(`select rx.*,p.name patient_name,s.name doctor_name from prescriptions rx
-    join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id order by rx.signed_at desc`)).map((r) => ({
+    join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
+    where rx.dispensed_at is null or rx.signed_at >= ${CLINIC_DAY_START}
+    order by rx.signed_at desc`)).map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), doctorName: text(r.doctor_name),
       items: JSON.parse(text(r.items_json)) as PrescriptionItemView[], signedAt: text(r.signed_at), dispensedAt: optional(r.dispensed_at),
     }))
 
+  // Same rule, same reason: an unpaid bill is money owed to the clinic and
+  // must never age out of the list. Paid ones are today's, for the day book.
   const bills: BillView[] = (await all(`select b.*,p.name patient_name from bills b join patients p on p.id=b.patient_id
+    where b.status = 'unpaid' or b.created_at >= ${CLINIC_DAY_START}
     order by b.created_at desc`)).map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), label: text(r.label), amount: num(r.amount),
       status: text(r.status) as BillView['status'], paymentMethod: optional(r.payment_method) as BillView['paymentMethod'],
@@ -410,5 +441,64 @@ export async function readSnapshot(session: SessionView): Promise<ClinicSnapshot
     settings: await readSettings(),
     doctorPresent: await doctorLoggedIn(),
     whatsapp: whatsappStatus(),
+  }
+}
+
+/**
+ * One patient's whole history, read only when somebody opens that patient.
+ *
+ * These four lists grow at several rows per visit and never shrink, which is
+ * why they are no longer in the snapshot. Fetched here they are bounded by one
+ * person's lifetime of care rather than by the whole clinic's.
+ */
+export async function readPatientRecord(patientId: string): Promise<PatientRecordView> {
+  const [encounters, prescriptions, vitals, bills] = await Promise.all([
+    all(
+      `select e.*,p.name patient_name,s.name doctor_name from encounters e
+         join patients p on p.id=e.patient_id join staff s on s.id=e.doctor_id
+        where e.patient_id=? order by e.created_at desc`,
+      patientId,
+    ),
+    all(
+      `select rx.*,p.name patient_name,s.name doctor_name from prescriptions rx
+         join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
+        where rx.patient_id=? order by rx.signed_at desc`,
+      patientId,
+    ),
+    all(
+      `select v.*,s.name recorded_by_name from vitals v join staff s on s.id=v.recorded_by
+        where v.patient_id=? order by v.recorded_at desc`,
+      patientId,
+    ),
+    all(
+      `select b.*,p.name patient_name from bills b join patients p on p.id=b.patient_id
+        where b.patient_id=? order by b.created_at desc`,
+      patientId,
+    ),
+  ])
+
+  return {
+    patientId,
+    encounters: encounters.map((r) => ({
+      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name),
+      doctorName: text(r.doctor_name), diagnosis: text(r.diagnosis), notes: text(r.notes),
+      advice: text(r.advice), createdAt: text(r.created_at),
+    })),
+    prescriptions: prescriptions.map((r) => ({
+      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name),
+      doctorName: text(r.doctor_name), items: JSON.parse(text(r.items_json)),
+      signedAt: text(r.signed_at), dispensedAt: optional(r.dispensed_at),
+    })),
+    vitals: vitals.map((r) => ({
+      id: text(r.id), patientId: text(r.patient_id), bp: text(r.bp), temperature: num(r.temperature),
+      pulse: num(r.pulse), spo2: num(r.spo2), weight: num(r.weight),
+      recordedBy: text(r.recorded_by_name), recordedAt: text(r.recorded_at),
+    })),
+    bills: bills.map((r) => ({
+      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name),
+      label: text(r.label), amount: num(r.amount), status: text(r.status) as 'unpaid' | 'paid',
+      paymentMethod: optional(r.payment_method) as 'cash' | 'upi' | 'card' | undefined,
+      createdAt: text(r.created_at), paidAt: optional(r.paid_at),
+    })),
   }
 }

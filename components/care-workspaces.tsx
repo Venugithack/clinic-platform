@@ -3,6 +3,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import type { ClinicSnapshot, PrescriptionItemView, VitalView } from '@/lib/types'
 import { useBusy, type ActionRunner } from './clinic-context'
+import { usePatientRecord } from './use-patient-record'
 import { ClinicLetterhead, Stack } from './shared-panels'
 import {
   ActionButton,
@@ -269,11 +270,15 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
   const patientAppointment = data.appointments.find(
     (item) => item.patientId === patientId && item.status !== 'done' && item.status !== 'cancelled',
   )
-  const latestVitals = data.vitals.find((item) => item.patientId === patientId)
-  const patientHistory = useMemo(
-    () => data.encounters.filter((item) => item.patientId === patientId),
-    [data.encounters, patientId],
-  )
+  // This patient's own history, fetched when they are opened rather than
+  // shipped to every tablet in the clinic on every tap.
+  const { record, loading: recordLoading, refresh: refreshRecord } = usePatientRecord(patientId)
+
+  // The reading taken at the door today is in the snapshot; the record has the
+  // whole run. Either way the newest one is the one the doctor wants.
+  const latestVitals =
+    record.vitals[0] ?? data.vitals.find((item) => item.patientId === patientId)
+  const patientHistory = record.encounters
   const activeMedicines = data.medicines.filter((medicine) => medicine.active)
 
   function addMedicine() {
@@ -300,6 +305,9 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
     event.preventDefault()
     const form = event.currentTarget
     const values = new FormData(form)
+    // The consultation just written belongs to this patient's history, which
+    // the snapshot no longer carries — so ask for it again rather than waiting
+    // for a screen that will never update itself.
     const result = await run('save_consultation', {
       patientId,
       appointmentId: patientAppointment?.id,
@@ -310,6 +318,7 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
       prescriptionItems: items,
     })
     if (result.ok) {
+      refreshRecord()
       form.reset()
       setItems([])
       setPatientId('')
@@ -486,6 +495,8 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
                 <p className="text-[13px] text-ink-2">
                   Choose a patient to read what was written last time.
                 </p>
+              ) : recordLoading ? (
+                <p className="text-[13px] text-ink-2">Reading this patient&rsquo;s history…</p>
               ) : patientHistory.length === 0 ? (
                 <p className="text-[13px] text-ink-2">No previous consultations for this patient.</p>
               ) : (
@@ -513,6 +524,11 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
 
 export function RecordsPanel({ data }: { data: ClinicSnapshot }) {
   const [openId, setOpenId] = useState<string | null>(null)
+
+  // Opening one consultation needs that patient's prescriptions, which are no
+  // longer shipped with everything else.
+  const openEncounter = data.encounters.find((encounter) => encounter.id === openId)
+  const { record: openRecord } = usePatientRecord(openEncounter?.patientId ?? '')
 
   return (
     <Stack>
@@ -575,7 +591,7 @@ export function RecordsPanel({ data }: { data: ClinicSnapshot }) {
         ? data.encounters
             .filter((encounter) => encounter.id === openId)
             .map((encounter) => {
-              const rx = data.prescriptions.filter(
+              const rx = openRecord.prescriptions.filter(
                 (item) => item.patientId === encounter.patientId,
               )
               return (

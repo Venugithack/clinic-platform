@@ -346,6 +346,22 @@ export interface ClinicSettingsView {
   complete: boolean
 }
 
+/**
+ * One patient's whole history, fetched when somebody opens that patient.
+ *
+ * This does not travel in the snapshot. Consultations, prescriptions, vitals
+ * and bills accumulate at several rows per visit and never stop, so shipping
+ * all of them to every tablet on every tap made the clinic slower every month
+ * it stayed open.
+ */
+export interface PatientRecordView {
+  patientId: string
+  encounters: EncounterView[]
+  prescriptions: PrescriptionView[]
+  vitals: VitalView[]
+  bills: BillView[]
+}
+
 export interface ClinicSnapshot {
   session: SessionView
   staff: StaffView[]
