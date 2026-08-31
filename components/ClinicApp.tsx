@@ -11,7 +11,6 @@ import {
   OverviewPanel,
   PatientsPanel,
   PrinterPanel,
-  StaffPanel,
   ClinicSettingsPanel,
   RegistersPanel,
 } from './shared-panels'
@@ -20,6 +19,7 @@ import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pha
 import { ExpiringPanel } from './expiring-panel'
 import { DayBookPanel } from './day-book-panel'
 import { StockTakePanel } from './stock-take-panel'
+import { StaffPanel } from './staff-panel'
 import { ActionButton, Badge, Button, Card, CardBody, Notice, Numpad } from '@/components/ui'
 
 /**

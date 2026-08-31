@@ -942,6 +942,63 @@ export async function runCommand(session: SessionView, action: string, payload: 
       }
     }
 
+    case 'update_staff': {
+      requireRole(session, 'admin')
+      const staffId = value(payload, 'staffId')
+      const roles = Array.isArray(payload.roles)
+        ? payload.roles.filter((role): role is Role =>
+            ['admin', 'doctor', 'nurse', 'pharmacy'].includes(String(role)),
+          )
+        : []
+      if (roles.length === 0) throw new Error('Choose at least one role.')
+
+      // The clinic must keep somebody who can add staff, reset a PIN and edit
+      // the settings. Signing that away from your own account is a locked door
+      // with the key on the inside.
+      if (staffId === session.staffId && !roles.includes('admin')) {
+        throw new Error('You cannot remove your own admin role. Give it to someone else first.')
+      }
+
+      const username = value(payload, 'username').toLowerCase()
+      const name = value(payload, 'name')
+      let rolesChanged = false
+
+      await transaction(async () => {
+        const current = (await db
+          .prepare('select roles_json from staff where id=?')
+          .get(staffId)) as { roles_json: string } | undefined
+        if (!current) throw new Error('That staff member was not found.')
+
+        const clash = await db
+          .prepare('select id from staff where username=? and id<>?')
+          .get(username, staffId)
+        if (clash) throw new Error(`The username @${username} is already taken.`)
+
+        const before = (JSON.parse(String(current.roles_json)) as string[]).slice().sort().join(',')
+        rolesChanged = before !== roles.slice().sort().join(',')
+
+        await db
+          .prepare('update staff set name=?,username=?,phone=?,roles_json=? where id=?')
+          .run(name, username, optional(payload, 'phone') ?? '', JSON.stringify(roles), staffId)
+
+        // A session carries what the person may do. Correcting a phone number
+        // should not sign anyone out, but a demotion that leaves them holding
+        // their old powers until they happen to sign out is not a demotion.
+        if (rolesChanged) await db.prepare('delete from sessions where staff_id=?').run(staffId)
+
+        await audit(
+          session.staffId, 'staff.updated', 'staff', staffId,
+          `Updated ${name} (${roles.join(', ')})`,
+        )
+      })
+
+      return {
+        message: rolesChanged
+          ? 'Saved. Their roles changed, so they will be asked to sign in again.'
+          : 'Saved.',
+      }
+    }
+
     case 'toggle_staff': {
       requireRole(session, 'admin')
       const staffId = value(payload, 'staffId')
