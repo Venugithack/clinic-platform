@@ -1,19 +1,21 @@
 /**
- * The primitives. Every one is presentational, none owns product state, and
- * none of them knows what a prescription is.
+ * The clinic's design system — "ink on ledger stock".
  *
- * Screens import from here rather than reaching for a raw <div> with a border,
- * which is what keeps Law 1 true: there is exactly one place that decides what
- * a 1px rule and a 2px document look like.
+ * Adapted from `components/ui/` in the hospital application in the parent
+ * project. These are local copies on purpose: the two projects share a visual
+ * language, never a runtime, an import or a package.
  */
-export { Badge } from './Badge';
-export { Button } from './Button';
-export { Card, CardBody, CardHeader } from './Card';
-export { Drawer } from './Drawer';
-export { EmptyState } from './EmptyState';
-export { Field, Input, Select, Textarea } from './Field';
-export { Modal } from './Modal';
-export { Notice } from './Notice';
-export { PageHeader } from './PageHeader';
-export { Table, TBody, TD, TH, THead, TR } from './Table';
-export { Token } from './Token';
+export { Badge, type Tone } from './Badge'
+export { ActionButton, Button } from './Button'
+export { Card, CardBody, CardHeader } from './Card'
+export { ConfirmButton } from './ConfirmButton'
+export { Disclosure } from './Disclosure'
+export { EmptyState } from './EmptyState'
+export { CheckRow, Field, FieldRow, Input, Select, Textarea } from './Field'
+export { Modal } from './Modal'
+export { Numpad } from './Numpad'
+export { Notice } from './Notice'
+export { PageHeader, SectionHeader } from './PageHeader'
+export { Table, TBody, TD, TH, THead, TR } from './Table'
+export { Token } from './Token'
+export { formatDate, formatDay, formatExpiry, money, words } from './format'

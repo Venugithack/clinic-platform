@@ -1,54 +1,33 @@
 {
-  "name": "clinic-platform",
-  "version": "0.0.0",
+  "name": "jayamurugan-clinic",
+  "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.33.0",
+  "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
-    "start": "node scripts/serve-out.mjs",
+    "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . && node scripts/lint-css-hover.mjs",
-    "test:unit": "vitest run",
-    "test:db": "./scripts/db-test.sh",
-    "test:e2e": "./scripts/dev-stack.sh --reset && playwright test",
-    "test": "pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:db && pnpm test:first-run && pnpm test:e2e",
-    "db:start": "./scripts/db-start.sh",
-    "db:stop": "./scripts/db-stop.sh",
-    "db:reset": "./scripts/db-reset.sh",
-    "db:migrate": "./scripts/db-migrate.sh",
-    "db:backup": "./scripts/db-backup.sh",
-    "db:restore-drill": "./scripts/db-restore-drill.sh",
-    "test:first-run": "./scripts/first-run-drill.sh",
-    "test:clinic-day": "./scripts/dev-stack.sh --reset && playwright test e2e/m15-clinic-day.spec.ts",
-    "test:go-live": "./scripts/dev-stack.sh --reset && playwright test e2e/m15-clinic-day.spec.ts e2e/m5-gate.spec.ts",
-    "go-live:check": "node scripts/go-live-check.mjs"
+    "test": "node --test tests/password.test.ts tests/order-status.test.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.112.3",
-    "next": "16.3.1",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "csv-parse": "^6.1.0",
+    "next": "^16.3.0",
+    "postgres": "^3.4.9",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^26.2.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@types/ws": "^8.18.1",
-    "eslint": "^10.8.1",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "pg": "^8.23.0",
-    "supabase": "2.114.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "agent-browser": "^0.35.1",
     "tailwindcss": "^4.3.3",
-    "typescript": "~5.9.3",
-    "typescript-eslint": "^8.67.0",
-    "vitest": "^4.1.10",
-    "ws": "^8.21.3"
+    "typescript": "^5.9.0"
   }
 }

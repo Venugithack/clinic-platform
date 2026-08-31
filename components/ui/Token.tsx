@@ -1,67 +1,61 @@
 /**
- * The token box — the signature object of the system.
+ * The token box — the signature object of the reference system, and the one
+ * string the patient, the desk and the doctor all say out loud.
  *
- * `T│004` is the one string the patient, the counter and the doctor all say out
- * loud. The internal rule between the halves is the whole point: they are two
- * different facts. The prefix carries the kind, the serial carries the
- * position, and the rule is what stops them being read as one number.
+ * Every sequenced identifier in this clinic has the same `PREFIX-0001` shape:
+ * queue tokens (`JMC-0004`), OTC receipts, purchase orders. The internal rule
+ * between prefix and serial is the point — they are two different facts.
  *
- * Deliberately monochrome. It sits beside status badges on every screen, so it
- * must never compete with them for colour. `active` inverts it to solid ink —
- * the system's way of saying "happening right now", and the only element in the
- * clinic that ever does it.
- *
- * The clinic has no departments, so the prefix is optional: the queue shows a
- * bare serial, while a prescription is RX│1042 and a bill BILL│0007.
+ * Monochrome by design: it appears beside status badges everywhere, so it must
+ * never compete with them for colour. `active` inverts to solid ink, which is
+ * how this system says "happening right now".
  */
+
+type Size = 'sm' | 'md' | 'lg'
+
+const SIZES: Record<Size, { box: string; prefix: string; serial: string }> = {
+  sm: { box: 'border', prefix: 'px-1.5 py-0.5 text-[10px]', serial: 'px-1.5 py-0.5 text-[13px]' },
+  md: { box: 'border-2', prefix: 'px-2 py-1 text-[11px]', serial: 'px-2.5 py-1 text-[17px]' },
+  lg: { box: 'border-2', prefix: 'px-3 py-2 text-[12px]', serial: 'px-4 py-2 text-[30px]' },
+}
+
+/** Splits `JMC-0004` into its two facts. Anything else is shown whole. */
+function split(code: string): { prefix: string; serial: string } {
+  const at = code.lastIndexOf('-')
+  if (at <= 0 || at === code.length - 1) return { prefix: '', serial: code }
+  return { prefix: code.slice(0, at), serial: code.slice(at + 1) }
+}
+
 export function Token({
-  prefix,
-  serial,
-  size = 'md',
+  code,
+  size = 'sm',
   active = false,
 }: {
-  prefix?: string;
-  serial: string | number;
-  size?: 'sm' | 'md' | 'lg';
-  active?: boolean;
+  /** The full identifier, e.g. `JMC-0004`. */
+  code: string
+  size?: Size
+  active?: boolean
 }) {
-  const box = active
-    ? 'border-ink bg-ink text-paper'
-    : 'border-ink bg-transparent text-ink';
-
-  const border = size === 'sm' ? 'border' : 'border-2';
-
-  const prefixSize = {
-    sm: 'px-1.5 text-[0.5rem]',
-    md: 'px-2 text-[0.625rem]',
-    lg: 'px-3 py-2 text-xs',
-  }[size];
-
-  const serialSize = {
-    sm: 'px-1.5 text-xs',
-    md: 'px-2.5 text-base',
-    lg: 'px-4 py-1.5 text-3xl',
-  }[size];
+  const { prefix, serial } = split(code)
+  const s = SIZES[size]
+  const ink = active ? 'border-ink bg-ink text-paper' : 'border-ink bg-transparent text-ink'
+  const divider = active ? 'border-paper/35' : 'border-rule'
 
   return (
-    // shrink-0: an identifier that ellipsises is a bug, not a layout.
     <span
-      className={`inline-flex shrink-0 items-stretch rounded-box ${border} ${box}`}
+      className={`inline-flex shrink-0 items-stretch rounded-box transition-colors duration-150 ${s.box} ${ink}`}
+      title={code}
     >
       {prefix ? (
         <span
-          className={`flex items-center border-r font-semibold tracking-[0.14em] ${prefixSize} ${
-            active ? 'border-paper/35' : 'border-rule'
-          }`}
+          className={`flex items-center border-r font-semibold tracking-[0.14em] ${divider} ${s.prefix}`}
         >
           {prefix}
         </span>
       ) : null}
-      <span
-        className={`tabular flex items-center font-mono font-medium ${serialSize}`}
-      >
+      <span className={`flex items-center font-mono font-medium tabular-nums ${s.serial}`}>
         {serial}
       </span>
     </span>
-  );
+  )
 }

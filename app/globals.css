@@ -1,152 +1,115 @@
 @import 'tailwindcss';
 
-/*
- * ─────────────────────────────────────────────────────────────────────────────
- * Ink on ledger stock — Jayamurugan Clinic
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * The system is the one described in the design brief: hierarchy by rule
- * weight, never elevation; colour reserved for meaning, never decoration. Two
- * laws, and everything below is a consequence of them.
- *
- *   Law 1 — no elevation.  There is not one box-shadow in this file, and there
- *           may not be one in a component either. Depth is a lie on paper; a
- *           register does not float above the desk. Hierarchy is 1px rule,
- *           2px ink, or an ink fill — in that order.
- *
- *   Law 2 — colour is semantic. One chromatic accent marks the single thing
- *           happening right now. Three status hues are reserved and never
- *           borrowed for emphasis, so a red thing means the same thing on
- *           every screen the clinic uses.
- *
- * THE PALETTE IS THE CLINIC'S OWN LOGO, read off the file rather than guessed:
- *
- *   teal    #015c54 → #01938d   the J and the wordmark   → structure, identity
- *   orange  #df5301 → #fe6f01   the M and the tagline    → the single accent
- *
- * Both are metallic gradients in the artwork, so each is a range. The flat
- * values below are the midpoints, with one deliberate correction: the accent
- * used for text is darkened from the logo's #f16001 to #c25000, because
- * #f16001 on the sheet is 3.3:1 and unreadable at 11px. The logo's own orange
- * survives untouched as --color-active-pure for the mark itself.
- *
- * The division of labour was a decision, not a default. Teal is the wordmark
- * ink, so teal carries structure — rails, rules, headings, selection. Orange is
- * the tagline highlight, so orange carries "now" — and appears at most once per
- * screen. Reversing them would put eight hours a day of saturated orange in
- * front of a pharmacist.
- *
- * THREE DELIBERATE DEPARTURES from the brief, each forced by TABLET.md:
- *
- *   1. Base type is 17px, not 14px. The brief sizes for a desk at laptop
- *      distance; this runs on a tablet on a stand, read at arm's length
- *      (TABLET.md §3). Root font-size carries it, so every rem-based utility
- *      scales with it and the ratios in the brief are preserved intact.
- *   2. Controls are 44px minimum and 56px when primary or destructive
- *      (TABLET.md §2 rule 2). The brief's 0.3rem buttons are mouse-sized.
- *      eslint tablet/min-touch-target fails the build over this.
- *   3. Every :hover lives inside @media (hover: hover). There is no cursor on
- *      a tablet, so a hover-only affordance is not subtle, it is absent
- *      (TABLET.md §2 rule 1). scripts/lint-css-hover.mjs fails the build.
- */
+/* ---------------------------------------------------------------------------
+   Design system — "ink on ledger stock"
+   Adopted from the hospital application in the parent project and adapted for
+   a tablet clinic. Derived from the artefacts this software replaces: the OPD
+   register, the pre-printed case sheet, the token board, the whiteboard bed
+   board. All four are ruled structure holding transcribed facts.
+
+   Two rules that hold the whole system together:
+   1. NO ELEVATION. Hierarchy is rule weight, never shadow.
+        1px rule   = an ordinary boundary
+        2px ink    = a record / document
+        ink fill   = active right now
+   2. COLOUR IS SEMANTIC. `active` marks the one thing happening now; free /
+      attn / stop are reserved for status. Nothing decorative is ever coloured.
+
+   The one deliberate departure from the reference: every control is sized for
+   a finger. The reference is a mouse-driven demo with 24px buttons; this runs
+   on 768–1024px tablets, so controls are floored at 44px (`--tap`) and the
+   type scale is nudged up a step. The visual language is unchanged — the same
+   rules, the same ink, the same tracked caps — only the touch geometry grows.
+--------------------------------------------------------------------------- */
 
 @theme {
-  /* ── Surfaces. The desk is coloured; the document on it is white. ──────── */
-  --color-paper: #e5e9e7;
-  --color-paper-2: #d8ddda;
-  --color-sheet: #fcfdfc;
+  /* Surfaces — the desk is warm and coloured, the document is white */
+  --color-paper: #e7e6e0;
+  --color-paper-2: #dcdbd3;
+  --color-sheet: #fcfcfb;
 
-  /* ── Ink. Teal-black, drawn from the wordmark — never #000. ───────────── */
-  --color-ink: #10201d;
-  --color-ink-2: #4a5f5b;
-  --color-ink-3: #7d908c;
-  --color-rule: #c6cfcc;
+  /* Ink */
+  --color-ink: #191c1a;
+  --color-ink-2: #5a6260;
+  --color-ink-3: #8c918d;
+  --color-rule: #c9c8c0;
 
-  /* ── Brand teal. Identity and structure: the rail, the masthead. ──────── */
-  --color-brand: #017c73;
-  --color-brand-deep: #01554e;
+  /* The single chromatic accent. Active state only — never a heading. */
+  --color-active: #c2620e;
+  --color-active-wash: #f6ead9;
 
-  /* ── The single chromatic accent. Active state only — never a heading. ── */
-  --color-active: #c25000;
-  --color-active-pure: #f16001;
-  --color-active-wash: #fbe9dc;
-
-  /* ── Status. Reserved. Never borrowed for emphasis. ───────────────────── */
-  --color-free: #2f6b41;
-  --color-free-wash: #e3ece5;
+  /* Status. Reserved. Never borrowed for emphasis. */
+  --color-free: #2f6b4f;
+  --color-free-wash: #e2ece5;
   --color-attn: #7a5b12;
   --color-attn-wash: #f1ead6;
   --color-stop: #a11d22;
   --color-stop-wash: #f5e2e2;
 
-  /* ── Type. Archivo for words, Plex Mono for anything read out or keyed. ─ */
   --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, 'Courier New', monospace;
 
-  /* A printed box, not a rounded card. This one number does more to keep the
-     system off-the-shelf than any colour choice. */
+  /* A hair of softness — a printed box, not an editorial hairline */
   --radius-box: 2px;
-
-  /* TABLET.md §2 rule 2. */
-  --spacing-touch: 2.75rem;
-  --spacing-touch-primary: 3.5rem;
 }
 
-:root {
-  /* 17px — arm's length, not laptop distance (TABLET.md §3). Every rem-based
-     utility inherits the scale, so the brief's proportions hold. */
-  font-size: 1.0625rem;
-  color-scheme: light;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* One step up from the reference's 14px — read at arm's length on a
+       tablet propped on a counter, not at 60cm on a desk. */
+    font-size: 15px;
+    line-height: 1.45;
+    margin: 0;
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Every number in this app is read in a column and compared to the one
+     above it. Tabular by default, everywhere, no exceptions. */
+  input,
+  table,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+
+  /* Staff work with a keyboard in front of a patient. Never remove focus. */
+  :focus-visible {
+    outline: 2px solid var(--color-active);
+    outline-offset: 2px;
+    border-radius: 1px;
+  }
+
+  [data-focus-ring='none']:focus-visible {
+    outline: none;
+  }
+
+  /* Checkboxes are tapped with a thumb, and the supplier linking screen is
+     nothing but checkboxes. Never smaller than this. */
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--color-active);
+    flex: 0 0 auto;
+  }
 }
 
-html,
-body {
-  height: 100%;
-  background: var(--color-paper);
-  color: var(--color-ink);
-  /* Landscape locked on both clinic screens: they are on stands, and rotation
-     is only a source of layout bugs (TABLET.md §2 rule 7). */
-  overscroll-behavior: none;
-}
-
-body {
-  font-family: var(--font-sans);
-  line-height: 1.45;
-  /* A shared tablet in a clinic should not offer text selection on chrome —
-     a stray long-press mid-consult is a real failure mode. */
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-input,
-textarea,
-[contenteditable] {
-  -webkit-user-select: text;
-  user-select: text;
-}
-
-/*
- * Every number in this app is read in a column and compared with the one above
- * it — a dose, a strip count, a price, a batch quantity. Tabular by default,
- * everywhere, no exceptions.
- */
-input,
-table,
-.font-mono,
-.tabular {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-}
-
-/*
- * The printed part of a case sheet, as opposed to the written-in part. Used for
- * EVERY label in the product — field labels, card titles, table headers,
- * section headings, the rail. That single decision is most of the reason the
- * screens look like one thing rather than twenty-eight things.
- */
+/* Small tracked caps. Labels a form field, a column, a section — the printed
+   part of a case sheet, as opposed to the written-in part. */
 @utility eyebrow {
-  font-size: 0.625rem;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -154,108 +117,11 @@ table,
   color: var(--color-ink-2);
 }
 
-/*
- * A ruled blank: what you write a value onto. This is why there is not a single
- * boxed input in the clinic.
- */
+/* A ruled blank: what you write a value onto. */
 @utility blank {
-  /* Transparent, not sheet-filled. A blank inside a card is already sitting on
-     sheet, so it reads the same there — but a blank placed directly on the
-     paper ground (the lock screen, the first-run form) would otherwise paint a
-     white slab and become the boxed input this system exists to avoid. What
-     you should see is the rule, and nothing else. */
-  background-color: transparent;
-  border: 0;
+  background-color: var(--color-sheet);
   border-bottom: 1.5px solid var(--color-ink);
-  border-radius: 0;
-  color: var(--color-ink);
-  /* Width is the caller's: a name blank runs the full column, an age blank is
-     three characters wide. Setting it here would need overriding at half the
-     call sites, and a utility you have to fight is a utility that loses. */
-}
-
-/*
- * Placeholders carry instructions in this app, not examples — "Needed on the
- * H1 register", "None known", "Or type the code". At ink-3 they measured
- * 3.30:1 on the sheet, which is below AA and genuinely hard to read on a
- * tablet at arm's length. ink-3 keeps its other jobs (chevrons, disabled text,
- * where 3:1 is the right bar); placeholder text is lifted to ink-2 at 6.69:1.
- *
- * It stays clearly lighter than a real value, which is ink at 16.52:1, so a
- * placeholder is still not mistaken for something somebody typed.
- */
-::placeholder {
-  color: var(--color-ink-2);
-  opacity: 1; /* Firefox dims placeholders by default; that is the bug again. */
-}
-
-/*
- * TABLET.md §2 rule 1: nothing depends on hover, because there is no cursor.
- *
- * Any hover styling in this codebase is written inside this query, so a device
- * without a pointer never has an affordance that exists only on hover. The
- * companion ESLint rule catches the JSX form; scripts/lint-css-hover.mjs
- * catches anything written directly in CSS.
- */
-@media (hover: hover) {
-  .hoverable:hover {
-    background: var(--color-paper-2);
-  }
-}
-
-/*
- * Staff work with a keyboard in front of a patient. Focus is never removed —
- * the one opt-out exists for programmatically-focused dialog panels, which
- * would otherwise show a ring nobody asked for.
- */
-:focus-visible {
-  outline: 2px solid var(--color-active);
-  outline-offset: 2px;
-  border-radius: 1px;
-}
-
-[data-focus-ring='none']:focus-visible {
-  outline: none;
-}
-
-::selection {
-  background: var(--color-ink);
-  color: var(--color-paper);
-}
-
-/*
- * Print is a first-class surface. Two things get printed — a prescription and a
- * bill — and both are documents the patient walks out holding, so the record
- * becomes the page and everything else disappears. Two attributes carry it:
- * chrome is data-print="hide", the document is data-print="sheet".
- *
- * A4 and 80mm both, tested on the clinic's own printer before go-live
- * (TABLET.md §8, PLAN.md §18 Q9).
- */
-@media print {
-  body {
-    background: white;
-    -webkit-user-select: text;
-    user-select: text;
-  }
-
-  .no-print,
-  [data-print='hide'] {
-    display: none !important;
-  }
-
-  [data-print='sheet'] {
-    max-width: none !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 0 !important;
-  }
-
-  /* Never split a prescription item or a bill line across two sheets. */
-  li,
-  tr {
-    break-inside: avoid;
-  }
+  border-radius: 2px 2px 0 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -263,6 +129,41 @@ table,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Chrome does not belong on paper.
+   A receipt, a bill and a supplier order are what staff actually print, and
+   each is a document someone walks out holding — so the record fills the page
+   and everything around it disappears. Printing stays native: window.print()
+   hands the tablet's own AirPrint/Mopria sheet to the operator. */
+@media print {
+  [data-print='hide'] {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+    font-size: 12px;
+  }
+
+  /* The record becomes the page: no app chrome, no card border. */
+  [data-print='sheet'] {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+
+  /* Never split a prescription item, a receipt line or an order line. */
+  li,
+  tr {
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 14mm;
   }
 }
