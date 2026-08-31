@@ -19,6 +19,7 @@ import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
 import { ExpiringPanel } from './expiring-panel'
 import { DayBookPanel } from './day-book-panel'
+import { StockTakePanel } from './stock-take-panel'
 import { ActionButton, Badge, Button, Card, CardBody, Notice, Numpad } from '@/components/ui'
 
 /**
@@ -46,6 +47,7 @@ type View =
   | 'registers'
   | 'expiring'
   | 'daybook'
+  | 'stocktake'
   | 'counter'
   | 'inventory'
   | 'suppliers'
@@ -66,6 +68,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
     { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
+    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
     { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
     { id: 'printer', label: 'Printer', eyebrow: 'Tablet printing' },
@@ -78,6 +81,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'consultation', label: 'Consult', eyebrow: 'Doctor workspace' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
     { id: 'records', label: 'Records', eyebrow: 'Clinical record' },
+    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count' },
   ],
   nurse: [
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
@@ -93,6 +97,7 @@ const NAV: Record<Role, NavItem[]> = {
     { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
     { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
+    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
     { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
@@ -435,6 +440,8 @@ function renderPanel(
       return <BedsPanel data={data} run={run} />
     case 'billing':
       return <BillingPanel data={data} run={run} />
+    case 'stocktake':
+      return <StockTakePanel data={data} run={run} />
     case 'daybook':
       return <DayBookPanel data={data} run={run} />
     case 'expiring':
