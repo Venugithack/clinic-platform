@@ -1,0 +1,19 @@
+{
+  // How Cloudflare serves the clinic.
+  //
+  // There is no `main` and no Worker script: nothing runs here on a request.
+  // The page is static files and everything it does goes to Supabase Edge
+  // Functions next to the database, which is what keeps this free — the same
+  // arrangement that made the previous application free, for the same reason.
+  //
+  // The Worker that briefly lived here (OpenNext, Hyperdrive, the whole Next
+  // server compiled into a Worker) is gone. It worked, but Workers allow about
+  // ten milliseconds of CPU per request and hashing one PIN needs a hundred, so
+  // roughly two sign-ins in five were cancelled as hung.
+  "name": "jayamurugan-clinic",
+  "compatibility_date": "2026-08-04",
+
+  "assets": {
+    "directory": "./out"
+  }
+}

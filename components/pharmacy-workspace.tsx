@@ -1,5 +1,6 @@
 'use client'
 
+import { callApi } from '@/lib/api'
 import { useMemo, useState, type FormEvent } from 'react'
 import type {
   ClinicSnapshot,
@@ -68,6 +69,26 @@ type Receipt = {
 }
 
 /* ------------------------------------------------------------------ counter */
+
+/**
+ * Fetch a CSV and hand it to the browser as a file.
+ *
+ * It used to be an ordinary link, which worked when the API was on this origin
+ * and the session was a cookie the browser attached by itself. The session is a
+ * bearer token now and an <a href> carries no headers, so the download has to
+ * be fetched and turned into a file here.
+ */
+async function downloadCsv(path: string, filename: string): Promise<void> {
+  const response = await callApi(path)
+  if (!response.ok) return
+
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
 
 export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const busy = useBusy()
@@ -472,18 +493,20 @@ export function InventoryPanel({
         sub={`${data.medicines.length} medicines · ${low.length} at or below reorder level`}
         action={
           <>
-            <a
-              href="/api/inventory/csv?template=1"
+            <button
+              type="button"
+              onClick={() => void downloadCsv('csv?template=1', 'jayamurugan-inventory-template.csv')}
               className="inline-flex min-h-[48px] items-center justify-center rounded-box border border-ink px-4 py-2 text-[13px] font-semibold tracking-[0.08em] uppercase transition-colors hover:bg-ink/8"
             >
               CSV template
-            </a>
-            <a
-              href="/api/inventory/csv"
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadCsv('csv', 'jayamurugan-inventory.csv')}
               className="inline-flex min-h-[48px] items-center justify-center rounded-box border border-ink px-4 py-2 text-[13px] font-semibold tracking-[0.08em] uppercase transition-colors hover:bg-ink/8"
             >
               Export CSV
-            </a>
+            </button>
           </>
         }
       />

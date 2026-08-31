@@ -27,3 +27,7 @@ npm-debug.log*
 # Supabase CLI scratch state (container secrets, link info). This app does not
 # use Supabase migrations — it owns its schema in lib/server/db.ts.
 /supabase/
+
+# Build output
+/out/
+/.open-next/

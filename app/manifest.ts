@@ -1,5 +1,8 @@
 import type { MetadataRoute } from 'next'
 
+// A static export has no server to generate this per request.
+export const dynamic = 'force-static'
+
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Jayamurugan Clinic',

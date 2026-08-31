@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
 import { BusyContext, type ActionRunner } from './clinic-context'
+import { callApi, writeToken } from '@/lib/api'
 import {
   AuditPanel,
   BedsPanel,
@@ -111,7 +112,7 @@ export function ClinicApp() {
       const since = revision.current
       const query = silent && since !== null ? `?since=${since}` : ''
 
-      const response = await fetch(`/api/snapshot${query}`, { cache: 'no-store' })
+      const response = await callApi(`snapshot${query}`)
       if (response.status === 401) {
         setData(null)
         return
@@ -148,9 +149,8 @@ export function ClinicApp() {
       setBusy(true)
       setNotice(null)
       try {
-        const response = await fetch('/api/command', {
+        const response = await callApi('command', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action, payload }),
         })
         const result = (await response.json()) as CommandResponse
@@ -175,7 +175,7 @@ export function ClinicApp() {
       try {
         const form = new FormData()
         form.set('file', file)
-        const response = await fetch('/api/inventory/csv', { method: 'POST', body: form })
+        const response = await callApi('csv', { method: 'POST', body: form })
         const result = (await response.json()) as CommandResponse
         setNotice({ tone: result.ok ? 'good' : 'bad', message: result.message })
         if (result.ok) await loadSnapshot(true)
@@ -195,14 +195,15 @@ export function ClinicApp() {
     setBusy(true)
     setNotice(null)
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await callApi('login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ staffId, pin }),
       })
-      const result = (await response.json()) as CommandResponse
+      const result = (await response.json()) as CommandResponse & { token?: string }
       if (!result.ok) setNotice({ tone: 'bad', message: result.message })
       else {
+        // The token is the session now — everything after this call carries it.
+        if (result.token) writeToken(result.token)
         setView('overview')
         await loadSnapshot(true)
       }
@@ -215,7 +216,10 @@ export function ClinicApp() {
 
   async function logout() {
     setBusy(true)
-    await fetch('/api/auth/logout', { method: 'POST' })
+    await callApi('logout', { method: 'POST' }).catch(() => {})
+    // Dropped locally whatever the server said: a sign-out that leaves the
+    // token on a shared tablet because the network hiccuped is not a sign-out.
+    writeToken(null)
     setData(null)
     setBusy(false)
     setNotice(null)
@@ -464,7 +468,7 @@ function LoginScreen({
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/auth/staff', { cache: 'no-store' })
+    callApi('staff')
       .then((response) => response.json() as Promise<{ ok: boolean; staff?: typeof staff; message?: string }>)
       .then((result) => {
         if (cancelled) return
