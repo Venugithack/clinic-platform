@@ -24,18 +24,20 @@
 const BASE = process.env.NEXT_PUBLIC_FUNCTIONS_URL ?? ''
 
 const TOKEN_KEY = 'jayamurugan_token'
+let volatileToken: string | null = null
 
 export function readToken(): string | null {
   try {
-    return globalThis.localStorage?.getItem(TOKEN_KEY) ?? null
+    return globalThis.localStorage?.getItem(TOKEN_KEY) ?? volatileToken
   } catch {
     // Private browsing, or storage disabled by policy. Sign-in still works for
     // as long as the tab is open; it just will not survive a reload.
-    return null
+    return volatileToken
   }
 }
 
 export function writeToken(token: string | null): void {
+  volatileToken = token
   try {
     if (token === null) globalThis.localStorage?.removeItem(TOKEN_KEY)
     else globalThis.localStorage?.setItem(TOKEN_KEY, token)

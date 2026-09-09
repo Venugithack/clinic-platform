@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
 import { BusyContext, type ActionRunner } from './clinic-context'
-import { callApi, writeToken } from '@/lib/api'
+import { callApi, readToken, writeToken } from '@/lib/api'
 import { navigationFor, ROLE_LABEL, type View } from './navigation'
 import { WorkspaceRouter } from './workspace-router'
 import {
@@ -32,6 +32,7 @@ import {
 export function ClinicApp() {
   const [data, setData] = useState<ClinicSnapshot | null>(null)
   const [initializing, setInitializing] = useState(true)
+  const [hasSession, setHasSession] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'good' | 'bad'; message: string } | null>(null)
   const [view, setView] = useState<View>('overview')
@@ -52,6 +53,7 @@ export function ClinicApp() {
       const response = await callApi(`snapshot${query}`)
       if (response.status === 401) {
         writeToken(null)
+        setHasSession(false)
         revision.current = null
         setData(null)
         return
@@ -92,13 +94,26 @@ export function ClinicApp() {
     }
   }, [])
 
+  // localStorage is a browser API, so discover a saved tablet session only
+  // after hydration. The nullable state keeps the opening screen stable until
+  // that check completes; false means do not poll a protected route.
+  useEffect(() => {
+    setHasSession(Boolean(readToken()))
+  }, [])
+
   // Four tablets share one clinic. A quiet poll is what keeps the queue on the
   // nurse's tablet and the counter's shelf figure telling the same story.
   useEffect(() => {
-    void loadSnapshot()
+    if (hasSession === null) return
+    if (!hasSession) {
+      setInitializing(false)
+      return
+    }
+
+    if (revision.current === null) void loadSnapshot()
     const timer = window.setInterval(() => void loadSnapshot(true), 15_000)
     return () => window.clearInterval(timer)
-  }, [loadSnapshot])
+  }, [hasSession, loadSnapshot])
 
   const run = useCallback<ActionRunner>(
     async (action, payload = {}) => {
@@ -123,6 +138,7 @@ export function ClinicApp() {
         // fifteen-second poll happens to notice.
         if (response.status === 401) {
           writeToken(null)
+          setHasSession(false)
           revision.current = null
           setData(null)
           return result
@@ -187,7 +203,10 @@ export function ClinicApp() {
       if (!result.ok) setNotice({ tone: 'bad', message: result.message })
       else {
         // The token is the session now — everything after this call carries it.
-        if (result.token) writeToken(result.token)
+        if (result.token) {
+          writeToken(result.token)
+          setHasSession(true)
+        }
         setView('overview')
 
         // The clinic came back with the PIN. Asking for it again would put a
@@ -212,6 +231,8 @@ export function ClinicApp() {
     // Dropped locally whatever the server said: a sign-out that leaves the
     // token on a shared tablet because the network hiccuped is not a sign-out.
     writeToken(null)
+    setHasSession(false)
+    revision.current = null
     setData(null)
     setBusy(false)
     setNotice(null)

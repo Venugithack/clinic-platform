@@ -1,0 +1,89 @@
+name: Backup
+
+# Supabase Free does not include downloadable daily backups. This workflow
+# keeps encrypted logical backups off-platform and proves nightly that the same
+# schema selection can be restored onto plain PostgreSQL 17.
+
+on:
+  schedule:
+    - cron: '30 3,6,9,12,15 * * *' # 09:00, 12:00, 15:00, 18:00, 21:00 IST
+    - cron: '30 16 * * *'          # nightly, 22:00 IST
+    - cron: '30 17 1 * *'          # monthly, 23:00 IST on the 1st
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Which retention bucket to write to
+        type: choice
+        options: [hourly, daily, monthly]
+        default: hourly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clinic-backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: pg_dump · age · R2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install PostgreSQL 17 client, age and rclone
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-client-17 age rclone
+
+      - name: Select retention bucket
+        id: kind
+        run: |
+          case "${{ github.event.schedule }}" in
+            '30 16 * * *')          echo "kind=daily"   >> "$GITHUB_OUTPUT" ;;
+            '30 17 1 * * *')        echo "kind=monthly" >> "$GITHUB_OUTPUT" ;;
+            '30 3,6,9,12,15 * * *') echo "kind=hourly"  >> "$GITHUB_OUTPUT" ;;
+            *)                      echo "kind=${{ inputs.kind || 'hourly' }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Dump, encrypt, upload and prune
+        env:
+          BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+          R2_BUCKET: r2:${{ secrets.R2_BUCKET }}
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_NO_CHECK_BUCKET: 'true'
+        run: |
+          test -n "${BACKUP_DB_URL}" || { echo "BACKUP_DB_URL is not set" >&2; exit 1; }
+          test -n "${BACKUP_AGE_RECIPIENT}" || { echo "BACKUP_AGE_RECIPIENT is not set" >&2; exit 1; }
+          ./scripts/db-backup.sh "${{ steps.kind.outputs.kind }}"
+
+  restore-drill:
+    name: restore drill
+    if: github.event.schedule == '30 16 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install PostgreSQL 17
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Dump live clinic, restore it and compare every clinic table
+        env:
+          BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
+          PGPORT: '54329'
+          PGHOST: '127.0.0.1'
+          PGDATABASE: clinic
+        run: |
+          test -n "${BACKUP_DB_URL}" || { echo "BACKUP_DB_URL is not set" >&2; exit 1; }
+          ./scripts/db-start.sh
+          ./scripts/db-restore-drill.sh
