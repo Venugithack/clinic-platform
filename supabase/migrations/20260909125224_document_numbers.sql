@@ -1,4 +1,4 @@
--- Document numbers that cannot be handed out twice.
+-- Document numbers that cannot be issued twice.
 --
 -- Every printed identifier this clinic uses — the OTC receipt, the purchase
 -- order, the supplier return note, the stock-take reference, the queue token a

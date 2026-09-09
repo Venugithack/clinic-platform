@@ -1,4 +1,4 @@
--- The browser never queries jmc through PostgREST. Edge Functions use the
+-- The browser does not query jmc through PostgREST. Edge Functions use the
 -- private database connection and enforce the clinic's role model themselves.
 -- Keep that boundary true even if API schema settings or default grants change.
 revoke all privileges on schema jmc from public, anon, authenticated, service_role;

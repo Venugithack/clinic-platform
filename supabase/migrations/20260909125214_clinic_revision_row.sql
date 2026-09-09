@@ -1,4 +1,4 @@
--- The revision counter's one row.
+-- The revision counter's single row.
 --
 -- `clinic_revision` was created with the rest of the schema and never given the
 -- single row it exists to hold, and nothing anywhere complains about that:
