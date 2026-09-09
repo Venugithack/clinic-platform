@@ -1,4 +1,4 @@
-# Next session — 29 Aug 2026 (small hours)
+# Archived: next session — 29 Aug 2026 (small hours)
 
 **Audience: you only.** The previous version of this file was written on 27 Aug
 and was overtaken within a day: 117 commits arrived from the other device, the

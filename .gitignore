@@ -1,26 +1,21 @@
 node_modules/
 .next/
 out/
-data/*.db
-data/*.db-shm
-data/*.db-wal
+.wrangler/
+.claude/
 .env
 .env.local
 *.tsbuildinfo
 npm-debug.log*
 
-# Reference copies kept beside the app, not part of it: the hospital
-# prototype this UI was adapted from, and the static HTML mockups.
-/hospital al in one platform/
-/clinic-ui-concept/
-
-# The SQLite database this app used before it moved to Postgres.
-/data/
-
-# Database dumps and env backups. The repository is PUBLIC — the previous
-# root .gitignore covered these and the app-level one did not, so promoting
-# this app to the root very nearly committed four clinic dumps.
-/.backups/
+# Local-only retired projects, mockups, databases, dumps, and environment
+# backups live here. The repository is PUBLIC, so none of this is committed.
+/archive/local/
+*.db
+*.db-shm
+*.db-wal
+*.sql.gz
+*.dump
 *.bak
 .env*.bak
 
@@ -34,5 +29,4 @@ npm-debug.log*
 /supabase/.branches/
 
 # Build output
-/out/
 /.open-next/

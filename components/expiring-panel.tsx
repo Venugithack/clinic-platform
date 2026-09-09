@@ -19,6 +19,7 @@ import {
   TH,
   THead,
   TR,
+  clinicToday,
 } from '@/components/ui'
 
 /**
@@ -45,10 +46,22 @@ export function ExpiringPanel({
   run: ActionRunner
 }) {
   const busy = useBusy()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = clinicToday()
 
   const rows = useMemo(() => {
     const supplierById = new Map(data.suppliers.map((s) => [s.id, s]))
+
+    // Two horizons, because the two deadlines are acted on at different notice.
+    // Expiry keeps its six months: that is how long ahead you can still plan to
+    // dispense a batch out of the way. A return deadline gets three, because
+    // returning stock is a job of days — box it, note it, hand it to the
+    // supplier's man on his next round — and a supplier with a generous
+    // twelve-month window would otherwise put a batch on this list a year
+    // before anybody could do anything but scroll past it. A list you scroll
+    // past is a list you stop reading, and the whole point of this screen is
+    // that it is short enough to act on.
+    const dispenseHorizon = addMonths(today, 6)
+    const returnHorizon = addMonths(today, 3)
 
     return data.batches
       .filter((batch) => batch.availableQuantity > 0)
@@ -74,8 +87,18 @@ export function ExpiringPanel({
           windowClosed: returnBy !== null && returnBy < today,
         }
       })
+      // A batch earns a place here by needing a decision, not by having a
+      // supplier who takes returns. The old test was `returnBy !== null`, which
+      // is every batch bought from every supplier with any window at all — a
+      // 2029 expiry from a supplier who accepts returns at six months has a
+      // return date, so it sat in "still returnable" sorted by a deadline three
+      // years out, and the short list the screen exists to be became the whole
+      // shelf. Having a deadline is not the same as being near one.
       .filter(
-        (row) => row.expired || row.returnBy !== null || row.batch.expiry <= addMonths(today, 6),
+        (row) =>
+          row.expired ||
+          row.batch.expiry <= dispenseHorizon ||
+          (row.returnBy !== null && row.returnBy <= returnHorizon),
       )
   }, [data.batches, data.suppliers, today])
 

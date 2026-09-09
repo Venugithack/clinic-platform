@@ -1,15 +1,28 @@
 name: CI
 
 # The previous workflow tested the application this repository used to hold: a
-# static Next export over Supabase, with a 34-file pgTAP suite and a restore
-# drill against a bare Postgres 17. That application is gone (it is still in the
-# history, up to f47273c) and none of those jobs describe what is here now.
+# Next server over Supabase, with a 34-file pgTAP suite and a restore drill
+# against a bare Postgres 17. That application is gone — it survives only in the
+# history — and none of those jobs describe what is here now.
 #
-# What is here now is a Node server that talks to Postgres. So this checks the
-# three things that can be checked without a database — the types, the unit
-# tests, and that it builds — and deliberately claims nothing about the rest.
-# A CI that pretends to cover the data layer is worse than one that admits it
-# does not.
+# What is here now is two halves that never share a process:
+#
+#   the page      static files. `next build` writes plain HTML, CSS and
+#                 JavaScript to out/ and Cloudflare serves them. Nothing runs
+#                 behind them, which is the whole reason the hosting is free.
+#   the backend   Deno. The Edge Functions in supabase/functions/, deployed
+#                 beside the database and talking to Postgres directly.
+#
+# So this job checks the four things that can be checked without a database —
+# the page's types, the unit tests, that the export builds, and the backend's
+# types — and deliberately claims nothing about the rest.
+#
+# What that leaves uncovered is worth saying plainly, because it is most of the
+# clinic. There is no database test suite in this repository and no end-to-end
+# test: nothing here applies a migration, proves a query names a column that
+# exists, or signs a tablet in. The two files in tests/ are the entire automated
+# suite. A CI that pretends to cover the data layer is worse than one that
+# admits it does not.
 
 on:
   push:
@@ -23,7 +36,7 @@ concurrency:
 
 jobs:
   check:
-    name: typecheck · tests · build
+    name: typecheck · tests · build · edge functions
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +48,83 @@ jobs:
 
       - run: npm ci
 
+      # `tsc --noEmit` over the page: app/, components/, lib/ and tests/.
+      # It does NOT cover supabase/ — tsconfig.json excludes it. That gap is
+      # what the last step of this job exists to close; see the note there.
       - name: Typecheck
         run: npm run typecheck
 
       - name: Unit tests
         run: npm test
 
-      # The database connection is created on first use, not on import, so the
-      # build needs no DATABASE_URL. If that ever regresses, this job is where
-      # it shows up — as "Failed to collect page data", which is exactly how it
-      # showed up the first time.
+      # Nothing here needs a database or a secret, and this is no longer the
+      # place a missing DATABASE_URL would show up: a static export has no
+      # server, so there is no request-time code to run at build and nothing
+      # that could open a connection. The "Failed to collect page data" failure
+      # this comment used to warn about cannot happen without a server to
+      # collect from.
+      #
+      # It does mean the out/ produced here is not deployable.
+      # NEXT_PUBLIC_FUNCTIONS_URL is baked into the bundle at build time and is
+      # unset on this runner, so these pages would call a relative path and
+      # reach nothing. This step proves the code compiles, not that the artifact
+      # works.
       - name: Build
         run: npm run build
+
+      # ── THE BACKEND, WHICH NOTHING ABOVE LOOKS AT ────────────────────────
+      #
+      # `npm run typecheck` is `tsc --noEmit`, and tsconfig.json's "exclude"
+      # list contains "supabase". So every Edge Function, _shared/auth.ts,
+      # _shared/commands.ts and _shared/snapshot.ts were checked by nothing at
+      # all, and typecheck reported clean regardless. That is not a hypothetical
+      # gap: the first run of this step found two errors sitting in the branch
+      # with CI green — a type used and never imported, and an import missing
+      # its `.ts` extension. Neither is subtle. Nothing was looking.
+      #
+      # Deno rather than tsc because this code is Deno — Deno.serve, `npm:`
+      # specifiers and `.ts` on its own imports — none of which tsc resolves.
+      # It is the same compiler either way; only Deno knows where the modules
+      # are.
+      - uses: denoland/setup-deno@v2
+        with:
+          # Pinned exactly, unlike node-version above, because the TypeScript
+          # compiler doing the checking ships inside Deno. A floating pin means
+          # this step's verdict can change on a morning nobody touched the code.
+          deno-version: v2.9.6
+
+      # --node-modules-dir=none matters and is easy to drop. `npm ci` ran
+      # earlier in this job, so Deno finds the repository root's package.json
+      # and node_modules — the page's, not the functions' — and tries to resolve
+      # `npm:postgres` and `npm:csv-parse` out of a tree that has never held
+      # either. It fails before it typechecks a line. `none` sends Deno to its
+      # own cache and the registry, which is where the deployed function gets
+      # them too.
+      #
+      # globstar so orphaned files are checked as well: `deno check` follows the
+      # import graph, so without it a file nothing imports yet is a file nobody
+      # compiles.
+      #
+      # Last in the job on purpose. It is the newest and least settled step, and
+      # a failure here should not cost you the tests-and-build result.
+      - name: Typecheck the Edge Functions
+        shell: bash
+        run: |
+          shopt -s globstar
+          if ! deno check --node-modules-dir=none supabase/functions/**/*.ts; then
+            echo "::error title=Edge Functions do not typecheck::npm run typecheck cannot see supabase/functions — tsconfig.json excludes it. See the deno check output above."
+            echo
+            echo "The Edge Functions do not typecheck."
+            echo
+            echo "Nothing else in this job covers them, so 'npm run typecheck'"
+            echo "can pass with the whole backend broken. Reproduce locally with"
+            echo "the identical command:"
+            echo
+            echo "  shopt -s globstar"
+            echo "  deno check --node-modules-dir=none supabase/functions/**/*.ts"
+            echo
+            echo "Deno is not a dependency of this repository; install it from"
+            echo "https://deno.com if you do not have it."
+            echo
+            exit 1
+          fi

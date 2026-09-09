@@ -38,8 +38,7 @@
   ],
   "exclude": [
     "node_modules",
-    "hospital al in one platform",
-    "clinic-ui-concept",
+    "archive",
     "supabase"
   ]
 }

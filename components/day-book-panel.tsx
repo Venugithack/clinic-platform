@@ -25,6 +25,8 @@ import {
   TH,
   THead,
   TR,
+  clinicDayOf,
+  clinicToday,
 } from '@/components/ui'
 
 /**
@@ -50,9 +52,14 @@ export function DayBookPanel({
   const till = data.till
   const [counted, setCounted] = useState('')
 
-  const today = new Date().toISOString().slice(0, 10)
-  const paidToday = data.bills.filter((b) => b.status === 'paid' && b.paidAt?.startsWith(today))
-  const salesToday = data.otcSales.filter((s) => s.createdAt.startsWith(today))
+  // Both of these read a stored UTC instant, so the day has to be converted
+  // before it is compared. `paidAt.startsWith(today)` filed the night's takings
+  // under yesterday for the five and a half hours the two calendars disagree.
+  const today = clinicToday()
+  const paidToday = data.bills.filter(
+    (b) => b.status === 'paid' && b.paidAt !== undefined && clinicDayOf(b.paidAt) === today,
+  )
+  const salesToday = data.otcSales.filter((s) => clinicDayOf(s.createdAt) === today)
 
   const byMethod = (method: string) =>
     paidToday.filter((b) => b.paymentMethod === method).reduce((sum, b) => sum + b.amount, 0) +

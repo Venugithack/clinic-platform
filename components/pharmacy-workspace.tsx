@@ -77,17 +77,47 @@ type Receipt = {
  * and the session was a cookie the browser attached by itself. The session is a
  * bearer token now and an <a href> carries no headers, so the download has to
  * be fetched and turned into a file here.
+ *
+ * Returns the sentence to show the staff member, or null when the file is on
+ * its way. It used to return nothing at all and swallow every failure: on an
+ * expired session the counter tapped Export, the server said 401, and the
+ * tablet did exactly nothing — no file, no message, no way to tell a dead
+ * session from a slow one. Tapping harder is the only move that leaves, and it
+ * never works.
  */
-async function downloadCsv(path: string, filename: string): Promise<void> {
-  const response = await callApi(path)
-  if (!response.ok) return
+async function downloadCsv(path: string, filename: string): Promise<string | null> {
+  let response: Response
+  try {
+    response = await callApi(path)
+  } catch {
+    return 'The clinic server is not reachable, so the export could not be downloaded.'
+  }
+
+  if (!response.ok) {
+    return response.status === 401
+      ? 'This tablet has been signed out. Sign in again, then export.'
+      : `The export could not be downloaded — the clinic server answered ${response.status}.`
+  }
 
   const url = URL.createObjectURL(await response.blob())
   const link = document.createElement('a')
   link.href = url
   link.download = filename
+
+  // Some browsers ignore a click on an anchor that is not in the document, so
+  // the element goes in and comes straight back out.
+  document.body.append(link)
   link.click()
-  URL.revokeObjectURL(url)
+  link.remove()
+
+  // The click only starts the download; the browser reads the blob afterwards,
+  // on its own schedule. Revoking on the next line — which is what this used to
+  // do — pulls the file out from under it, and what the staff member sees is an
+  // Export button that works on the fast tablet and produces an empty or failed
+  // download on the tired one. A minute is longer than any browser needs and
+  // the blob is a few kilobytes of shelf.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  return null
 }
 
 export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
@@ -458,6 +488,12 @@ export function InventoryPanel({
   const [query, setQuery] = useState('')
   const [batchesFor, setBatchesFor] = useState<MedicineView | null>(null)
 
+  // The export is the one thing on this screen that does not go through `run`,
+  // so it has no share of the shell's notice strip and has to say what went
+  // wrong itself. Kept next to the buttons that raise it, which is where
+  // somebody who has just tapped Export is already looking.
+  const [exportProblem, setExportProblem] = useState<string | null>(null)
+
   const shown = data.medicines.filter((medicine) =>
     `${medicine.code} ${medicine.name} ${medicine.strength} ${medicine.preferredSupplierName ?? ''}`
       .toLowerCase()
@@ -473,6 +509,11 @@ export function InventoryPanel({
     const values = Object.fromEntries(new FormData(form))
     const result = await run('add_medicine', values)
     if (result.ok) form.reset()
+  }
+
+  async function exportCsv(path: string, filename: string) {
+    setExportProblem(null)
+    setExportProblem(await downloadCsv(path, filename))
   }
 
   async function importFile(event: FormEvent<HTMLFormElement>) {
@@ -495,14 +536,14 @@ export function InventoryPanel({
           <>
             <button
               type="button"
-              onClick={() => void downloadCsv('csv?template=1', 'jayamurugan-inventory-template.csv')}
+              onClick={() => void exportCsv('csv?template=1', 'jayamurugan-inventory-template.csv')}
               className="inline-flex min-h-[48px] items-center justify-center rounded-box border border-ink px-4 py-2 text-[13px] font-semibold tracking-[0.08em] uppercase transition-colors hover:bg-ink/8"
             >
               CSV template
             </button>
             <button
               type="button"
-              onClick={() => void downloadCsv('csv', 'jayamurugan-inventory.csv')}
+              onClick={() => void exportCsv('csv', 'jayamurugan-inventory.csv')}
               className="inline-flex min-h-[48px] items-center justify-center rounded-box border border-ink px-4 py-2 text-[13px] font-semibold tracking-[0.08em] uppercase transition-colors hover:bg-ink/8"
             >
               Export CSV
@@ -510,6 +551,14 @@ export function InventoryPanel({
           </>
         }
       />
+
+      {exportProblem ? (
+        <div data-print="hide">
+          <Notice tone="bad" onDismiss={() => setExportProblem(null)}>
+            {exportProblem}
+          </Notice>
+        </div>
+      ) : null}
 
       <div className="space-y-4" data-print="hide">
         <Disclosure

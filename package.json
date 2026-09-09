@@ -9,9 +9,11 @@
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "wrangler dev --ip 0.0.0.0 --port 3000",
+    "preview": "wrangler dev --ip 0.0.0.0 --port 3000",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/password.test.ts tests/order-status.test.ts"
+    "test": "node --test tests/password.test.ts tests/order-status.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "next": "^16.3.0",

@@ -4,23 +4,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
 import { BusyContext, type ActionRunner } from './clinic-context'
 import { callApi, writeToken } from '@/lib/api'
+import { navigationFor, ROLE_LABEL, type View } from './navigation'
+import { WorkspaceRouter } from './workspace-router'
 import {
-  AuditPanel,
-  BedsPanel,
-  BillingPanel,
-  OverviewPanel,
-  PatientsPanel,
-  PrinterPanel,
-  ClinicSettingsPanel,
-  RegistersPanel,
-} from './shared-panels'
-import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
-import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
-import { ExpiringPanel } from './expiring-panel'
-import { DayBookPanel } from './day-book-panel'
-import { StockTakePanel } from './stock-take-panel'
-import { StaffPanel } from './staff-panel'
-import { ActionButton, Badge, Button, Card, CardBody, Notice, Numpad } from '@/components/ui'
+  ActionButton,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  Field,
+  Input,
+  Notice,
+  Numpad,
+} from '@/components/ui'
 
 /**
  * The application chrome: an ink rail of stations, a header, and the workspace.
@@ -32,86 +28,6 @@ import { ActionButton, Badge, Button, Card, CardBody, Notice, Numpad } from '@/c
  * it slides away and returns as a drawer, so a 768px tablet in portrait gets
  * the full width for the register it is showing.
  */
-
-type View =
-  | 'overview'
-  | 'patients'
-  | 'queue'
-  | 'vitals'
-  | 'consultation'
-  | 'records'
-  | 'beds'
-  | 'billing'
-  | 'staff'
-  | 'clinic'
-  | 'registers'
-  | 'expiring'
-  | 'daybook'
-  | 'stocktake'
-  | 'counter'
-  | 'inventory'
-  | 'suppliers'
-  | 'orders'
-  | 'printer'
-  | 'audit'
-
-type NavItem = { id: View; label: string; eyebrow: string }
-
-const NAV: Record<Role, NavItem[]> = {
-  admin: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
-    { id: 'staff', label: 'Staff', eyebrow: 'Admin control' },
-    { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print' },
-    { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
-    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
-    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
-    { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
-    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
-    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
-    { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
-    { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
-    { id: 'printer', label: 'Printer', eyebrow: 'Tablet printing' },
-    { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1' },
-    { id: 'audit', label: 'Activity', eyebrow: 'Accountability' },
-  ],
-  doctor: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'queue', label: 'Queue', eyebrow: "Today's flow" },
-    { id: 'consultation', label: 'Consult', eyebrow: 'Doctor workspace' },
-    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
-    { id: 'records', label: 'Records', eyebrow: 'Clinical record' },
-    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count' },
-  ],
-  nurse: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'queue', label: 'Queue', eyebrow: "Today's flow" },
-    { id: 'vitals', label: 'Vitals', eyebrow: 'Nursing station' },
-    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
-    { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
-    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
-    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
-  ],
-  pharmacy: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
-    { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
-    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
-    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
-    { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
-    { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
-    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
-    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
-    { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1' },
-  ],
-}
-
-const ROLE_LABEL: Record<Role, string> = {
-  admin: 'Admin',
-  doctor: 'Doctor',
-  nurse: 'Nurse',
-  pharmacy: 'Pharmacy',
-}
 
 export function ClinicApp() {
   const [data, setData] = useState<ClinicSnapshot | null>(null)
@@ -135,23 +51,42 @@ export function ClinicApp() {
 
       const response = await callApi(`snapshot${query}`)
       if (response.status === 401) {
+        writeToken(null)
+        revision.current = null
         setData(null)
         return
       }
 
       const result = (await response.json()) as {
         ok: boolean
+        message?: string
         revision?: number
         unchanged?: boolean
+        doctorPresent?: boolean
         snapshot?: ClinicSnapshot
       }
 
-      if (!result.ok) return
+      if (!result.ok) {
+        setNotice({
+          tone: 'bad',
+          message: result.message ?? 'The clinic could not be refreshed.',
+        })
+        return
+      }
       if (typeof result.revision === 'number') revision.current = result.revision
-      if (result.unchanged) return
+      if (result.unchanged) {
+        if (typeof result.doctorPresent === 'boolean') {
+          setData((current) =>
+            current && current.doctorPresent !== result.doctorPresent
+              ? { ...current, doctorPresent: result.doctorPresent! }
+              : current,
+          )
+        }
+        return
+      }
       if (result.snapshot) setData(result.snapshot)
     } catch {
-      if (!silent) setNotice({ tone: 'bad', message: 'The clinic server is not reachable.' })
+      setNotice({ tone: 'bad', message: 'The clinic server is not reachable.' })
     } finally {
       if (!silent) setInitializing(false)
     }
@@ -179,6 +114,19 @@ export function ClinicApp() {
           snapshot?: ClinicSnapshot
         }
         setNotice({ tone: result.ok ? 'good' : 'bad', message: result.message })
+
+        // A 401 is the thirty-minute idle lock, not a refusal to argue with:
+        // the session is gone and every control on the workspace behind this
+        // notice is now dead. `loadSnapshot` already drops the clinic on a 401;
+        // without the same thing here the user reads "Sign in required." on a
+        // screen that still looks alive and goes on tapping it until the
+        // fifteen-second poll happens to notice.
+        if (response.status === 401) {
+          writeToken(null)
+          revision.current = null
+          setData(null)
+          return result
+        }
 
         // The command already carries the clinic as it now stands. Fetching it
         // again would double the wait on every action for no new information.
@@ -282,7 +230,7 @@ export function ClinicApp() {
   if (!data) return <LoginScreen onSignIn={login} busy={busy} notice={notice} />
 
   const roles = data.session.roles
-  const items = [...new Map(roles.flatMap((role) => NAV[role]).map((item) => [item.id, item])).values()]
+  const items = navigationFor(roles)
   const current = items.find((item) => item.id === view) ?? items[0]
   const roleName = roles.map((role) => ROLE_LABEL[role]).join(' · ')
 
@@ -427,69 +375,12 @@ export function ClinicApp() {
           ) : null}
 
           <main className="mx-auto w-full min-w-0 max-w-[1400px] flex-1 px-4 py-5 lg:px-5">
-            {renderPanel(view, data, run, uploadCsv, roles)}
+            <WorkspaceRouter view={view} data={data} run={run} uploadCsv={uploadCsv} roles={roles} />
           </main>
         </div>
       </div>
     </BusyContext>
   )
-}
-
-function renderPanel(
-  view: View,
-  data: ClinicSnapshot,
-  run: ActionRunner,
-  uploadCsv: (file: File) => Promise<CommandResponse>,
-  roles: Role[],
-) {
-  switch (view) {
-    case 'patients':
-      return (
-        <PatientsPanel
-          data={data}
-          run={run}
-          canRegister={!roles.includes('doctor') || roles.includes('admin') || roles.includes('nurse')}
-        />
-      )
-    case 'queue':
-      return <QueuePanel data={data} run={run} />
-    case 'vitals':
-      return <VitalsPanel data={data} run={run} />
-    case 'consultation':
-      return <ConsultationPanel data={data} run={run} />
-    case 'records':
-      return <RecordsPanel data={data} />
-    case 'beds':
-      return <BedsPanel data={data} run={run} />
-    case 'billing':
-      return <BillingPanel data={data} run={run} />
-    case 'stocktake':
-      return <StockTakePanel data={data} run={run} />
-    case 'daybook':
-      return <DayBookPanel data={data} run={run} />
-    case 'expiring':
-      return <ExpiringPanel data={data} run={run} />
-    case 'registers':
-      return <RegistersPanel data={data} />
-    case 'clinic':
-      return <ClinicSettingsPanel data={data} run={run} />
-    case 'staff':
-      return <StaffPanel data={data} run={run} />
-    case 'counter':
-      return <CounterPanel data={data} run={run} />
-    case 'inventory':
-      return <InventoryPanel data={data} run={run} uploadCsv={uploadCsv} />
-    case 'suppliers':
-      return <SuppliersPanel data={data} run={run} />
-    case 'orders':
-      return <OrdersPanel data={data} run={run} />
-    case 'printer':
-      return <PrinterPanel />
-    case 'audit':
-      return <AuditPanel data={data} />
-    default:
-      return <OverviewPanel data={data} />
-  }
 }
 
 /**
@@ -520,6 +411,19 @@ function LoginScreen({
   const [selected, setSelected] = useState<{ id: string; name: string; roles: Role[] } | null>(null)
   const [pin, setPin] = useState('')
 
+  // First start only: everything below exists for a database that has never
+  // had a staff row in it. On every other day it is unreachable.
+  const [opening, setOpening] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newUsername, setNewUsername] = useState('')
+  const [newPin, setNewPin] = useState('')
+  const [confirmPin, setConfirmPin] = useState('')
+  const [saving, setSaving] = useState(false)
+  // The lock screen's own voice. `notice` belongs to the sign-in that
+  // ClinicApp runs; this carries what opening the clinic said, which has to
+  // survive the jump to the PIN pad that follows it.
+  const [said, setSaid] = useState<{ tone: 'good' | 'bad'; message: string } | null>(null)
+
   useEffect(() => {
     let cancelled = false
     callApi('staff')
@@ -542,6 +446,191 @@ function LoginScreen({
     setPin('')
   }, [pin, selected, busy, onSignIn])
 
+  // One message at a time: whatever the last sign-in attempt said, or — before
+  // there has been one — whatever opening the clinic said.
+  const shown = notice ?? said
+
+  // The new PIN is typed twice, on the same pad, one after the other. This is
+  // the opposite of the sign-in rule two functions up, and deliberately: there
+  // the PIN is already known and confirming it is a tap paid hundreds of times
+  // a day, while here it is being invented, the endpoint that set it disables
+  // itself the moment it succeeds, and a slip of one digit is an administrator
+  // account nobody can ever sign into on a clinic that has no other staff.
+  function pushPinDigit(digit: string) {
+    setSaid(null)
+    if (newPin.length < 6) {
+      setNewPin(newPin + digit)
+      return
+    }
+    const typedAgain = (confirmPin + digit).slice(0, 6)
+    if (typedAgain.length === 6 && typedAgain !== newPin) {
+      setNewPin('')
+      setConfirmPin('')
+      setSaid({ tone: 'bad', message: 'Those two PINs were not the same. Start the six digits again.' })
+      return
+    }
+    setConfirmPin(typedAgain)
+  }
+
+  function dropPinDigit() {
+    setSaid(null)
+    if (confirmPin.length > 0) setConfirmPin(confirmPin.slice(0, -1))
+    else setNewPin(newPin.slice(0, -1))
+  }
+
+  const readyToOpen =
+    newName.trim() !== '' && newUsername.trim() !== '' && newPin.length === 6 && confirmPin === newPin
+
+  async function openTheClinic() {
+    setSaving(true)
+    setSaid(null)
+    try {
+      const response = await callApi('bootstrap', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: newName.trim(),
+          username: newUsername.trim(),
+          pin: newPin,
+        }),
+      })
+      const result = (await response.json()) as {
+        ok: boolean
+        message: string
+        staff?: { id: string; name: string; roles: Role[] }
+      }
+
+      if (!result.ok || !result.staff) {
+        setSaid({ tone: 'bad', message: result.message ?? 'The first administrator could not be created.' })
+        return
+      }
+
+      // Straight to the PIN pad with their own name on it. The account exists
+      // now; the next thing that has to happen is that PIN being typed against
+      // the hash that was actually stored, while getting it wrong still costs
+      // nothing but typing it again.
+      setStaff([result.staff])
+      setSelected(result.staff)
+      setOpening(false)
+      setNewPin('')
+      setConfirmPin('')
+      setSaid({ tone: 'good', message: result.message })
+    } catch {
+      setSaid({ tone: 'bad', message: 'The clinic server is not reachable.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (opening) {
+    const step = newPin.length < 6 ? newPin : confirmPin
+    return (
+      <main className="mx-auto min-h-screen w-full max-w-lg px-5 py-10">
+        <header className="border-b-2 border-ink pb-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-mark.png" alt="" className="mb-5 h-20 w-auto" />
+          <p className="eyebrow">First start · no staff yet</p>
+          <h1 className="mt-1.5 text-[26px] leading-tight font-semibold tracking-tight">
+            Open the clinic
+          </h1>
+          <p className="mt-1 font-mono text-[13px] text-ink-2">
+            This happens once. Everyone else is added from inside.
+          </p>
+        </header>
+
+        <Card variant="record" className="mt-5">
+          <CardBody className="grid gap-4">
+            <Field
+              label="Your name"
+              required
+              hint="What the lock screen shows, and what stands against everything you do here."
+            >
+              <Input
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+                autoComplete="off"
+                autoCapitalize="words"
+                placeholder="S. Jayamurugan"
+                disabled={saving}
+              />
+            </Field>
+
+            <Field
+              label="Username"
+              required
+              hint="For the staff record. You sign in by tapping your name, never by typing this."
+            >
+              <Input
+                value={newUsername}
+                onChange={(event) => setNewUsername(event.target.value)}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="jayamurugan"
+                disabled={saving}
+              />
+            </Field>
+
+            <div className="border-t border-rule pt-4">
+              <p className="eyebrow text-center">
+                {newPin.length < 6 ? 'Choose a six-digit PIN' : 'Type the same six digits again'}
+              </p>
+
+              <div className="mt-3 flex justify-center gap-3" role="status" aria-label="PIN entry">
+                {Array.from({ length: 6 }, (_, index) => (
+                  <span
+                    key={index}
+                    className={`h-4 w-4 rounded-full border border-rule ${index < step.length ? 'bg-ink' : ''}`}
+                  />
+                ))}
+              </div>
+
+              <div className="mx-auto mt-6 w-72">
+                <Numpad disabled={saving} onDigit={pushPinDigit} onBackspace={dropPinDigit} />
+              </div>
+
+              <p className="mt-3 text-center text-[12px] leading-snug text-ink-2">
+                Six digits. Not the same one six times, and not a run like 123456 — those are
+                the first two anybody tries.
+              </p>
+            </div>
+          </CardBody>
+        </Card>
+
+        {said ? (
+          <div className="mt-5">
+            <Notice tone={said.tone === 'good' ? 'good' : 'bad'}>{said.message}</Notice>
+          </div>
+        ) : null}
+
+        <ActionButton
+          variant="primary"
+          className="mt-5 w-full"
+          busy={saving}
+          busyLabel="Opening…"
+          disabled={!readyToOpen}
+          disabledReason="Fill in a name and a username, then type the same six digits twice."
+          onClick={() => void openTheClinic()}
+        >
+          Open the clinic
+        </ActionButton>
+
+        <Button
+          variant="ghost"
+          className="mt-3 w-full"
+          disabled={saving}
+          onClick={() => {
+            setOpening(false)
+            setNewPin('')
+            setConfirmPin('')
+            setSaid(null)
+          }}
+        >
+          Not now
+        </Button>
+      </main>
+    )
+  }
+
   if (selected) {
     return (
       <main className="mx-auto min-h-screen w-full max-w-lg px-5 py-10">
@@ -562,9 +651,9 @@ function LoginScreen({
           ))}
         </div>
 
-        {notice ? (
+        {shown ? (
           <div className="mt-5">
-            <Notice tone={notice.tone === 'good' ? 'good' : 'bad'}>{notice.message}</Notice>
+            <Notice tone={shown.tone === 'good' ? 'good' : 'bad'}>{shown.message}</Notice>
           </div>
         ) : null}
 
@@ -613,11 +702,23 @@ function LoginScreen({
             </div>
           ) : null}
 
+          {/*
+            Nobody can sign in. This is what a clinic looks like on the day its
+            database is built and before anyone has opened it, and until now the
+            screen sent people to a first-start server log that no longer exists
+            to be read — an instruction with no file behind it, given to
+            somebody who cannot get into their own clinic. The way out is here.
+          */}
           {!loading && !loadError && staff.length === 0 ? (
-            <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
-              No active staff. The clinic database has no one who can sign in — check the server
-              log from the first start, which prints the administrator PIN once.
-            </p>
+            <div className="mt-3 grid gap-3">
+              <p className="text-[13px] leading-relaxed text-ink-2">
+                Nobody can sign in yet. A clinic arrives with an empty staff list — the first
+                administrator is created here, once, and everybody else is added from inside.
+              </p>
+              <Button variant="primary" onClick={() => setOpening(true)}>
+                Create the first administrator
+              </Button>
+            </div>
           ) : null}
 
           <div className="mt-3 grid gap-2">
@@ -641,9 +742,9 @@ function LoginScreen({
             ))}
           </div>
 
-          {notice ? (
+          {shown ? (
             <div className="mt-4">
-              <Notice tone={notice.tone === 'good' ? 'good' : 'bad'}>{notice.message}</Notice>
+              <Notice tone={shown.tone === 'good' ? 'good' : 'bad'}>{shown.message}</Notice>
             </div>
           ) : null}
         </CardBody>

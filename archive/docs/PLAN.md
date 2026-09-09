@@ -1,4 +1,4 @@
-# Clinic platform — build plan
+# Archived: clinic platform — build plan
 
 **Status: DRAFT. Not approved. No code until the sign-off box at §20 is filled.**
 
@@ -12,7 +12,7 @@ are what has to be true before anyone starts.
 **Updated 16 Aug 2026** with the client's answers to §18 (recorded there) and
 three constraints from Venu — host it free, tablets are the devices, inventory
 is the centrepiece. Each has its own document: [`HOSTING.md`](HOSTING.md),
-[`TABLET.md`](TABLET.md), [`INVENTORY.md`](INVENTORY.md). §5, §12, §17 and §18
+[`TABLET.md`](../../docs/TABLET.md), [`INVENTORY.md`](../../docs/INVENTORY.md). §5, §12, §17 and §18
 below are the sections those changed.
 
 ---
@@ -356,7 +356,7 @@ parallel run. Quote 16 weeks. Do not quote 6.
 
 ## 10. WhatsApp — the part that can sink this
 
-> Full treatment in [`WHATSAPP.md`](WHATSAPP.md) — the six distinct grey areas,
+> Full treatment in [`WHATSAPP.md`](../../docs/WHATSAPP.md) — the six distinct grey areas,
 > how to spot an unofficial vendor, and every message in this build classified
 > by category, opt-in status and risk. Read it before answering §18 Q5.
 
@@ -518,7 +518,7 @@ shelf untouched.
 ## 12. Inventory and purchasing
 
 > Venu's brief is that inventory is the centrepiece, so this section is now the
-> skeleton and [`INVENTORY.md`](INVENTORY.md) is the design: the base-unit model
+> skeleton and [`INVENTORY.md`](../../docs/INVENTORY.md) is the design: the base-unit model
 > (§1 there — start with it, it is a correctness requirement), barcode scanning
 > from the tablet camera, batch costing and valuation, blind stock-take, the
 > expiry-return-and-credit workflow, salt-based substitution, and reordering
@@ -807,7 +807,7 @@ changes and support hours.
 
 ### 18.2 WhatsApp — the session to have with the doctor
 
-He asked for clarification and so did Venu. [`WHATSAPP.md`](WHATSAPP.md) is the
+He asked for clarification and so did Venu. [`WHATSAPP.md`](../../docs/WHATSAPP.md) is the
 reference; these are the six decisions that actually have to come out of that
 conversation. One sitting, ~30 minutes.
 

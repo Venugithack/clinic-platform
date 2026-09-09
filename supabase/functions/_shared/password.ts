@@ -1,4 +1,8 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto'
+// Node has Buffer as a global; Deno does not, and this file runs in Deno. Left
+// implicit it type-checks fine under the Node test and then throws
+// ReferenceError on the first sign-in of the day.
+import { Buffer } from 'node:buffer'
 
 /**
  * PIN hashing.

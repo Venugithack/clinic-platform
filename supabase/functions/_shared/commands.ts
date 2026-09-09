@@ -6,6 +6,19 @@ import { audit, db, isoNow, transaction } from './db.ts'
 import { hashPassword } from './password.ts'
 import { sendWhatsAppText } from './whatsapp.ts'
 
+/**
+ * Today, in the clinic rather than in Greenwich.
+ *
+ * The server keeps UTC and runs five and a half hours behind the clinic, so
+ * every expiry comparison below was deciding whether a batch was still fit to
+ * dispense against yesterday's date until half past five each morning — and a
+ * batch that expired last night stayed sellable through exactly the stretch
+ * when the pharmacy is being opened up. `snapshot.ts` builds the same
+ * expression for the shelf figure it puts on the screen; the number a dispense
+ * is checked against has to be the number the screen showed.
+ */
+const CLINIC_TODAY = `(now() at time zone 'Asia/Kolkata')::date`
+
 type Payload = Record<string, unknown>
 type Line = { medicineId: string; quantity: number }
 
@@ -66,9 +79,43 @@ function requireChoice<T extends string>(
   return result
 }
 
-async function sequence(prefix: string, table: string) {
-  const row = await db.prepare(`select count(*) as count from ${table}`).get() as { count: number }
-  return `${prefix}-${String(Number(row.count) + 1).padStart(4, '0')}`
+/**
+ * The next number in a printed series — OTC-0008, PO-0042, JMC-0004.
+ *
+ * This used to count the rows in the table and add one, which fails in two
+ * different ways that both end at the same place. Two tablets ringing up a sale
+ * in the same second read the same count and mint the same receipt number; the
+ * second insert dies on the unique index and the counter is told "The request
+ * could not be completed." for a sale that was perfectly good. And a deleted
+ * row lowers the count, so the series walks backwards over numbers that are
+ * already printed on paper and written in somebody's ledger.
+ *
+ * Queue tokens are the quiet half of the same bug. `appointments.token` carries
+ * no unique index, so nothing objects at all: two waiting patients simply hold
+ * the same number, and one of them is called in for the other's consultation.
+ *
+ * A Postgres sequence hands each number to exactly one caller no matter what
+ * else is happening, and it does so OUTSIDE the transaction — a sale that rolls
+ * back burns its number and leaves a gap in the receipts. That is the right way
+ * round: a missing number is a question somebody asks, a repeated one is two
+ * documents that cannot be told apart afterwards.
+ */
+const SERIES = {
+  JMC: 'appointment_token_seq',
+  OTC: 'otc_receipt_seq',
+  PO: 'purchase_order_seq',
+  RET: 'supplier_return_seq',
+  ST: 'stock_take_seq',
+} as const
+
+async function sequence(prefix: keyof typeof SERIES) {
+  // A bigint arrives as a string, and padStart wants one anyway. Four digits is
+  // the floor rather than the width: the series is allowed to outgrow it, and
+  // OTC-10000 is still readable where a wrapped number would not be.
+  const row = (await db
+    .prepare(`select nextval('jmc.${SERIES[prefix]}') as value`)
+    .get()) as { value: string | number }
+  return `${prefix}-${String(row.value).padStart(4, '0')}`
 }
 
 function parsedLines(payload: Payload): Line[] {
@@ -164,7 +211,7 @@ async function allocateStock(
   referenceId: string,
 ): Promise<Allocation[]> {
   const rows = await db.prepare(`select id,batch_number,available_quantity,selling_price from batches
-    where medicine_id=? and available_quantity>0 and expiry::date>=current_date
+    where medicine_id=? and available_quantity>0 and expiry::date>=${CLINIC_TODAY}
     order by expiry,id`).all(medicineId) as Array<{
       id: string
       batch_number: string
@@ -224,7 +271,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
       requireRole(session, 'admin', 'nurse')
       const id = randomUUID()
       await transaction(async () => {
-        const token = await sequence('JMC', 'appointments')
+        const token = await sequence('JMC')
         await db.prepare(`insert into appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
           values (?,?,?,?,?,'waiting',?)`).run(
             id, value(payload, 'patientId'), token, value(payload, 'reason'), value(payload, 'scheduledAt'), isoNow(),
@@ -386,14 +433,14 @@ export async function runCommand(session: SessionView, action: string, payload: 
           )
           .run(
             value(payload, 'name'),
-            optional(payload, 'address') ?? '',
-            optional(payload, 'phone') ?? '',
-            optional(payload, 'email') ?? '',
-            optional(payload, 'drugLicenceNumber') ?? '',
-            optional(payload, 'doctorRegistrationNumber') ?? '',
-            optional(payload, 'gstin') ?? '',
+            optional(payload, 'address'),
+            optional(payload, 'phone'),
+            optional(payload, 'email'),
+            optional(payload, 'drugLicenceNumber'),
+            optional(payload, 'doctorRegistrationNumber'),
+            optional(payload, 'gstin'),
             fee,
-            optional(payload, 'footerNote') ?? '',
+            optional(payload, 'footerNote'),
             isoNow(),
             session.staffId,
           )
@@ -439,7 +486,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
           )
           .run(
             writeOffId, batchId, batch.medicine_id, quantity, reason, costValue,
-            optional(payload, 'note') ?? '', session.staffId, isoNow(),
+            optional(payload, 'note'), session.staffId, isoNow(),
           )
 
         await audit(
@@ -462,7 +509,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
       let noteNumber = ''
 
       await transaction(async () => {
-        noteNumber = await sequence('RET', 'supplier_returns')
+        noteNumber = await sequence('RET')
 
         const batch = await removeFromBatch(
           batchId,
@@ -488,7 +535,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
           )
           .run(
             returnId, noteNumber, supplierId, batchId, batch.medicine_id, quantity,
-            expectedCredit, optional(payload, 'note') ?? '', session.staffId, isoNow(),
+            expectedCredit, optional(payload, 'note'), session.staffId, isoNow(),
           )
 
         await audit(
@@ -538,7 +585,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
       // Optional, because a missing threshold must not fail with a complaint
       // about the threshold when the real answer is "one is already open".
       const threshold =
-        (optional(payload, 'recountThreshold') ?? '') === ''
+        optional(payload, 'recountThreshold') === ''
           ? 500
           : numberValue(payload, 'recountThreshold', 0)
       const id = randomUUID()
@@ -550,14 +597,14 @@ export async function runCommand(session: SessionView, action: string, payload: 
           .get()
         if (open) throw new Error('A stock-take is already open. Finish or abandon it first.')
 
-        reference = await sequence('ST', 'stock_takes')
+        reference = await sequence('ST')
         await db
           .prepare(
             `insert into stock_takes
                (id,reference,scope,scope_note,status,recount_threshold,started_at,started_by)
                values (?,?,?,?,'counting',?,?,?)`,
           )
-          .run(id, reference, scope, optional(payload, 'scopeNote') ?? '', threshold, isoNow(), session.staffId)
+          .run(id, reference, scope, optional(payload, 'scopeNote'), threshold, isoNow(), session.staffId)
 
         await audit(session.staffId, 'stocktake.started', 'stock_take', id, `Started ${reference} (${scope})`)
       })
@@ -918,7 +965,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
                     variance = ?, note = ?
               where id = ?`,
           )
-          .run(now, session.staffId, counted, expected, variance, optional(payload, 'note') ?? '', till.id)
+          .run(now, session.staffId, counted, expected, variance, optional(payload, 'note'), till.id)
 
         await audit(
           session.staffId,
@@ -979,7 +1026,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
 
         await db
           .prepare('update staff set name=?,username=?,phone=?,roles_json=? where id=?')
-          .run(name, username, optional(payload, 'phone') ?? '', JSON.stringify(roles), staffId)
+          .run(name, username, optional(payload, 'phone'), JSON.stringify(roles), staffId)
 
         // A session carries what the person may do. Correcting a phone number
         // should not sign anyone out, but a demotion that leaves them holding
@@ -1040,7 +1087,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
         await db.prepare('delete from supplier_medicines where supplier_id=?').run(supplierId)
         const insert = await db.prepare(`insert into supplier_medicines (supplier_id,medicine_id,active) values (?,?,1)`)
         for (const medicineId of medicineIds) {
-          insert.run(supplierId, medicineId)
+          await insert.run(supplierId, medicineId)
           await db.prepare(`update medicines set preferred_supplier_id=coalesce(preferred_supplier_id,?) where id=?`)
             .run(supplierId, medicineId)
         }
@@ -1103,7 +1150,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
       let total = 0
       let receiptNumber = ''
       await transaction(async () => {
-        receiptNumber = await sequence('OTC', 'otc_sales')
+        receiptNumber = await sequence('OTC')
         const saleLines: Array<Line & { name: string; allocations: Allocation[]; lineTotal: number }> = []
         for (const line of lines) {
           const medicine = (await db
@@ -1134,7 +1181,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
         if (prescription.dispensed_at) throw new Error('This prescription is already dispensed.')
         const items = JSON.parse(prescription.items_json) as PrescriptionItemView[]
         for (const item of items) {
-          allocateStock(item.medicineId, item.quantity, session.staffId, 'prescription', prescriptionId)
+          await allocateStock(item.medicineId, item.quantity, session.staffId, 'prescription', prescriptionId)
         }
         await db.prepare('update prescriptions set dispensed_at=? where id=? and dispensed_at is null').run(isoNow(), prescriptionId)
         await audit(session.staffId, 'prescription.dispensed', 'prescription', prescriptionId, `Dispensed ${items.length} item(s)`)
@@ -1152,9 +1199,9 @@ export async function runCommand(session: SessionView, action: string, payload: 
         const supplier = await db.prepare('select name from suppliers where id=? and active=1').get(supplierId) as { name: string } | undefined
         if (!supplier) throw new Error('Choose an active supplier.')
         const lines = suppliedLines.length > 0 ? suppliedLines : (await db.prepare(`select m.id medicineId,m.name,
-          greatest(m.target_stock-coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=current_date),0),1) quantity
+          greatest(m.target_stock-coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=${CLINIC_TODAY}),0),1) quantity
           from medicines m join supplier_medicines sm on sm.medicine_id=m.id and sm.supplier_id=? and sm.active=1
-          where m.active=1 and coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=current_date),0)<=m.reorder_level
+          where m.active=1 and coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=${CLINIC_TODAY}),0)<=m.reorder_level
           group by m.id`).all(supplierId) as Array<{ medicineId: string; quantity: number }>)
         if (lines.length === 0) throw new Error('No low-stock medicines are linked to this supplier.')
         const namedLines: Array<{ medicineId: string; quantity: number; name: string }> = []
@@ -1165,7 +1212,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
           if (!medicine) throw new Error('An order medicine was not found.')
           namedLines.push({ ...line, name: `${medicine.name} ${medicine.strength}`.trim() })
         }
-        orderNumber = await sequence('PO', 'purchase_orders')
+        orderNumber = await sequence('PO')
         const draft = buildOrderDraft(supplier.name, orderNumber, namedLines)
         await db.prepare(`insert into purchase_orders
           (id,order_number,supplier_id,status,requested_date,message_draft,created_by,created_at)
@@ -1174,7 +1221,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
           )
         const insert = await db.prepare(`insert into purchase_order_lines
           (id,order_id,medicine_id,ordered_quantity,received_quantity) values (?,?,?,?,0)`)
-        for (const line of namedLines) insert.run(randomUUID(), orderId, line.medicineId, line.quantity)
+        for (const line of namedLines) await insert.run(randomUUID(), orderId, line.medicineId, line.quantity)
         await audit(session.staffId, 'order.created', 'purchase_order', orderId, `Drafted ${orderNumber} for ${supplier.name}`)
       })
       return { message: 'Reorder draft created.', data: { orderId, orderNumber } }
@@ -1189,7 +1236,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
         | undefined
       if (!order) throw new Error('Only a pending order can be sent.')
       const messageDraft = optional(payload, 'messageDraft') || order.message_draft
-      const result = await sendWhatsAppText(order.whatsapp, messageDraft)
+      const result = await sendWhatsAppText(order.whatsapp, messageDraft, 'this supplier')
       if (!result.ok) throw new Error(result.error)
       await transaction(async () => {
         await db.prepare(`update purchase_orders set status='placed',message_draft=?,external_message_id=?,message_status='sent',placed_at=? where id=?`)
@@ -1261,7 +1308,8 @@ export async function runCommand(session: SessionView, action: string, payload: 
     }
 
     case 'send_patient_whatsapp': {
-      requireRole(session, 'admin', 'doctor', 'nurse', 'pharmacy')
+      // These are the roles with a Patients workspace and its message composer.
+      requireRole(session, 'admin', 'doctor', 'nurse')
       const patientId = value(payload, 'patientId')
       const patient = await db.prepare('select name,phone,whatsapp_consent from patients where id=?').get(patientId) as
         | { name: string; phone: string; whatsapp_consent: number }
@@ -1269,7 +1317,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
       if (!patient) throw new Error('Patient was not found.')
       if (!patient.whatsapp_consent) throw new Error('WhatsApp consent is not recorded for this patient.')
       const body = value(payload, 'body')
-      const result = await sendWhatsAppText(patient.phone, body)
+      const result = await sendWhatsAppText(patient.phone, body, patient.name)
       if (!result.ok) throw new Error(result.error)
       await db.prepare(`insert into whatsapp_messages
         (id,direction,audience,phone,body,external_message_id,status,related_type,related_id,created_at)

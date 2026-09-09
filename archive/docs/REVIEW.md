@@ -1,4 +1,4 @@
-# Consistency review — 17 Aug 2026
+# Archived: consistency review — 17 Aug 2026
 
 The 16 Aug revisions (free hosting, tablets, inventory depth, the reactive-bot
 WhatsApp design, deep-link supplier orders) were applied unevenly. Several

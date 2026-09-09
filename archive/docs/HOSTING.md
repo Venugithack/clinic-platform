@@ -1,4 +1,4 @@
-# Hosting this for ₹0 — what works, what it costs, how to leave
+# Archived: hosting this for ₹0 — what works, what it costs, how to leave
 
 Venu's constraint: **host it online, free.** This document is the answer. It is
 achievable, the architecture it forces is *better* in one important way, and it

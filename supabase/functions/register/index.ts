@@ -25,6 +25,43 @@ import { json, preflight, sessionFrom } from '../_shared/http.ts'
 
 const RANGE = /^\d{4}-\d{2}-\d{2}$/
 
+/**
+ * How far the clinic's day is ahead of the timestamps in the database.
+ *
+ * `created_at` is stored as an ISO instant in UTC, and the clinic is in Tamil
+ * Nadu. Every date in this file — the two ends of the range, and the date
+ * printed against each row — used to be worked out in UTC, which is a day that
+ * begins at half past five in the morning in Chennai. A strip of Schedule H1
+ * handed over at two in the morning to somebody who knocked on the door was
+ * therefore both filed under the previous day and, if the previous day was
+ * outside the range asked for, missing from the report altogether. On an
+ * ordinary screen that is an off-by-one. On a register that an inspector reads
+ * and that the Drugs and Cosmetics Rules require to be kept for three years, it
+ * is a document that disagrees with the pharmacist who wrote it.
+ *
+ * A fixed number and not a timezone lookup because India has one offset and has
+ * never observed daylight saving, so there is no rule here to get wrong.
+ */
+const IST_OFFSET_MS = (5 * 60 + 30) * 60_000
+const DAY_MS = 24 * 60 * 60_000
+
+/**
+ * A stored instant, split into the date and time the clinic would write down.
+ *
+ * The fallback matters more than it looks. This is the one document that must
+ * still print when something in it is malformed: a row with an unparseable
+ * timestamp should show what it has and let a human see the problem, not throw
+ * and take the whole three-year register down with it.
+ */
+function clinicMoment(stored: unknown): { date: string; time: string } {
+  const raw = String(stored ?? '')
+  const at = Date.parse(raw)
+  if (Number.isNaN(at)) return { date: raw.slice(0, 10), time: raw.slice(11, 16) }
+
+  const local = new Date(at + IST_OFFSET_MS).toISOString()
+  return { date: local.slice(0, 10), time: local.slice(11, 16) }
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return preflight()
 
@@ -42,10 +79,12 @@ Deno.serve(async (request) => {
     return json({ ok: false, message: 'Give a from and to date as YYYY-MM-DD.' }, 400)
   }
 
-  // `to` is inclusive to the reader, so the query runs to the end of that day.
-  const toExclusive = new Date(`${to}T00:00:00Z`)
-  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1)
-  const upper = toExclusive.toISOString()
+  // Both ends are clinic midnights expressed as the UTC instants the column
+  // actually holds, so `from` starts at 00:00 in Chennai rather than at 05:30.
+  // `to` stays inclusive to the reader — the query runs to the clinic midnight
+  // that ends that day, which is 18:30 UTC on the day itself.
+  const lower = new Date(Date.parse(`${from}T00:00:00Z`) - IST_OFFSET_MS).toISOString()
+  const upper = new Date(Date.parse(`${to}T00:00:00Z`) + DAY_MS - IST_OFFSET_MS).toISOString()
 
   try {
     const rows = await db
@@ -72,7 +111,7 @@ Deno.serve(async (request) => {
             and sm.created_at >= ? and sm.created_at < ?
           order by sm.created_at`,
       )
-      .all(`${from}T00:00:00.000Z`, upper)
+      .all(lower, upper)
 
     const [unset] = (await db
       .prepare(`select count(*)::int as n from medicines where schedule = 'unset' and active = 1`)
@@ -89,15 +128,14 @@ Deno.serve(async (request) => {
             and sm.created_at >= ? and sm.created_at < ?
           order by sm.created_at`,
       )
-      .all(`${from}T00:00:00.000Z`, upper)
+      .all(lower, upper)
 
     return json({
       ok: true,
       from,
       to,
       rows: rows.map((r) => ({
-        date: String(r.created_at).slice(0, 10),
-        time: String(r.created_at).slice(11, 16),
+        ...clinicMoment(r.created_at),
         patientName: String(r.patient_name),
         patientAddress: String(r.patient_address ?? ''),
         patientPhone: String(r.patient_phone ?? ''),
@@ -110,7 +148,7 @@ Deno.serve(async (request) => {
       })),
       unsetMedicines: Number(unset?.n ?? 0),
       counterExceptions: exceptions.map((r) => ({
-        date: String(r.created_at).slice(0, 10),
+        date: clinicMoment(r.created_at).date,
         drug: String(r.medicine_name),
         quantity: Number(r.quantity),
         receiptNumber: String(r.receipt_number ?? ''),

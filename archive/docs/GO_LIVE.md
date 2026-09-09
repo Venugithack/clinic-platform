@@ -1,4 +1,4 @@
-# Clinic go-live runbook
+# Archived: clinic go-live runbook
 
 This is the final cutover sequence for the single-clinic build. Printer setup is intentionally deferred until real hardware exists.
 

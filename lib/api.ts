@@ -63,8 +63,3 @@ export async function callApi(path: string, init: RequestInit = {}): Promise<Res
 
   return fetch(`${BASE}/${path}`, { ...init, headers, cache: 'no-store' })
 }
-
-/** The URL for a link or a download, with no session attached. */
-export function apiUrl(path: string): string {
-  return `${BASE}/${path}`
-}

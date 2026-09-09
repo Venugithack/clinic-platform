@@ -1,4 +1,4 @@
-# Build plan — M0, and the gates after it
+# Archived: build plan — M0, and the gates after it
 
 `PLAN.md` is the what. This is the how, starting from an empty directory.
 

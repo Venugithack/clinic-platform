@@ -30,6 +30,7 @@ import {
   Table,
   Textarea,
   Token,
+  clinicToday,
   formatDate,
   money,
   words,
@@ -980,7 +981,7 @@ export function ClinicLetterhead({
  * somebody official is standing at the counter.
  */
 export function RegistersPanel({ data }: { data: ClinicSnapshot }) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = clinicToday()
   const monthStart = `${today.slice(0, 7)}-01`
 
   const [from, setFrom] = useState(monthStart)

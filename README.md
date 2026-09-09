@@ -1,76 +1,111 @@
 # Jayamurugan Clinic
 
-Standalone, tablet-first clinic operations for one clinic and one facility.
+Tablet-first operations software for one clinic: patient registration, queue,
+vitals, consultations, prescriptions, billing, observation beds, pharmacy
+inventory, purchasing, stock-take, registers, and WhatsApp messaging.
 
-## What is included
+## Architecture
 
-- Separate Admin, Doctor, Nurse and Pharmacy tablet workspaces
-- Patients, queue, vitals, consultation, prescriptions and billing
-- Four observation beds
-- Rx dispensing and anonymous OTC sales
-- Batch inventory, fixed-template CSV import/export and stock movements
-- Suppliers, low-stock order drafts, partial/full goods receipt
-- WhatsApp integration boundary with verified webhooks and configuration-gated sending
-- Admin printer setup guide and AirPrint/Mopria-friendly native printing
+This repository contains two separately deployed applications:
 
-The folder is intentionally independent from the parent hospital project. It has
-its own package manifest, Next.js configuration, database and environment file.
+| Part | Location | Runtime | Deployment |
+|---|---|---|---|
+| Web application | `app/`, `components/`, `lib/` | Next.js 16 static export | Cloudflare static assets |
+| Clinic backend | `supabase/functions/` | Deno Edge Functions | Supabase |
+| Database schema | `supabase/migrations/` | PostgreSQL, schema `jmc` | Supabase |
+
+The browser sends authenticated requests to `NEXT_PUBLIC_FUNCTIONS_URL`. There
+is no Next.js server and there are no Next.js API routes. `next build` writes
+the deployable frontend to `out/`.
+
+For the detailed architecture and its trade-offs, read
+[docs/README.md](docs/README.md). It is the canonical technical document.
+
+## Repository map
+
+```text
+app/                    Next.js route, layout, manifest, and global styles
+components/             Application shell, feature workspaces, and UI primitives
+lib/                    Browser API client and shared frontend helpers
+public/                 Static images, PWA icons, and Cloudflare headers
+supabase/functions/     Edge Function endpoints and shared backend modules
+supabase/migrations/    Forward-only PostgreSQL migrations
+tests/                  Small Node unit-test suite
+docs/                   Current architecture and operating notes
+archive/                Historical docs and ignored local-only reference material
+scripts/                Local maintenance utilities
+```
+
+Everything the current application does not depend on is isolated under
+[`archive/`](archive/README.md). Tracked history remains visible on GitHub;
+database backups, the old SQLite database, prototypes, and environment backups
+stay under the gitignored `archive/local/` directory. TypeScript excludes the
+entire archive.
 
 ## Local setup
 
+Requirements: Node.js 24 and npm.
+
 ```powershell
-# Navigate to the new folder first
-cd .\jayamurugan-clinic
-npm install
+npm ci
 Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:3000`. On another tablet in the same network, use the
-clinic computer's LAN address, for example `http://192.168.1.20:3000`.
+Open `http://localhost:3000`.
 
-Keep that computer on while the tablets are using the app. Every tablet connects
-to this one server, so they all see the same queue, beds, stock and order states.
+> **Live-data warning:** there is currently no local Supabase stack. The value
+> of `NEXT_PUBLIC_FUNCTIONS_URL` determines which backend receives requests.
+> If it points to the deployed project, actions from localhost change live
+> clinic data.
 
-## Seeded sign-ins
+## Commands
 
-The first local start creates demonstration accounts. Change these before using
-real data.
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Run the Next.js development server |
+| `npm run typecheck` | Type-check the web application |
+| `npm test` | Run the unit tests |
+| `npm run build` | Build the static export into `out/` |
+| `npm run preview` | Serve the built `out/` directory with Wrangler |
+| `npm run check` | Run type-checking, tests, and the production build |
 
-| Station | Username | Password |
-|---|---|---|
-| Admin | `admin` | `clinic1234` |
-| Doctor | `doctor` | `clinic1234` |
-| Nurse | `nurse` | `clinic1234` |
-| Pharmacy | `pharmacy` | `clinic1234` |
+The backend is excluded from the frontend `tsconfig.json`. Its independent
+check requires Deno:
 
-## WhatsApp status
+```bash
+deno check --node-modules-dir=none supabase/functions/**/*.ts
+```
 
-Drafts, order state, receipt state and inbound/outbound message records are part
-of the application. Real transmission stays disabled until the Meta values in
-`.env.example` are configured. The application never simulates a successful send.
+## Environment
 
-The webhook endpoint is `/api/whatsapp/webhook`. It verifies Meta signatures,
-tracks sent/delivered/read/failed updates, and answers a patient asking whether
-the doctor is in. That answer uses only a current doctor login session; there is
-no manual presence switch.
+Start from [.env.example](.env.example). The web application requires
+`NEXT_PUBLIC_FUNCTIONS_URL`; it is public and embedded into the JavaScript
+bundle during `npm run build`.
 
-## Inventory CSV
+Supabase injects `SUPABASE_DB_URL` into deployed Edge Functions. Function
+secrets such as `CLINIC_SESSION_SECRET` and the `WHATSAPP_*` values must be set
+in Supabase; Edge Functions do not read `.env.local` from this repository.
 
-Use **Inventory → CSV template** for the fixed column layout. Import validates
-the whole file before saving it, remembers the file hash to prevent accidental
-double import, and refuses to overwrite an existing batch balance. Export
-includes medicine, batch and preferred supplier details.
+Never commit `.env.local` or anything under `archive/local/`.
 
-## Printing
+## Documentation status
 
-Install an AirPrint-compatible printer for iPads or a Mopria-certified printer
-for Android tablets. Keep printer and tablet on the same private Wi-Fi. Print
-buttons open the tablet's normal system print dialog. Admin can use
-**Printer → Print test page** on each tablet before the clinic opens.
+- `docs/README.md` describes the application currently in this repository.
+- `docs/INVENTORY.md`, `docs/TABLET.md`, and `docs/WHATSAPP.md` remain useful
+  domain references, but policy-sensitive details should be revalidated.
+- `archive/docs/` contains earlier build plans, proposals, reviews, hosting
+  notes, and handovers. Treat them as historical context, not setup
+  instructions.
 
-## Local data and backup
+## Deployment
 
-The SQLite database is created at `data/jayamurugan-clinic.db` and is ignored by
-Git. Stop the app before copying the `data` folder as a backup. Keep backup
-copies encrypted and test restoring one before relying on the system.
+The two halves deploy independently:
+
+```powershell
+npm run build
+npx wrangler deploy
+```
+
+Deploy database migrations and Edge Functions with the Supabase CLI after
+linking the intended project. Deployment is not currently automated by CI.

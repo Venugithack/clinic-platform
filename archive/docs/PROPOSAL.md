@@ -1,4 +1,4 @@
-# Clinic platform — proposal
+# Archived: clinic platform — proposal
 
 Prepared for **[ clinic name ]** · [ date ]
 

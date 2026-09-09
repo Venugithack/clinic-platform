@@ -7,27 +7,52 @@ const IDLE_MINUTES = 30
 /**
  * What session tokens are hashed with before they are stored.
  *
- * The fallback exists so a fresh clone runs without ceremony, and it must never
- * survive to production — a known secret plus any read of the sessions table is
- * a way to recognise live tokens. Refusing to boot is deliberate: a warning in
- * a log nobody reads is how a development default ends up running a clinic.
+ * There is no development fallback and no condition on the refusal. There used
+ * to be both: a hardcoded default, thrown away only when
+ * `process.env.NODE_ENV === 'production'` — which an Edge Function never sets,
+ * so the guard could not fire and every deployment hashed its session tokens
+ * with a secret published in this file. A known secret plus one read of the
+ * sessions table is a way to recognise live tokens. So the refusal is absolute:
+ * anything that touches session material without a secret configured fails
+ * loudly, because a warning in a log nobody reads is how a development default
+ * ends up running a clinic.
+ *
+ * ── WHY THIS IS LAZY AND NOT A CONSTANT ─────────────────────────────────────
+ *
+ * Resolved on first use and cached, rather than at module load. Read at load it
+ * takes down every function that imports this file for any reason at all — and
+ * the lock screen imports it for `lockScreenStaff`, an unauthenticated query of
+ * names that needs no secret whatsoever. Worse, a module that throws while
+ * being evaluated never installs its handler, so what the clinic sees is the
+ * function's outermost fallback: "The clinic database is not reachable." That
+ * points whoever is debugging a fresh deployment at the database and the wifi,
+ * which is the exact wrong direction and the exact fault this file is meant to
+ * prevent. Failing where the token is actually hashed names the real problem.
+ *
+ * Read through Deno.env, the same way db.ts reads the connection string.
+ * Reading the SAME secret through process.env in one file and Deno.env in
+ * another is how token hashes quietly stop matching between two functions, with
+ * nothing in any log to say why everybody was signed out.
  */
-const sessionSecret = (() => {
-  const configured = process.env.CLINIC_SESSION_SECRET?.trim()
-  if (configured) return configured
+let cachedSessionSecret: string | null = null
 
-  if (process.env.NODE_ENV === 'production') {
+function sessionSecret(): string {
+  if (cachedSessionSecret !== null) return cachedSessionSecret
+
+  const configured = Deno.env.get('CLINIC_SESSION_SECRET')?.trim()
+  if (!configured) {
     throw new Error(
       'CLINIC_SESSION_SECRET is not set. Generate 32 random bytes and put them ' +
         'in the deployment environment before serving a clinic.',
     )
   }
 
-  return 'development-only-session-secret'
-})()
+  cachedSessionSecret = configured
+  return configured
+}
 
 function tokenHash(token: string) {
-  return createHash('sha256').update(`${sessionSecret}:${token}`).digest('hex')
+  return createHash('sha256').update(`${sessionSecret()}:${token}`).digest('hex')
 }
 
 function expiryFrom(date = new Date()) {

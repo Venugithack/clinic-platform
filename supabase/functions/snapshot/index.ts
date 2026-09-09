@@ -1,3 +1,4 @@
+import { doctorLoggedIn } from '../_shared/auth.ts'
 import { currentRevision } from '../_shared/db.ts'
 import { readSnapshot } from '../_shared/snapshot.ts'
 import { json, preflight, sessionFrom } from '../_shared/http.ts'
@@ -19,13 +20,21 @@ Deno.serve(async (request) => {
 
   try {
     const revision = await currentRevision()
+    // Presence changes on login, logout, and idle expiry, none of which are
+    // clinic data mutations. It must therefore be checked even when the data
+    // revision itself has not moved.
+    const doctorPresent = await doctorLoggedIn()
 
     const since = Number(new URL(request.url).searchParams.get('since') ?? Number.NaN)
     if (Number.isFinite(since) && since === revision) {
-      return json({ ok: true, unchanged: true, revision })
+      return json({ ok: true, unchanged: true, revision, doctorPresent })
     }
 
-    return json({ ok: true, revision, snapshot: await readSnapshot(session) })
+    return json({
+      ok: true,
+      revision,
+      snapshot: await readSnapshot(session, doctorPresent),
+    })
   } catch (error) {
     console.error('snapshot failed:', error)
     return json({ ok: false, message: 'The clinic database is not reachable.' }, 503)

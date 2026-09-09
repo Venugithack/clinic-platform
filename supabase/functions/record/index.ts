@@ -1,3 +1,4 @@
+import { hasRole } from '../_shared/auth.ts'
 import { readPatientRecord } from '../_shared/snapshot.ts'
 import { json, preflight, sessionFrom } from '../_shared/http.ts'
 
@@ -7,9 +8,12 @@ Deno.serve(async (request) => {
 
   const session = await sessionFrom(request, false)
   if (!session) return json({ ok: false, message: 'Sign in required.' }, 401)
+  if (!hasRole(session, 'doctor')) {
+    return json({ ok: false, message: 'Only a doctor can read the clinical record.' }, 403)
+  }
 
-  // Everyone who can open a patient can read that patient's record; the
-  // pharmacy counter needs the prescription and reception needs the bill.
+  // The complete record contains diagnoses and clinical notes. Billing and
+  // dispensing receive the smaller views they need through /snapshot.
   const patientId = new URL(request.url).searchParams.get('patientId') ?? ''
   if (!patientId) return json({ ok: false, message: 'No patient asked for.' }, 400)
 
