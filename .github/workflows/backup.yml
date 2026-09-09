@@ -1,26 +1,13 @@
 name: Backup
 
-# HOSTING.md §5 — encrypted off-site backups for the clinic.
-#
-# Supabase free has no PITR/downloadable backups, so this workflow dumps the
-# clinic schemas, age-encrypts the archive and sends it to Cloudflare R2.
-#
-# We deliberately do not run a hosted runner every hour. Five clinic-hours
-# snapshots plus the nightly full backup keep the recovery window reasonable
-# while avoiding ~400 billed backup runs per month.
-#
-#   Clinic-hours snapshots  09:00, 12:00, 15:00, 18:00, 21:00 IST   keep 24
-#   Nightly full            22:00 IST                                keep 30
-#   Monthly                 1st, 23:00 IST                           keep 12
-#   Worst case during clinic hours: <= 3 hours of new writes.
-#
-# The schedule also keeps the Supabase project active every day.
-# Cron is UTC and the clinic is IST (+5:30), hence :30 past.
+# Supabase Free does not include downloadable daily backups. This workflow
+# keeps encrypted logical backups off-platform and proves nightly that the same
+# schema selection can be restored onto plain PostgreSQL 17.
 
 on:
   schedule:
     - cron: '30 3,6,9,12,15 * * *' # 09:00, 12:00, 15:00, 18:00, 21:00 IST
-    - cron: '30 16 * * *'          # nightly full, 22:00 IST
+    - cron: '30 16 * * *'          # nightly, 22:00 IST
     - cron: '30 17 1 * *'          # monthly, 23:00 IST on the 1st
   workflow_dispatch:
     inputs:
@@ -30,35 +17,37 @@ on:
         options: [hourly, daily, monthly]
         default: hourly
 
+permissions:
+  contents: read
+
 concurrency:
-  # Never two dumps at once. They would race on the same R2 prefix and the
-  # prune could delete an archive the other run had just written.
-  group: backup
+  group: clinic-backup
   cancel-in-progress: false
 
 jobs:
   dump:
     name: pg_dump · age · R2
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - name: Postgres 17 client, age, rclone
+      - name: Install PostgreSQL 17 client, age and rclone
         run: |
           ./scripts/ci-pgdg.sh
           sudo apt-get install -y postgresql-client-17 age rclone
 
-      - name: Which backup is this
+      - name: Select retention bucket
         id: kind
         run: |
           case "${{ github.event.schedule }}" in
             '30 16 * * *')          echo "kind=daily"   >> "$GITHUB_OUTPUT" ;;
-            '30 17 1 * *')          echo "kind=monthly" >> "$GITHUB_OUTPUT" ;;
+            '30 17 1 * * *')        echo "kind=monthly" >> "$GITHUB_OUTPUT" ;;
             '30 3,6,9,12,15 * * *') echo "kind=hourly"  >> "$GITHUB_OUTPUT" ;;
             *)                      echo "kind=${{ inputs.kind || 'hourly' }}" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - name: Dump, encrypt, upload, prune
+      - name: Dump, encrypt, upload and prune
         env:
           BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
           BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
@@ -70,27 +59,25 @@ jobs:
           RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           RCLONE_CONFIG_R2_NO_CHECK_BUCKET: 'true'
         run: |
-          test -n "${BACKUP_DB_URL}"        || { echo "BACKUP_DB_URL is not set" >&2; exit 1; }
+          test -n "${BACKUP_DB_URL}" || { echo "BACKUP_DB_URL is not set" >&2; exit 1; }
           test -n "${BACKUP_AGE_RECIPIENT}" || { echo "BACKUP_AGE_RECIPIENT is not set" >&2; exit 1; }
           ./scripts/db-backup.sh "${{ steps.kind.outputs.kind }}"
 
-  # A backup nobody has restored is a belief, not a backup. Run this nightly,
-  # and on an explicit manual dispatch. PR CI still runs pgTAP, but does not
-  # repeat this relatively expensive full dump/restore on every code edit.
   restore-drill:
     name: restore drill
     if: github.event.schedule == '30 16 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - name: Postgres 17
+      - name: Install PostgreSQL 17
         run: |
           ./scripts/ci-pgdg.sh
           sudo apt-get install -y postgresql-17
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
-      - name: Dump the live clinic, restore it, compare counts
+      - name: Dump live clinic, restore it and compare every clinic table
         env:
           BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
           PGPORT: '54329'

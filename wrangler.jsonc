@@ -1,32 +1,28 @@
 {
-  // How Cloudflare serves the static export. HOSTING.md §2.
+  // How Cloudflare serves the clinic.
   //
-  // Deliberately the only host-specific file in the repository, and deliberately
-  // NOT inside next.config.ts — which says why: the moment the Next build grows
-  // host configuration, §7's one-day exit ramp stops being a configuration
-  // change. `next build` still writes plain files to `out/`, and Netlify, a
-  // Mumbai VPS or an S3 bucket serve that same directory unchanged. Leaving
-  // Cloudflare is deleting this file.
+  // There is no `main` and no Worker script: nothing runs here on a request.
+  // The page is static files and everything it does goes to Supabase Edge
+  // Functions next to the database, which is what keeps this free — the same
+  // arrangement that made the previous application free, for the same reason.
   //
-  // There is no `main` and no Worker script. Nothing runs on request — the app
-  // is 28 prerendered pages that talk to Supabase directly from the browser
-  // under RLS, so a Worker would have nothing to do. That also steps around the
-  // two ceilings HOSTING.md §2 was written under, a Worker's 3 MiB compressed
-  // bundle and its 10 ms CPU budget: neither applies to a file.
-  "name": "clinic-platform",
-  "compatibility_date": "2026-08-24",
+  // The Worker that briefly lived here (OpenNext, Hyperdrive, the whole Next
+  // server compiled into a Worker) is gone. It worked, but Workers allow about
+  // ten milliseconds of CPU per request and hashing one PIN needs a hundred, so
+  // roughly two sign-ins in five were cancelled as hung.
+  "name": "jayamurugan-clinic",
+  "compatibility_date": "2026-08-04",
 
   "assets": {
-    "directory": "./out",
+    "directory": "./out"
+  },
 
-    // A 404, not the app.
-    //
-    // The alternative, "single-page-application", answers every unknown path
-    // with index.html and a 200. That would put the lock screen behind a
-    // mistyped URL and tell the tablet the request succeeded — and the five
-    // screens that take their id from the query string are real prerendered
-    // routes (/consult, /patient, /rx/print), not client-side ones, so nothing
-    // here needs a fallback to work.
-    "not_found_handling": "404-page"
-  }
+  // The address the clinic actually opens. Cloudflare terminates TLS and serves
+  // the files; there is no origin server behind this.
+  "routes": [
+    {
+      "pattern": "app.jayamuruganclinic.online",
+      "custom_domain": true
+    }
+  ]
 }

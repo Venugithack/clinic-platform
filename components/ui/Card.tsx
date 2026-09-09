@@ -1,12 +1,11 @@
+import type { ReactNode } from 'react'
+
 /**
- * Law 1 as a component.
- *
- *   panel  — 1px rule.  An ordinary boundary: a list, a section, a summary.
- *   record — 2px ink.   A document: an encounter, a prescription, a bill.
- *
- * There is no third variant and no shadow. If something needs to stand out
- * beyond `record`, it is the thing happening now, and that is the ink fill —
- * which belongs to Token, not here.
+ * A surface. Two weights, and the difference is meaning, not decoration:
+ *   panel  — 1px rule. A region of the workspace.
+ *   record — 2px ink.  A document: a consultation, a prescription, a bill,
+ *            an OTC receipt, a supplier order.
+ * No shadows anywhere in this system.
  */
 export function Card({
   variant = 'panel',
@@ -14,45 +13,45 @@ export function Card({
   children,
   ...rest
 }: {
-  variant?: 'panel' | 'record';
-  className?: string;
-  children: React.ReactNode;
-} & Omit<React.HTMLAttributes<HTMLDivElement>, 'className' | 'children'>) {
-  const edge =
-    variant === 'record' ? 'border-2 border-ink' : 'border border-rule';
-
+  variant?: 'panel' | 'record'
+  className?: string
+  children: ReactNode
+} & Omit<React.HTMLAttributes<HTMLElement>, 'children' | 'className'>) {
+  const weight = variant === 'record' ? 'border-2 border-ink' : 'border border-rule'
   return (
-    <div className={`rounded-box bg-sheet ${edge} ${className}`} {...rest}>
+    <section className={`rounded-box bg-sheet ${weight} ${className}`} {...rest}>
       {children}
-    </div>
-  );
+    </section>
+  )
 }
 
-/**
- * The header rule matches the card's own edge weight — a document's masthead is
- * ruled as heavily as its border, a panel's is not.
- */
+/** Card header. `sub` carries the identifying value, so it is set in mono. */
 export function CardHeader({
-  variant = 'panel',
-  className = '',
-  children,
+  title,
+  sub,
+  action,
 }: {
-  variant?: 'panel' | 'record';
-  className?: string;
-  children: React.ReactNode;
+  title: string
+  sub?: ReactNode
+  action?: ReactNode
 }) {
-  const rule =
-    variant === 'record' ? 'border-b-2 border-ink' : 'border-b border-rule';
-
-  return <div className={`px-4 py-3 ${rule} ${className}`}>{children}</div>;
+  return (
+    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-rule px-4 py-3">
+      <div className="min-w-0">
+        <h2 className="eyebrow">{title}</h2>
+        {sub ? <div className="mt-1 font-mono text-[14px] text-ink">{sub}</div> : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </header>
+  )
 }
 
 export function CardBody({
   className = '',
   children,
 }: {
-  className?: string;
-  children: React.ReactNode;
+  className?: string
+  children: ReactNode
 }) {
-  return <div className={`px-4 py-3 ${className}`}>{children}</div>;
+  return <div className={`px-4 py-3 ${className}`}>{children}</div>
 }

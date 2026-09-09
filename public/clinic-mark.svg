@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Jayamurugan Clinic">
+  <rect width="128" height="128" rx="8" fill="#191c1a"/>
+  <path d="M64 25v78M25 64h78" stroke="#e7e6e0" stroke-width="18" stroke-linecap="butt"/>
+  <circle cx="96" cy="96" r="13" fill="#c2620e" stroke="#191c1a" stroke-width="6"/>
+</svg>

@@ -1,59 +1,86 @@
+import type { ButtonHTMLAttributes, ReactNode } from 'react'
+
 /**
- * Four variants. The label names the outcome, and keeps the word through the
- * flow — a button that says "Dispense" leaves a row that reads "Dispensed",
- * never "Submit" leaving "Success".
+ * Buttons say what happens when they are used, and keep that word through the
+ * whole flow: the control that says "Dispense" produces a row that says
+ * "Dispensed". No "Submit" anywhere in this app.
  *
- * Sizing is the clinic's, not the brief's. TABLET.md §2 rule 2: 44px minimum
- * for anything tappable, 56px for anything primary or destructive, because a
- * 32px target is fine with a mouse and a genuine hazard for a pharmacist's
- * finger sitting next to "cancel prescription". `primary` and `danger`
- * therefore default to the larger size rather than offering it as an option.
- * eslint tablet/min-touch-target fails the build if this slips.
- *
- * There is no hover state. There is no cursor (TABLET.md §2 rule 1); the
- * feedback is `active:`, which a finger does trigger.
+ * Adapted from the hospital application. Same four variants and the same
+ * tracked caps; the geometry is the tablet departure — `sm` is 44px and `md`
+ * is 48px, because every one of these is pressed with a thumb rather than
+ * clicked. There is no smaller size on purpose.
  */
-/*
- * Note the disabled treatment on `primary`: it loses the fill rather than
- * merely fading it.
- *
- * A 40%-opacity ink fill is still a solid slab, and in the action rail it
- * outweighed the enabled outline buttons beside it — the heaviest thing on the
- * screen was the one action you could not take, which is exactly backwards.
- * Dropping to an outline puts a disabled primary below an enabled secondary in
- * the visual order, where it belongs.
- */
-const VARIANTS = {
-  primary:
-    'border-ink bg-ink text-paper disabled:border-rule disabled:bg-transparent disabled:text-ink-3',
-  default: 'border-ink bg-transparent text-ink disabled:opacity-40',
-  ghost: 'border-transparent bg-transparent text-ink-2 disabled:opacity-40',
-  danger: 'border-stop bg-transparent text-stop disabled:opacity-40',
-} as const;
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
+
+const VARIANTS: Record<Variant, string> = {
+  primary: 'border-ink bg-ink text-paper hover:bg-ink/85',
+  secondary: 'border-ink bg-transparent text-ink hover:bg-ink/8',
+  ghost: 'border-transparent bg-transparent text-ink-2 hover:text-ink hover:bg-ink/6',
+  danger: 'border-stop bg-transparent text-stop hover:bg-stop-wash',
+}
+
+const SIZES = {
+  sm: 'min-h-[44px] px-3 py-1.5 text-[12px]',
+  md: 'min-h-[48px] px-4 py-2 text-[13px]',
+} as const
 
 export function Button({
-  variant = 'default',
-  size,
-  className = '',
-  type = 'button',
+  variant = 'secondary',
+  size = 'md',
   children,
+  className = '',
   ...rest
 }: {
-  variant?: keyof typeof VARIANTS;
-  size?: 'md' | 'lg';
-  className?: string;
-} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  // Primary and destructive are 56px unless a caller insists otherwise.
-  const resolved = size ?? (variant === 'primary' || variant === 'danger' ? 'lg' : 'md');
-  const height = resolved === 'lg' ? 'h-14' : 'h-11';
-
+  variant?: Variant
+  size?: keyof typeof SIZES
+  children: ReactNode
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
-      type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-box border px-4 text-xs font-semibold uppercase tracking-[0.08em] active:opacity-80 ${height} ${VARIANTS[variant]} ${className}`}
+      type="button"
+      className={`inline-flex items-center justify-center gap-1.5 rounded-box border font-semibold tracking-[0.08em] uppercase transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...rest}
     >
       {children}
     </button>
-  );
+  )
+}
+
+/**
+ * A button that cannot be pressed twice.
+ *
+ * Every write in this clinic goes over the network to one SQLite file shared
+ * by four tablets, so a double tap is a double bill or a double stock
+ * movement. `busy` disables and relabels in one place rather than at each of
+ * the forty call sites.
+ */
+export function ActionButton({
+  busy = false,
+  busyLabel = 'Working…',
+  disabledReason,
+  children,
+  disabled,
+  ...rest
+}: {
+  busy?: boolean
+  /** Shown in place of the label while the request is in flight. */
+  busyLabel?: string
+  /**
+   * Why this control cannot be used. Rendered as the title so a disabled
+   * button always explains itself instead of silently refusing.
+   */
+  disabledReason?: string
+  children: ReactNode
+} & Omit<Parameters<typeof Button>[0], 'children'>) {
+  const off = busy || disabled
+  return (
+    <Button
+      disabled={off}
+      title={disabled && disabledReason ? disabledReason : rest.title}
+      aria-disabled={off || undefined}
+      {...rest}
+    >
+      {busy ? busyLabel : children}
+    </Button>
+  )
 }

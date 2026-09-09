@@ -1,43 +1,48 @@
-/**
- * The outcome, stated where the action was taken.
- *
- * Inline, at the top of the screen the work happened on. Never a toast: a
- * pharmacist looking down at a strip while the confirmation fades out has not
- * been told anything, and the one message that matters most — a refusal — is
- * the one they were least likely to be looking at.
- *
- * role="status" so a screen reader announces it without stealing focus from
- * whatever is being typed.
- *
- * Refusals name who can act, never a code. "Only the doctor can void a bill"
- * tells the counter what to do next; "Error: unauthorised (403)" tells them to
- * find someone with a laptop.
- */
-const TONES = {
-  good: 'border-free bg-free-wash text-free',
-  bad: 'border-stop bg-stop-wash text-stop',
-  attn: 'border-attn bg-attn-wash text-attn',
-  plain: 'border-rule bg-paper text-ink-2',
-  neutral: 'border-rule bg-paper text-ink-2',
-} as const;
+'use client'
 
+import type { ReactNode } from 'react'
+
+/**
+ * The outcome of an action, stated where the action was taken.
+ *
+ * The command API refuses with a sentence naming what went wrong rather than a
+ * code, so this renders that sentence verbatim. Errors do not apologise and
+ * are never vague about what happened. This is the only channel for a result
+ * message — the app never uses a browser alert for a normal workflow.
+ */
 export function Notice({
-  tone = 'plain',
-  className = '',
+  tone = 'info',
   children,
-  ...rest
+  onDismiss,
 }: {
-  tone?: keyof typeof TONES;
-  className?: string;
-  children: React.ReactNode;
-} & Omit<React.HTMLAttributes<HTMLDivElement>, 'className' | 'children'>) {
+  tone?: 'info' | 'good' | 'bad'
+  children: ReactNode
+  onDismiss?: () => void
+}) {
+  const skin =
+    tone === 'bad'
+      ? 'border-stop bg-stop-wash text-stop'
+      : tone === 'good'
+        ? 'border-free bg-free-wash text-free'
+        : 'border-rule bg-paper text-ink-2'
+
   return (
     <div
       role="status"
-      className={`rounded-box border px-3 py-2 text-sm leading-relaxed ${TONES[tone]} ${className}`}
-      {...rest}
+      aria-live="polite"
+      className={`flex items-start justify-between gap-3 rounded-box border px-3 py-2.5 text-[13px] leading-relaxed ${skin}`}
     >
-      {children}
+      <span className="min-w-0">{children}</span>
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="-my-1 -mr-1 inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center font-mono text-[16px] leading-none opacity-60 hover:opacity-100"
+        >
+          ×
+        </button>
+      ) : null}
     </div>
-  );
+  )
 }
