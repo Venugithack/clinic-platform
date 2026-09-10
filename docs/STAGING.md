@@ -167,14 +167,65 @@ its runtime.
 
 ---
 
-## 5. What is still missing
+## 5. The browser gate
+
+```bash
+npm run test:browser
+```
+
+One command, which does all of it and cleans up after itself: rebuilds the
+staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
+doctor also holds admin, and the union of both roles hides exactly the gaps
+Slice 1 was fixing), builds the static export against the local functions,
+starts the functions and the page, and drives sixteen journeys through Chrome.
+
+It runs the built export rather than `next dev`, because the export is what
+Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
+time — the dev server would hide the one difference that matters.
+
+### What it covers
+
+Four-digit sign-in at both tablet orientations, a wrong PIN, Delete;
+doctor-only and nurse rails; duplicate suggestions before registration;
+registering a walk-in, issuing a token, recording two readings out of five;
+Call in carrying the patient into Consult; no sideways scroll and no control
+under 44px at 1024x768 and 768x1024; a real Tab press landing somewhere named
+and visibly marked; every control having an accessible name; a busy state
+while a command is in flight; and a dropped connection reported as words.
+
+### The third guard
+
+`guard.mjs` refuses a non-local database and the runner does the build itself,
+but both can be satisfied by somebody who then runs `npm run build` in another
+shell and leaves `out/` pointing at production. So the harness re-reads the
+built bundle before the server will serve it, and refuses if the live project
+appears anywhere in the JavaScript. Verified by building against the live URL
+on purpose and watching it refuse, naming the chunk.
+
+That matters more here than anywhere else in this repository: this suite
+registers patients, issues queue tokens and records vitals. Against the wrong
+backend it would do all of that to the clinic, and there is no undo.
+
+### One environment note
+
+The browser is launched outside whatever sandbox the shell is in, so it cannot
+reach a port bound inside one. If every journey fails to reach the page while
+`curl` reaches it happily, that is the cause — run the gate from an ordinary
+shell.
+
+---
+
+## 6. What is still missing
 
 Named rather than implied, in the register `docs/README.md` §6 uses.
 
-**There is no browser suite yet.** The foundation exists — a database, a
-backend on `127.0.0.1:54321`, and fixtures to click through — but no test
-drives a tablet through a visit. `agent-browser` is a devDependency and is the
-obvious tool; nothing has been built on it.
+**The browser suite runs, and does not run in CI.** `npm run test:browser`
+drives sixteen journeys through a real Chrome — see §6. It is not wired into
+`.github/workflows/ci.yml`: the runner would need Docker for the staging
+database (which GitHub's ubuntu images have) and a Chrome download via
+`agent-browser install` (which they do not), and a pipeline that goes red for
+a missing browser teaches people to ignore it. Adding it is a small job and a
+deliberate one.
 
 **Deno is not a dependency of this repository**, and does not need to become
 one. `npm exec` fetches the pinned version on demand, so the check CI runs is

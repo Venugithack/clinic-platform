@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/password.test.ts tests/order-status.test.ts",
     "test:db": "node --import ./tests/support/register.mjs --test --test-concurrency=1 \"tests/characterization/*.test.mjs\"",
+    "test:browser": "node scripts/staging/browser-gate.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "staging:up": "node scripts/staging/up.mjs",
     "staging:down": "node scripts/staging/down.mjs",
