@@ -93,7 +93,11 @@ export async function makeStaff({
   name = 'Test Staff',
   username,
   roles = ['admin'],
-  pin = '482913',
+  pin = '4829',
+  // Derived from the PIN's length rather than defaulted, so a test that asks
+  // for a six-digit PIN gets a staff member who can actually use it. Pass it
+  // explicitly only to build the broken pairing on purpose.
+  pinFormat = pin.length === 6 ? 'legacy_six' : 'four',
   active = true,
 } = {}) {
   staffCounter += 1
@@ -101,11 +105,14 @@ export async function makeStaff({
   const secret = await password.hashPassword(pin)
   await admin.unsafe(
     `insert into jmc.staff
-       (id, name, username, phone, roles_json, pin_hash, pin_salt, active, created_at)
-     values ($1,$2,$3,'',$4,$5,$6,$7, to_char(now() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS"Z"'))`,
-    [id, name, username ?? `staff${staffCounter}`, JSON.stringify(roles), secret.hash, secret.salt, active ? 1 : 0],
+       (id, name, username, phone, roles_json, pin_hash, pin_salt, pin_format, active, created_at)
+     values ($1,$2,$3,'',$4,$5,$6,$7,$8, to_char(now() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS"Z"'))`,
+    [
+      id, name, username ?? `staff${staffCounter}`, JSON.stringify(roles),
+      secret.hash, secret.salt, pinFormat, active ? 1 : 0,
+    ],
   )
-  return { id, name, username: username ?? `staff${staffCounter}`, roles, pin }
+  return { id, name, username: username ?? `staff${staffCounter}`, roles, pin, pinFormat }
 }
 
 /** The SessionView shape the command layer expects, without a sign-in round trip. */

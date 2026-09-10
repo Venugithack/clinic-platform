@@ -34,7 +34,20 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
         <PatientsPanel
           data={data}
           run={run}
-          canRegister={!roles.includes('doctor') || roles.includes('admin') || roles.includes('nurse')}
+          /*
+           * Admin, doctor and nurse may register; the pharmacy counter may
+           * not. That is exactly what `create_patient` enforces, and saying
+           * it the same way here means the button is present when the command
+           * would succeed.
+           *
+           * The expression this replaces read
+           * `!roles.includes('doctor') || roles.includes('admin') || roles.includes('nurse')`,
+           * which is false for a doctor-only account — so the one person the
+           * clinic most needs to be able to register a walk-in when the nurse
+           * is away was the one person shown no button. The backend had always
+           * allowed it; only the screen said no.
+           */
+          canRegister={roles.some((role) => role === 'admin' || role === 'doctor' || role === 'nurse')}
         />
       )
     case 'queue':

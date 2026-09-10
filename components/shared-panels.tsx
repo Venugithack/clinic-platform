@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { BedView, ClinicSnapshot, PatientView, Role } from '@/lib/types'
-import { useBusy, type ActionRunner } from './clinic-context'
+import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
 import { callApi } from '@/lib/api'
 import {
   ActionButton,
@@ -32,6 +32,7 @@ import {
   Token,
   clinicToday,
   formatDate,
+  formatDay,
   money,
   words,
 } from '@/components/ui'
@@ -204,6 +205,164 @@ export function OverviewPanel({ data }: { data: ClinicSnapshot }) {
   )
 }
 
+/** One patient the register already holds who might be this one. */
+type PossibleMatch = {
+  id: string
+  name: string
+  age: number
+  sex: string
+  phone: string
+  createdAt: string
+  matchedOn: 'phone' | 'name'
+  /** Absent when no age was typed to compare against. */
+  ageMatches?: boolean
+}
+
+/**
+ * Who might this already be?
+ *
+ * Asked while the name and the number are being typed, and answered above the
+ * Save button, because a duplicate patient is only cheap to avoid before it
+ * exists. Three rules hold this screen honest and none of them is negotiable:
+ * it never merges anything, it never picks a match on the clinic's behalf, and
+ * it never stops the desk creating the patient in front of them. Two people in
+ * one street really do share a name, and the person at the desk can see which
+ * of them is standing there.
+ *
+ * It goes to the command endpoint directly rather than through `run`, which is
+ * the only read on this screen that does. `run` marks the whole clinic busy —
+ * every button on every panel — and posts its answer into the shared notice
+ * bar, and neither of those belongs on a keystroke.
+ */
+async function findPossibleMatches(
+  name: string,
+  phone: string,
+  age: string,
+): Promise<PossibleMatch[]> {
+  const response = await callApi('command', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'find_possible_duplicates',
+      // An age of nothing is left out rather than sent as 0, which would make
+      // every candidate look like a different person.
+      payload: { name, phone, age: Number(age) || undefined },
+    }),
+  })
+  const body = (await response.json()) as { ok: boolean; data?: { matches?: PossibleMatch[] } }
+  return body.ok && body.data?.matches ? body.data.matches : []
+}
+
+/** Why this candidate is being shown, in a sentence rather than a field name. */
+function whyShown(match: PossibleMatch): string {
+  const because = match.matchedOn === 'phone' ? 'Same mobile number' : 'Same name'
+  const age =
+    match.ageMatches === undefined
+      ? 'no age typed to compare'
+      : match.ageMatches
+        ? 'and about the same age'
+        : 'but a different age — probably another person'
+  return `${because}, ${age}`
+}
+
+/**
+ * The candidates, and what to do about them.
+ *
+ * Deliberately plain: a list, a sentence saying why each one is here, and one
+ * action per row that opens that patient instead of creating a new one. There
+ * is no merge button and there is no "these are the same person" — the clinic
+ * has no way to unpick either afterwards.
+ */
+function PossibleMatches({
+  matches,
+  checking,
+  opened,
+  selectedId,
+  onOpen,
+}: {
+  matches: PossibleMatch[]
+  checking: boolean
+  /** The candidate this desk opened, if it opened one. */
+  opened: PossibleMatch | null
+  selectedId: string
+  onOpen: (match: PossibleMatch) => void
+}) {
+  const said =
+    opened && opened.id === selectedId ? (
+      <Notice tone="good">
+        <span className="font-semibold">{opened.name}</span> is the patient this tablet is now
+        working on — their existing record, not a new one. Add them to today&rsquo;s queue beside
+        this form, or go straight to Vitals or Consult.
+      </Notice>
+    ) : null
+
+  if (matches.length === 0) {
+    if (said) return said
+    return checking ? (
+      <p className="text-[12px] text-ink-2">Looking for this patient on the register…</p>
+    ) : null
+  }
+
+  return (
+    <div className="space-y-2">
+      {said}
+      {/* Kept on screen after one is opened, because the second thing a desk
+          does is discover it opened the wrong Kamala. */}
+      <div className="border-l-2 border-attn pl-3">
+        <p className="eyebrow">
+          {matches.length === 1
+            ? 'One patient already on the register'
+            : `${matches.length} patients already on the register`}
+        </p>
+        <p className="mt-1 text-[12px] leading-snug text-ink-2">
+          Check whether one of these is the person in front of you. Opening one uses their record
+          and their history; nothing is merged, and if this really is somebody new you can still
+          register them below.
+        </p>
+        <div className="mt-2 space-y-2">
+          {matches.map((match) => (
+            <div
+              key={match.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-box border border-rule bg-sheet px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="text-[15px] font-semibold">{match.name}</p>
+                <p className="mt-0.5 font-mono text-[12px] text-ink-2">
+                  {match.age} years · {match.sex} · {match.phone} · registered{' '}
+                  {formatDay(match.createdAt)}
+                </p>
+                <p className="mt-0.5 text-[12px] leading-snug text-ink-2">{whyShown(match)}</p>
+              </div>
+              {match.id === selectedId ? (
+                <Badge tone="live">Open</Badge>
+              ) : (
+                <Button
+                  className="min-h-[48px] shrink-0"
+                  onClick={() => onOpen(match)}
+                  aria-label={`Open the existing record for ${match.name}`}
+                >
+                  This is the patient
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Now, as this tablet's clock reads it, for a `datetime-local` blank.
+ *
+ * The queue is filled in for somebody standing at the desk, so the common case
+ * is this minute and the uncommon one is typed over it. `toISOString()` would
+ * put the field five and a half hours behind the clinic.
+ */
+function nowOnThisTablet(): string {
+  const now = new Date()
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
 export function PatientsPanel({
   data,
   run,
@@ -214,21 +373,93 @@ export function PatientsPanel({
   canRegister?: boolean
 }) {
   const busy = useBusy()
+  const { patientId, select } = useSelectedPatient()
   const [messaging, setMessaging] = useState<PatientView | null>(null)
+
+  // The three fields the duplicate check reads are held here; the rest of the
+  // registration form stays uncontrolled, as the other forms in this app are.
+  const [name, setName] = useState('')
+  const [age, setAge] = useState('')
+  const [phone, setPhone] = useState('')
+  const [matches, setMatches] = useState<PossibleMatch[]>([])
+  const [checking, setChecking] = useState(false)
+  const [opened, setOpened] = useState<PossibleMatch | null>(null)
+  const [justRegistered, setJustRegistered] = useState<{ name: string; phone: string } | null>(null)
+
+  /**
+   * A patient who has just been registered is the patient being worked on.
+   *
+   * `create_patient` answers with a sentence rather than an id, so the new row
+   * is found in the snapshot that came back with it. Without this the desk
+   * registers somebody and is then made to find that same person in a
+   * dropdown of everybody, one second later, to give them a token.
+   */
+  useEffect(() => {
+    if (!justRegistered) return
+    const registered = data.patients
+      .filter(
+        (patient) =>
+          patient.name === justRegistered.name && patient.phone === justRegistered.phone,
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    if (!registered) return
+    select(registered.id)
+    setJustRegistered(null)
+  }, [justRegistered, data.patients, select])
+
+  useEffect(() => {
+    // The server answers nothing below this much to go on, so do not ask it on
+    // every letter of a name that has only just started.
+    if (name.trim().length < 2 && phone.replace(/\D/g, '').length < 6) {
+      setMatches([])
+      setChecking(false)
+      return
+    }
+
+    let current = true
+    setChecking(true)
+    const timer = window.setTimeout(() => {
+      void findPossibleMatches(name, phone, age)
+        .then((found) => {
+          if (current) setMatches(found)
+        })
+        .catch(() => {
+          // A failed question is not a failed registration. The desk carries
+          // on; the worst case is a duplicate somebody merges by hand later.
+          if (current) setMatches([])
+        })
+        .finally(() => {
+          if (current) setChecking(false)
+        })
+    }, 400)
+
+    return () => {
+      current = false
+      window.clearTimeout(timer)
+    }
+  }, [name, age, phone])
 
   async function addPatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = event.currentTarget
     const values = new FormData(form)
     const result = await run('create_patient', {
-      name: values.get('name'),
-      age: values.get('age'),
+      name,
+      age,
       sex: values.get('sex'),
-      phone: values.get('phone'),
+      phone,
       address: values.get('address'),
       whatsappConsent: values.get('whatsappConsent') === 'on',
     })
-    if (result.ok) form.reset()
+    if (result.ok) {
+      setJustRegistered({ name, phone })
+      form.reset()
+      setName('')
+      setAge('')
+      setPhone('')
+      setMatches([])
+      setOpened(null)
+    }
   }
 
   async function addAppointment(event: FormEvent<HTMLFormElement>) {
@@ -236,7 +467,9 @@ export function PatientsPanel({
     const form = event.currentTarget
     const values = new FormData(form)
     const result = await run('create_appointment', {
-      patientId: values.get('patientId'),
+      // The patient the clinic is working on, not a second choice from a
+      // second dropdown. Selecting a duplicate candidate above lands here.
+      patientId,
       reason: values.get('reason'),
       scheduledAt: values.get('scheduledAt'),
     })
@@ -257,10 +490,25 @@ export function PatientsPanel({
             <form onSubmit={addPatient} className="space-y-4">
               <FieldRow>
                 <Field label="Full name" required>
-                  <Input name="name" required autoComplete="off" />
+                  <Input
+                    name="name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    required
+                    autoComplete="off"
+                  />
                 </Field>
                 <Field label="Age" unit="years" required>
-                  <Input name="age" type="number" min="0" max="130" inputMode="numeric" required />
+                  <Input
+                    name="age"
+                    type="number"
+                    min="0"
+                    max="130"
+                    inputMode="numeric"
+                    value={age}
+                    onChange={(event) => setAge(event.target.value)}
+                    required
+                  />
                 </Field>
                 <Field label="Sex">
                   <Select name="sex" defaultValue="female">
@@ -270,7 +518,14 @@ export function PatientsPanel({
                   </Select>
                 </Field>
                 <Field label="Mobile number" required>
-                  <Input name="phone" type="tel" inputMode="tel" required />
+                  <Input
+                    name="phone"
+                    type="tel"
+                    inputMode="tel"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                    required
+                  />
                 </Field>
                 <Field label="Address" className="sm:col-span-2">
                   <Input name="address" />
@@ -281,17 +536,35 @@ export function PatientsPanel({
                 label="WhatsApp consent recorded"
                 hint="Without it this patient cannot be messaged."
               />
+
+              {/* Before the create action, never after it. After is a report
+                  of a mistake; before is a chance not to make it. */}
+              <PossibleMatches
+                matches={matches}
+                checking={checking}
+                opened={opened}
+                selectedId={patientId}
+                onOpen={(match) => {
+                  select(match.id)
+                  setOpened(match)
+                }}
+              />
+
               <ActionButton type="submit" variant="primary" busy={busy} busyLabel="Saving…">
                 Save patient
               </ActionButton>
             </form>
           </Disclosure>
 
-          <Disclosure label="Add an appointment" hint="Issues the next token in the queue">
+          <Disclosure label="Add to today's queue" hint="Issues the next token in the queue">
             <form onSubmit={addAppointment} className="space-y-4">
               <FieldRow>
                 <Field label="Patient" required className="sm:col-span-2">
-                  <Select name="patientId" required defaultValue="">
+                  <Select
+                    value={patientId}
+                    onChange={(event) => select(event.target.value)}
+                    required
+                  >
                     <option value="" disabled>
                       Choose patient
                     </option>
@@ -306,11 +579,19 @@ export function PatientsPanel({
                   <Input name="reason" required />
                 </Field>
                 <Field label="Date and time" required>
-                  <Input name="scheduledAt" type="datetime-local" required />
+                  <Input name="scheduledAt" type="datetime-local" defaultValue={nowOnThisTablet()} required />
                 </Field>
               </FieldRow>
-              <ActionButton type="submit" variant="primary" busy={busy} busyLabel="Adding…">
-                Add to queue
+              <ActionButton
+                type="submit"
+                variant="primary"
+                className="min-h-[56px]"
+                busy={busy}
+                busyLabel="Adding…"
+                disabled={patientId === ''}
+                disabledReason="Choose the patient first."
+              >
+                Add to today&rsquo;s queue
               </ActionButton>
             </form>
           </Disclosure>
@@ -337,18 +618,31 @@ export function PatientsPanel({
                 <TH>Last BP</TH>
                 <TH>WhatsApp</TH>
                 <TH>Message</TH>
+                <TH>Work on</TH>
               </TR>
             </THead>
             <TBody>
               {data.patients.map((patient) => {
                 const latestVital = data.vitals.find((vital) => vital.patientId === patient.id)
+                const open = patient.id === patientId
                 return (
-                  <TR key={patient.id}>
+                  <TR key={patient.id} active={open}>
                     <TD className="font-semibold">{patient.name}</TD>
                     <TD num>{patient.age}</TD>
                     <TD className="text-ink-2">{patient.sex}</TD>
                     <TD num>{patient.phone}</TD>
-                    <TD num>{latestVital?.bp ?? '—'}</TD>
+                    {/* An em dash means no reading was ever taken for this
+                        patient; "Not measured" means one was taken without a
+                        blood pressure in it. They are different facts. */}
+                    <TD num>
+                      {!latestVital ? (
+                        '—'
+                      ) : latestVital.bp ? (
+                        latestVital.bp
+                      ) : (
+                        <span className="text-[11px] text-ink-2">Not measured</span>
+                      )}
+                    </TD>
                     <TD>
                       <Badge tone={patient.whatsappConsent ? 'free' : 'plain'}>
                         {patient.whatsappConsent ? 'Consented' : 'No consent'}
@@ -358,6 +652,20 @@ export function PatientsPanel({
                       <Button size="sm" onClick={() => setMessaging(patient)} data-print="hide">
                         WhatsApp
                       </Button>
+                    </TD>
+                    <TD>
+                      {open ? (
+                        <Badge tone="live">Open</Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          data-print="hide"
+                          aria-label={`Work on ${patient.name}`}
+                          onClick={() => select(patient.id)}
+                        >
+                          Open
+                        </Button>
+                      )}
                     </TD>
                   </TR>
                 )

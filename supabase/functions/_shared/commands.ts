@@ -43,18 +43,37 @@ function booleanValue(payload: Payload, key: string) {
 }
 
 /**
- * Six digits, and not a birthday-shaped run of one.
+ * Four digits, and not a birthday-shaped run of one.
  *
- * The length is fixed rather than a minimum because the lock screen draws six
- * dots and submits on the sixth — a variable-length PIN would need a confirm
+ * ── WHY FOUR, AND WHAT HAS TO BE TRUE FOR THAT TO BE ALL RIGHT ─────────────
+ *
+ * The owner asked for four; six was slowing down a person who signs in dozens
+ * of times a day. Four digits is ten thousand combinations, which is not a
+ * password and was never treated as one. `TABLET.md` §5 lists what has to hold
+ * for it to be acceptable, and every item on that list is already here and
+ * must stay here: one PIN per staff member, wrong attempts throttled
+ * server-side and charged to the caller, salted scrypt at Node's default cost,
+ * a thirty-minute idle expiry, every session revoked on reset, an audit event
+ * per write, and weak patterns refused. Four digits plus five attempts per
+ * fifteen minutes is a different proposition from four digits alone.
+ *
+ * The length is fixed rather than a minimum because the lock screen draws the
+ * dots and submits on the last one — a variable-length PIN needs a confirm
  * button, which is a tap every staff member pays hundreds of times a day.
+ *
+ * This is the rule for SETTING a PIN, so it is four and only four. Signing in
+ * with an old six-digit PIN still works until that person is reset; that lives
+ * in auth.ts, against the format recorded on their row.
  */
 function requirePin(payload: Payload, key: string): string {
   const pin = String(payload[key] ?? '').trim()
-  if (!/^\d{6}$/.test(pin)) throw new Error('A PIN is exactly six digits.')
-  if (/^(\d)\1{5}$/.test(pin)) throw new Error('That PIN is the same digit six times. Choose another.')
+  if (!/^\d{4}$/.test(pin)) throw new Error('A PIN is exactly four digits.')
+  if (/^(\d)\1{3}$/.test(pin)) throw new Error('That PIN is the same digit four times. Choose another.')
+  // The runs wrap deliberately, so 8901 and 1098 are refused too — they are
+  // the same keypad gesture as 1234, and with only ten thousand combinations
+  // there is no reason to leave the obvious ones available.
   if ('012345678901234567890'.includes(pin) || '098765432109876543210'.includes(pin)) {
-    throw new Error('That PIN is six digits in a row. Choose another.')
+    throw new Error('That PIN is four digits in a row. Choose another.')
   }
   return pin
 }
@@ -116,6 +135,59 @@ async function sequence(prefix: keyof typeof SERIES) {
     .prepare(`select nextval('jmc.${SERIES[prefix]}') as value`)
     .get()) as { value: string | number }
   return `${prefix}-${String(row.value).padStart(4, '0')}`
+}
+
+/**
+ * One shape for a moment in time, whoever wrote it.
+ *
+ * `appointments.scheduled_at` is TEXT and the queue is `order by
+ * scheduled_at`, so the ordering is a string comparison — which is fine while
+ * every value has the same shape and silently wrong the moment two do not.
+ *
+ * Two do. The desk form is an `<input type="datetime-local">` and sends
+ * `2026-09-11T10:30`, local and with no zone. Everything written in code
+ * sends `new Date().toISOString()` — `2026-09-11T05:30:00.000Z`, UTC and five
+ * and a half hours behind the clinic. Sorted as text, `2026-09-11T0…` beats
+ * `2026-09-11T1…`, so an eleven o'clock walk-in booked from Consult comes out
+ * ABOVE a quarter-past-nine appointment booked at the desk, and a patient is
+ * called in out of turn. Nothing errors and the queue simply looks wrong.
+ *
+ * So both are normalised here, on the way in, to the ISO-UTC shape the rest
+ * of the schema uses. A value carrying a zone is taken at its word; a naive
+ * one is read as clinic time, because the person who typed it into a tablet
+ * in Chennai meant Chennai.
+ *
+ * Postgres does the conversion rather than JavaScript: `Date` parses a naive
+ * string as the RUNTIME's local zone, and the runtime here is UTC, so doing
+ * it in JS would move every desk appointment five and a half hours.
+ *
+ * ── AND THE PARAMETER IS FORCED TO text FIRST ──────────────────────────────
+ *
+ * `?::timestamp` looks like it says the same thing as `(?::text)::timestamp`
+ * and does not. Given the first, the driver decides the parameter is a
+ * timestamp, parses the string in JavaScript and sends the result in UTC — so
+ * '09:15' arrives already converted as 03:45, and the `at time zone` below
+ * then shifts it a second time and books the patient for a quarter to four in
+ * the morning. Measured, not guessed: the round trip returns 03:45 through
+ * the first form and 09:15 through the second. Casting from text hands
+ * Postgres the characters that were typed and nothing else.
+ */
+async function clinicInstant(raw: string): Promise<string> {
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(raw)
+  const row = (await db
+    .prepare(
+      hasZone
+        // Already absolute. Re-rendered so the text shape matches everything else.
+        ? `select to_char(((?::text)::timestamptz) at time zone 'utc',
+                          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at`
+        // Naive, and therefore clinic-local.
+        : `select to_char((((?::text)::timestamp) at time zone 'Asia/Kolkata') at time zone 'utc',
+                          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at`,
+    )
+    .get(raw)) as { at: string } | undefined
+
+  if (!row?.at) throw new Error('scheduledAt is not a time.')
+  return row.at
 }
 
 function parsedLines(payload: Payload): Line[] {
@@ -247,6 +319,73 @@ function buildOrderDraft(supplierName: string, orderNumber: string, lines: Array
 
 export async function runCommand(session: SessionView, action: string, payload: Payload) {
   switch (action) {
+    /**
+     * Who might this already be?
+     *
+     * Asked before a patient is created, never instead of creating one. It
+     * returns candidates and takes no action: the plan is explicit that the
+     * clinic never merges patient records automatically, and a duplicate that
+     * a person decided to create is a smaller problem than two histories
+     * silently joined into one.
+     *
+     * A read, so it is outside `transaction()` and bumps no revision.
+     */
+    case 'find_possible_duplicates': {
+      requireRole(session, 'admin', 'doctor', 'nurse')
+      const name = optional(payload, 'name')
+      // Last ten digits. The same person is '+91 98765 43210' to the nurse,
+      // '9876543210' to the doctor and '098765 43210' on the referral slip,
+      // and matching those as strings finds nothing.
+      const digits = optional(payload, 'phone').replace(/\D/g, '').slice(-10)
+      const age = Number(payload.age)
+
+      if (name.length < 2 && digits.length < 6) return { message: 'Nothing to match on.', data: { matches: [] } }
+
+      const matches = await db
+        .prepare(
+          `select id, name, age, sex, phone, created_at,
+                  case
+                    when ?::text <> '' and right(regexp_replace(phone, '\\D', '', 'g'), 10) = ?::text then 'phone'
+                    else 'name'
+                  end as matched_on
+             from patients
+            where (?::text <> '' and right(regexp_replace(phone, '\\D', '', 'g'), 10) = ?::text)
+               or (?::text <> ''
+                    and lower(regexp_replace(name, '\\s+', ' ', 'g'))
+                      = lower(regexp_replace(?::text, '\\s+', ' ', 'g')))
+            order by created_at desc
+            limit 5`,
+        )
+        .all(
+          digits.length >= 6 ? digits : '', digits.length >= 6 ? digits : '',
+          digits.length >= 6 ? digits : '', digits.length >= 6 ? digits : '',
+          name.length >= 2 ? name.trim() : '', name.length >= 2 ? name.trim() : '',
+        )
+
+      return {
+        // Nothing changed, so /command must not answer with a whole new
+        // snapshot. This runs debounced while somebody types a name, and a
+        // full clinic download per keystroke on clinic wifi is the difference
+        // between a type-ahead and a type-and-wait.
+        unchanged: true,
+        message: matches.length === 0 ? 'No existing patient matches.' : `${matches.length} possible match(es).`,
+        data: {
+          matches: matches.map((row) => ({
+            id: String(row.id),
+            name: String(row.name),
+            age: Number(row.age),
+            sex: String(row.sex),
+            phone: String(row.phone),
+            createdAt: String(row.created_at),
+            matchedOn: String(row.matched_on),
+            // Shown next to a candidate so the nurse can tell "same name,
+            // different person" from "same person" without opening the record.
+            ageMatches: Number.isFinite(age) ? Math.abs(Number(row.age) - age) <= 2 : undefined,
+          })),
+        },
+      }
+    }
+
     case 'create_patient': {
       requireRole(session, 'admin', 'doctor', 'nurse')
       const id = randomUUID()
@@ -268,13 +407,30 @@ export async function runCommand(session: SessionView, action: string, payload: 
     }
 
     case 'create_appointment': {
-      requireRole(session, 'admin', 'nurse')
+      // The doctor is here because of the nurse's day off.
+      //
+      // He could already register a patient and record their vitals; the one
+      // thing he could not do was put them in the queue, which meant that on
+      // a day without a nurse the clinic's own doctor had to borrow somebody
+      // else's account to see a patient — and every write for the rest of
+      // that visit was then attributed to whoever's account it was. A
+      // capability gap that is worked around with a shared login is worse
+      // than the capability.
+      //
+      // Signing the consultation stays doctor-only, and an admin who is not
+      // also a doctor still cannot sign one. Authority follows the clinical
+      // role; this is about who may start the visit, not who may treat.
+      requireRole(session, 'admin', 'doctor', 'nurse')
       const id = randomUUID()
+      // Normalised before the transaction opens: it is a read, it cannot fail
+      // in a way the transaction should roll back, and a bad time should be
+      // refused before a token number is burnt on it.
+      const scheduledAt = await clinicInstant(value(payload, 'scheduledAt'))
       await transaction(async () => {
         const token = await sequence('JMC')
         await db.prepare(`insert into appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
           values (?,?,?,?,?,'waiting',?)`).run(
-            id, value(payload, 'patientId'), token, value(payload, 'reason'), value(payload, 'scheduledAt'), isoNow(),
+            id, value(payload, 'patientId'), token, value(payload, 'reason'), scheduledAt, isoNow(),
           )
         await audit(session.staffId, 'appointment.created', 'appointment', id, `Created appointment ${token}`)
       })
@@ -295,15 +451,58 @@ export async function runCommand(session: SessionView, action: string, payload: 
     case 'add_vitals': {
       requireRole(session, 'admin', 'doctor', 'nurse')
       const id = randomUUID()
+
+      /**
+       * A reading that was taken, or nothing.
+       *
+       * Every one of these was required until now, so a doctor working alone
+       * with no pulse oximeter to hand could save all five or none. What
+       * happens then is not that he goes and finds an oximeter: he types 98,
+       * because it usually is, and the record acquires a measurement nobody
+       * took. A missing reading is a gap somebody can fill in later; an
+       * invented one is indistinguishable from a real one forever.
+       *
+       * So absent means NOT MEASURED and is stored as NULL. An out-of-range
+       * value is still refused — the point is to allow a blank, not to stop
+       * checking the numbers that are there.
+       */
+      const reading = (key: string, minimum: number, whole = false) => {
+        const raw = payload[key]
+        if (raw == null || String(raw).trim() === '') return null
+        const measured = numberValue(payload, key, minimum)
+        return whole ? Math.floor(measured) : measured
+      }
+      const bp = optional(payload, 'bp') || null
+      const temperature = reading('temperature', 30)
+      const pulse = reading('pulse', 1, true)
+      const spo2 = reading('spo2', 1, true)
+      const weight = reading('weight', 1)
+
+      // The database enforces this too. It is repeated here so the tablet is
+      // told what to do about it rather than shown a constraint violation.
+      if (bp === null && temperature === null && pulse === null && spo2 === null && weight === null) {
+        throw new Error('Record at least one reading.')
+      }
+
       await transaction(async () => {
         await db.prepare(`insert into vitals
-          (id,patient_id,bp,temperature,pulse,spo2,weight,recorded_by,recorded_at)
-          values (?,?,?,?,?,?,?,?,?)`).run(
-            id, value(payload, 'patientId'), value(payload, 'bp'), numberValue(payload, 'temperature', 30),
-            Math.floor(numberValue(payload, 'pulse', 1)), Math.floor(numberValue(payload, 'spo2', 1)),
-            numberValue(payload, 'weight', 1), session.staffId, isoNow(),
+          (id,patient_id,bp,temperature,pulse,spo2,weight,not_measured_note,recorded_by,recorded_at)
+          values (?,?,?,?,?,?,?,?,?,?)`).run(
+            id, value(payload, 'patientId'), bp, temperature, pulse, spo2, weight,
+            optional(payload, 'notMeasuredNote'), session.staffId, isoNow(),
           )
-        await audit(session.staffId, 'vitals.recorded', 'vitals', id, 'Recorded patient vitals')
+        const missing = (
+          [['BP', bp], ['temperature', temperature], ['pulse', pulse], ['SpO2', spo2], ['weight', weight]] as const
+        ).filter(([, taken]) => taken === null).map(([label]) => label)
+        await audit(
+          session.staffId,
+          'vitals.recorded',
+          'vitals',
+          id,
+          missing.length === 0
+            ? 'Recorded patient vitals'
+            : `Recorded patient vitals; not measured: ${missing.join(', ')}`,
+        )
       })
       return { message: 'Vitals saved.' }
     }
@@ -384,9 +583,13 @@ export async function runCommand(session: SessionView, action: string, payload: 
       if (roles.length === 0) throw new Error('Choose at least one role.')
       const secret = await hashPassword(requirePin(payload, 'pin'))
       await transaction(async () => {
+        // pin_format is named rather than left to the column default. The
+        // default is 'four' and would be right, but a PIN written by one
+        // statement and its length recorded by another is exactly the pair
+        // that drifts — and drifting here means somebody cannot sign in.
         await db.prepare(`insert into staff
-          (id,name,username,phone,roles_json,pin_hash,pin_salt,active,created_at)
-          values (?,?,?,?,?,?,?,1,?)`).run(
+          (id,name,username,phone,roles_json,pin_hash,pin_salt,pin_format,active,created_at)
+          values (?,?,?,?,?,?,?,'four',1,?)`).run(
             id, value(payload, 'name'), value(payload, 'username').toLowerCase(), optional(payload, 'phone'),
             JSON.stringify(roles), secret.hash, secret.salt, isoNow(),
           )
@@ -399,20 +602,41 @@ export async function runCommand(session: SessionView, action: string, payload: 
       requireRole(session, 'admin')
       const staffId = value(payload, 'staffId')
       const secret = await hashPassword(requirePin(payload, 'pin'))
+      const resettingSelf = staffId === session.staffId
       await transaction(async () => {
+        // pin_format moves to 'four' in the same statement that writes the
+        // hash. Two statements would leave a window in which the stored hash
+        // is four digits and the row still says six, and everything about
+        // signing in during the migration is decided by that column.
         const changed = await db
-          .prepare('update staff set pin_hash=?,pin_salt=? where id=? and active=1')
+          .prepare(`update staff set pin_hash=?,pin_salt=?,pin_format='four' where id=? and active=1`)
           .run(secret.hash, secret.salt, staffId)
         if (changed.changes !== 1) throw new Error('That staff member was not found.')
 
         // Their existing sessions die with the old PIN. Changing a PIN is what
         // somebody does when they think it is known, and leaving a signed-in
         // tablet open would defeat the point of changing it.
+        //
+        // That includes the administrator's own sessions when they reset
+        // themselves, which is not an oversight: it is the last step of the
+        // clinic's reset runbook. The admin resets everyone else, resets
+        // themselves last, is signed out by this line, and signs in again on
+        // the spot to prove the new PIN works before leaving the building.
         await db.prepare('delete from sessions where staff_id=?').run(staffId)
         await db.prepare('delete from pin_attempts where staff_id=?').run(staffId)
-        await audit(session.staffId, 'staff.pin_set', 'staff', staffId, 'Set a new sign-in PIN')
+        await audit(
+          session.staffId,
+          'staff.pin_set',
+          'staff',
+          staffId,
+          resettingSelf ? 'Reset their own sign-in PIN' : 'Set a new sign-in PIN',
+        )
       })
-      return { message: 'New PIN saved. They will be asked for it next time.' }
+      return {
+        message: resettingSelf
+          ? 'New PIN saved. You have been signed out — sign in again now to check it works.'
+          : 'New PIN saved. They will be asked for it next time.',
+      }
     }
 
     case 'update_clinic_settings': {

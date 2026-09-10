@@ -46,6 +46,18 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
     { id: 'queue', label: 'Queue', eyebrow: "Today's flow" },
     { id: 'consultation', label: 'Consult', eyebrow: 'Doctor workspace' },
+    // The nurse's station, on the doctor's rail, for the days there is no
+    // nurse. Slice 1's gate is that a doctor alone can register a patient,
+    // create the visit, record what vitals he can and open the consultation
+    // without borrowing somebody else's login — and the command layer has
+    // allowed him to record vitals all along. Only the rail said no, so
+    // `Record vitals` on the queue and in Consult rendered for nobody who
+    // needed it.
+    //
+    // For a staff member holding both roles this entry and the nurse's are
+    // the same station and `navigationFor` keeps one of them; either label is
+    // accurate, so which one wins does not matter.
+    { id: 'vitals', label: 'Vitals', eyebrow: 'When the nurse is away' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
     { id: 'records', label: 'Records', eyebrow: 'Clinical record' },
     { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count' },

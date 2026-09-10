@@ -183,6 +183,30 @@ count rather than explaining a variance afterwards. The query is cheap: any
 `prescription`-type movement whose total for one prescription exceeds the
 quantity in that prescription's `items_json`.
 
+### 35. The queue could call a patient out of turn — FIXED in code 2026-09-11, existing rows still mixed
+
+`appointments.scheduled_at` is a text column and the queue is sorted by it, so
+the ordering is a string comparison. Two different shapes were being written
+into it: the desk form's `datetime-local` value (`2026-09-11T10:30`, local, no
+timezone) and, from anything written in code, `toISOString()`
+(`2026-09-11T05:30:00.000Z`, UTC). Sorted as text, `2026-09-11T0…` sorts before
+`2026-09-11T1…` — so an 11:00 walk-in appeared **above** a 09:15 appointment
+and the wrong patient was called in. Nothing errored; the queue simply looked
+wrong, which is the kind of fault that gets blamed on the nurse.
+
+Slice 1 made it likelier rather than causing it: the new doctor-alone path
+books from Consult, in code, in ISO. Fixed by normalising every value to ISO
+UTC on the way in, with a naive time read as clinic time — the person typing
+into a tablet in Chennai means Chennai. Covered by
+`tests/characterization/queue-order.test.mjs`.
+
+**Owner question:** rows written before today still hold both shapes, so a
+historical queue can still read out of order. Correcting them is a one-off
+UPDATE against production data and therefore needs your approval and a
+rehearsal on a restored copy first. It affects only how old appointments sort
+in a report; it changes no clinical or financial record. Worth doing, not
+urgent.
+
 ### 33. A zero fee and no fee are the same thing
 
 `save_consultation` writes no bill at all when the fee is zero. A deliberately

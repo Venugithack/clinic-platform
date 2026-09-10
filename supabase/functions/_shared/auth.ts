@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import type { Role, SessionView } from './types.ts'
+import type { LockScreenStaffView, PinFormat, Role, SessionView } from './types.ts'
+import { PIN_LENGTH } from './types.ts'
 import { db, isoNow } from './db.ts'
 import { verifyPassword } from './password.ts'
 
@@ -67,6 +68,7 @@ type StaffAuthRow = {
   pin_hash: string
   pin_salt: string
   active: number
+  pin_format: PinFormat
 }
 
 /**
@@ -98,16 +100,30 @@ type SessionRow = {
  * works in, so somebody can point at themselves. No PIN material, no phone
  * number, no identifiers beyond the one needed to sign in.
  */
-export async function lockScreenStaff() {
+export async function lockScreenStaff(): Promise<LockScreenStaffView[]> {
   const rows = await db
-    .prepare('select id,name,roles_json from staff where active=1 order by name')
+    .prepare('select id,name,roles_json,pin_format from staff where active=1 order by name')
     .all()
 
   return rows.map((row) => ({
     id: String(row.id),
     name: String(row.name),
     roles: JSON.parse(String(row.roles_json)) as Role[],
+    // So the pad knows when to submit. See LockScreenStaffView for why this
+    // is worth disclosing and what the alternatives cost.
+    pinLength: PIN_LENGTH[String(row.pin_format) as PinFormat] ?? 6,
   }))
+}
+
+/**
+ * Active staff still on a six-digit PIN — the PIN migration's progress bar,
+ * and its exit gate. Six-digit compatibility is removed when this is zero.
+ */
+export async function legacyPinCount(): Promise<number> {
+  const row = (await db
+    .prepare(`select count(*)::int as count from staff where active=1 and pin_format='legacy_six'`)
+    .get()) as { count: number } | undefined
+  return Number(row?.count ?? 0)
 }
 
 /** Wrong PINs from this caller inside the window. */
@@ -130,10 +146,31 @@ export async function createSession(
     return { reason: 'locked', minutes: PIN_ATTEMPT_WINDOW_MINUTES }
   }
 
-  const staff = (await db.prepare(`select id,name,username,roles_json,pin_hash,pin_salt,active
+  const staff = (await db.prepare(`select id,name,username,roles_json,pin_hash,pin_salt,active,pin_format
     from staff where id=?`).get(staffId)) as StaffAuthRow | undefined
 
-  if (!staff || !staff.active || !(await verifyPassword(pin, staff.pin_salt, staff.pin_hash))) {
+  // The PIN offered has to be the length this account actually holds.
+  //
+  // Not a formality. Accepting either length from everybody for the duration
+  // of the migration would halve the search space for every account at once,
+  // including the ones already reset — the opposite of what the migration is
+  // for. Checked here rather than in the caller so there is one copy of it,
+  // and folded into the same refusal below so the ANSWER is the same as for a
+  // wrong PIN and the attempt still costs the caller a try.
+  //
+  // The timing is not the same: a wrong length skips scrypt and comes back in
+  // a millisecond, so it is measurably distinguishable. That is deliberate and
+  // costs nothing, because the length it would reveal is already published on
+  // the lock screen — `pinLength` has to be there for the pad to know when to
+  // submit. Spending a hundred milliseconds of an Edge Function's two-second
+  // budget hiding a public fact would be the wrong trade.
+  // Digits and a length, checked separately rather than by building a regex
+  // out of a template literal — `\d` inside one is the character 'd', so the
+  // pattern silently becomes ^d{4}$ and refuses every PIN in the clinic.
+  const expectedLength = staff ? PIN_LENGTH[staff.pin_format] ?? 6 : 0
+  const rightShape = staff !== undefined && pin.length === expectedLength && /^\d+$/.test(pin)
+
+  if (!staff || !staff.active || !rightShape || !(await verifyPassword(pin, staff.pin_salt, staff.pin_hash))) {
     // Recorded against the caller even when the staff id is nonsense, so
     // guessing ids is rate-limited on exactly the same budget as guessing PINs.
     await db

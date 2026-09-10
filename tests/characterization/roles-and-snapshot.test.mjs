@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict'
 import { after, describe, test } from 'node:test'
 import { snapshot } from '../support/backend.mjs'
-import { as, clinicDate, closeClinic, makeStaff, resetClinic, scalar, sessionFor } from '../support/clinic.mjs'
+import { as, clinicDate, closeClinic, makeStaff, resetClinic, rows, scalar, sessionFor } from '../support/clinic.mjs'
 
 after(async () => { await closeClinic() })
 
@@ -146,7 +146,6 @@ describe('the snapshot is scoped by role, at the query rather than after it', ()
 
 describe('who may do what', () => {
   const forbidden = [
-    ['doctor', 'create_appointment', 'the doctor cannot put a patient in the queue'],
     ['doctor', 'dispense_rx', 'the doctor cannot dispense'],
     ['doctor', 'pay_bill', 'the doctor cannot collect payment'],
     ['nurse', 'save_consultation', 'the nurse cannot sign a consultation'],
@@ -163,25 +162,75 @@ describe('who may do what', () => {
     })
   }
 
-  test('the doctor CANNOT create today’s visit — Slice 1 is what changes this', async () => {
+  test('the doctor can run the whole check-in alone, on a day with no nurse', async () => {
     const staff = await everyRole()
 
-    // The brief's Slice 1 gate: "a doctor alone can find/register a patient,
-    // create the visit, record available vitals, and open consultation". Two
-    // of those four already work; this is the one that does not.
+    // The brief's Slice 1 gate, end to end and in one account: find or
+    // register the patient, create today's visit, record what vitals he can,
+    // and open the consultation. Creating the visit was the missing third of
+    // it — before Slice 1 the doctor had to borrow the nurse's login, which
+    // then attributed every write for the rest of that visit to her.
     await as(staff.doctor, 'create_patient', {
       name: 'Walk In', age: 30, sex: 'male', phone: '+915550000009',
     })
+    const walkIn = String(await scalar(`select id from jmc.patients where name='Walk In'`))
+
+    await as(staff.doctor, 'create_appointment', {
+      patientId: walkIn, reason: 'Fever', scheduledAt: new Date().toISOString(),
+    })
+    const appointmentId = String(await scalar('select id from jmc.appointments where patient_id=$1', [walkIn]))
+    assert.ok(appointmentId)
+    assert.equal(await scalar('select status from jmc.appointments where id=$1', [appointmentId]), 'waiting')
+
+    // No pulse oximeter to hand, because the nurse has it. Recording four of
+    // five is allowed; inventing the fifth is what this exists to prevent.
     await as(staff.doctor, 'add_vitals', {
-      patientId: staff.patientId, bp: '120/80', temperature: 37, pulse: 72, spo2: 98, weight: 60,
+      patientId: walkIn, bp: '120/80', temperature: 37.2, pulse: 76, weight: 64,
+      notMeasuredNote: 'No oximeter in the cabin',
     })
 
+    await as(staff.doctor, 'save_consultation', {
+      patientId: walkIn, appointmentId, diagnosis: 'Viral fever', consultationFee: 0,
+    })
+
+    assert.equal(await scalar('select status from jmc.appointments where id=$1', [appointmentId]), 'done')
+
+    // And every one of those writes is attributed to the doctor himself.
+    const actors = await scalar(
+      `select count(distinct actor_id)::int from jmc.audit_events where actor_id=$1`, [staff.doctor.id],
+    )
+    assert.equal(actors, 1)
+  })
+
+  test('the doctor still cannot dispense or take payment', async () => {
+    const staff = await everyRole()
+
+    // Widening check-in does not widen anything else. The pharmacy counter
+    // and the cash drawer are somebody else's job, and the capability matrix
+    // in PRODUCT_UX_PLAN.md §5.5 says so.
+    await assert.rejects(as(staff.doctor, 'dispense_rx', { prescriptionId: 'x' }), /role cannot perform/)
+    await assert.rejects(as(staff.doctor, 'pay_bill', { billId: 'x' }), /role cannot perform/)
+  })
+
+  test('the nurse and admin can still start a visit', async () => {
+    const staff = await everyRole()
+
+    for (const role of ['nurse', 'admin']) {
+      await as(staff[role], 'create_appointment', {
+        patientId: staff.patientId, reason: 'Review', scheduledAt: new Date().toISOString(),
+      })
+    }
+    assert.equal(await scalar('select count(*)::int from jmc.appointments'), 2)
+  })
+
+  test('the pharmacy counter still cannot start a visit', async () => {
+    const staff = await everyRole()
+
     await assert.rejects(
-      as(staff.doctor, 'create_appointment', {
+      as(staff.pharmacy, 'create_appointment', {
         patientId: staff.patientId, reason: 'Fever', scheduledAt: new Date().toISOString(),
       }),
       /role cannot perform/,
-      'when the nurse is away the doctor cannot start the visit',
     )
   })
 
@@ -200,26 +249,81 @@ describe('who may do what', () => {
   })
 })
 
-describe('vitals are all-or-nothing, which blocks the doctor-alone flow', () => {
-  test('every vital sign is required; "not measured" cannot be recorded', async () => {
+describe('a reading nobody took is recorded as not taken', () => {
+  test('a partial set saves, and the missing readings come back absent — not zero', async () => {
     const staff = await everyRole()
 
-    // The plan needs `Not measured` for the doctor working alone with no
-    // pulse oximeter to hand. Today an absent value is refused, and the only
-    // way past it is to invent a number — which is worse than a blank.
-    await assert.rejects(
-      as(staff.nurse, 'add_vitals', {
-        patientId: staff.patientId, bp: '120/80', temperature: 37, pulse: 72, weight: 60,
-      }),
-      /spo2 must be at least/,
-    )
+    // Every field was required until Slice 1, so a doctor with no pulse
+    // oximeter could save all five or none. What people do then is type 98,
+    // because it usually is — and the record acquires a measurement nobody
+    // took, indistinguishable from a real one forever.
+    await as(staff.doctor, 'add_vitals', {
+      patientId: staff.patientId, bp: '120/80', temperature: 37.2, pulse: 76, weight: 64,
+      notMeasuredNote: 'No oximeter in the cabin',
+    })
 
+    const [row] = await rows('select bp, temperature, pulse, spo2, weight, not_measured_note from jmc.vitals')
+    assert.equal(row.bp, '120/80')
+    assert.equal(Number(row.pulse), 76)
+    assert.equal(row.spo2, null, 'not measured is NULL, never 0')
+    assert.equal(row.not_measured_note, 'No oximeter in the cabin')
+
+    // And it survives the trip to the tablet as absence. `num()` would have
+    // read the null as 0, and a SpO2 of 0 on a screen reads as a patient who
+    // is not breathing.
+    const seen = (await snapshot.readSnapshot(sessionFor(staff.doctor))).vitals[0]
+    assert.equal(seen.spo2, undefined)
+    assert.equal(seen.pulse, 76)
+    assert.equal(seen.notMeasuredNote, 'No oximeter in the cabin')
+  })
+
+  test('a single reading is enough', async () => {
+    const staff = await everyRole()
+
+    await as(staff.doctor, 'add_vitals', { patientId: staff.patientId, temperature: 38.4 })
+
+    const seen = (await snapshot.readSnapshot(sessionFor(staff.doctor))).vitals[0]
+    assert.equal(seen.temperature, 38.4)
+    assert.equal(seen.bp, undefined)
+    assert.equal(seen.weight, undefined)
+  })
+
+  test('a row of nothing at all is refused', async () => {
+    const staff = await everyRole()
+
+    // "Not measured" must not become a way to save an empty record. The
+    // database enforces this too; the command says so first, so the tablet is
+    // told what to do rather than shown a constraint violation.
     await assert.rejects(
-      as(staff.nurse, 'add_vitals', {
-        patientId: staff.patientId, bp: '', temperature: 37, pulse: 72, spo2: 98, weight: 60,
-      }),
-      /bp is required/,
+      as(staff.doctor, 'add_vitals', { patientId: staff.patientId }),
+      /at least one reading/,
     )
+    await assert.rejects(
+      as(staff.doctor, 'add_vitals', { patientId: staff.patientId, bp: '', notMeasuredNote: 'nothing to hand' }),
+      /at least one reading/,
+    )
+    assert.equal(await scalar('select count(*)::int from jmc.vitals'), 0)
+  })
+
+  test('a reading that IS given is still range-checked', async () => {
+    const staff = await everyRole()
+
+    // Allowing a blank is not the same as no longer checking the numbers.
+    await assert.rejects(
+      as(staff.doctor, 'add_vitals', { patientId: staff.patientId, temperature: 12 }),
+      /temperature must be at least/,
+    )
+  })
+
+  test('what was not measured is named in the audit trail', async () => {
+    const staff = await everyRole()
+
+    await as(staff.doctor, 'add_vitals', { patientId: staff.patientId, bp: '118/76' })
+
+    const summary = String(await scalar(
+      `select summary from jmc.audit_events where action='vitals.recorded'`,
+    ))
+    assert.match(summary, /not measured: temperature, pulse, SpO2, weight/)
   })
 
   test('a repeated reading is retained rather than replacing the first', async () => {

@@ -20,10 +20,17 @@ import { Buffer } from 'node:buffer'
  * The callback form does the same work on the platform's own threadpool, so the
  * loop stays free and the watchdog stays quiet.
  *
- * The cost parameters are deliberately left at Node's defaults. A six-digit PIN
- * carries about twenty bits of entropy, so the only thing standing between a
- * stolen hash and the PIN is how expensive each guess is — this is not the
- * place to buy speed.
+ * The cost parameters are deliberately left at Node's defaults, and Slice 1
+ * made that matter more rather than less. A six-digit PIN carried about twenty
+ * bits of entropy; a four-digit one carries about thirteen, which is ten
+ * thousand possibilities — a number a laptop exhausts instantly if it ever
+ * gets the hashes. Nothing stands between a stolen hash and the PIN except how
+ * expensive each guess is, so this is emphatically not the place to buy speed.
+ *
+ * The other half of that argument lives elsewhere and has to stay there: the
+ * server-side attempt throttling in auth.ts is what keeps four digits
+ * defensible against someone guessing at the lock screen rather than against
+ * someone holding the table.
  */
 
 function derive(secret: string, salt: string): Promise<Buffer> {

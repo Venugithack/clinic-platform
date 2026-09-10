@@ -28,7 +28,7 @@ import type {
   VitalView,
 } from './types.ts'
 import { db } from './db.ts'
-import { doctorLoggedIn, hasRole } from './auth.ts'
+import { doctorLoggedIn, hasRole, legacyPinCount } from './auth.ts'
 import { whatsappStatus } from './whatsapp.ts'
 
 type Row = Record<string, unknown>
@@ -66,6 +66,21 @@ const text = (value: unknown) => String(value ?? '')
 const optional = (value: unknown) => (value == null ? undefined : String(value))
 const num = (value: unknown) => Number(value ?? 0)
 const flag = (value: unknown) => Boolean(Number(value ?? 0))
+
+/**
+ * A number that might not have been measured.
+ *
+ * `num` reads null as 0, which is right for a count and catastrophic for a
+ * reading: a SpO2 nobody took would arrive at the tablet as 0 and read as a
+ * patient who is not breathing. Absence has to survive the trip.
+ */
+const maybeNum = (value: unknown) => (value == null ? undefined : Number(value))
+/** As above, for a reading that is text — blood pressure is "120/80". */
+const maybeText = (value: unknown) => {
+  if (value == null) return undefined
+  const asText = String(value)
+  return asText === '' ? undefined : asText
+}
 
 /**
  * The one row, or sensible blanks if the migration has run but nobody has
@@ -286,9 +301,12 @@ export async function readSnapshot(
   // that screen, and a record of who was last at the tablet and when is exactly
   // the sort of thing a colleague should have to be an admin to read.
   const staff: StaffView[] = staffAdmin
-    ? (await all(`select id,name,username,phone,roles_json,active,last_login from staff order by name`)).map((r) => ({
+    ? (await all(`select id,name,username,phone,roles_json,active,last_login,pin_format from staff order by name`)).map((r) => ({
         id: text(r.id), name: text(r.name), username: text(r.username), phone: text(r.phone),
         roles: JSON.parse(text(r.roles_json)) as Role[], active: flag(r.active), lastLogin: optional(r.last_login),
+        // The reset queue. An admin working through the PIN migration needs to
+        // see who is still on six digits without asking them one at a time.
+        pinFormat: text(r.pin_format) === 'legacy_six' ? 'legacy_six' : 'four',
       }))
     : []
 
@@ -334,8 +352,11 @@ export async function readSnapshot(
   const vitals: VitalView[] = careRegister
     ? (await all(`select v.*,s.name recorded_by_name from vitals v
         join staff s on s.id=v.recorded_by order by v.recorded_at desc limit 200`)).map((r) => ({
-        id: text(r.id), patientId: text(r.patient_id), bp: text(r.bp), temperature: num(r.temperature), pulse: num(r.pulse),
-        spo2: num(r.spo2), weight: num(r.weight), recordedBy: text(r.recorded_by_name), recordedAt: text(r.recorded_at),
+        id: text(r.id), patientId: text(r.patient_id), bp: maybeText(r.bp),
+        temperature: maybeNum(r.temperature), pulse: maybeNum(r.pulse),
+        spo2: maybeNum(r.spo2), weight: maybeNum(r.weight),
+        notMeasuredNote: text(r.not_measured_note),
+        recordedBy: text(r.recorded_by_name), recordedAt: text(r.recorded_at),
       }))
     : []
 
@@ -563,6 +584,10 @@ export async function readSnapshot(
       : [],
     settings: await readSettings(),
     doctorPresent: knownDoctorPresence ?? await doctorLoggedIn(),
+    // Zero is the PIN migration's exit gate. Only an admin is told the figure;
+    // for anybody else it is a rollout number and none of their business, and
+    // 0 is the honest answer to "how many resets are waiting for you".
+    legacyPinCount: staffAdmin ? await legacyPinCount() : 0,
     whatsapp: whatsappStatus(),
   }
 }
@@ -613,8 +638,10 @@ export async function readPatientRecord(patientId: string): Promise<PatientRecor
       signedAt: text(r.signed_at), dispensedAt: optional(r.dispensed_at),
     })),
     vitals: vitals.map((r) => ({
-      id: text(r.id), patientId: text(r.patient_id), bp: text(r.bp), temperature: num(r.temperature),
-      pulse: num(r.pulse), spo2: num(r.spo2), weight: num(r.weight),
+      id: text(r.id), patientId: text(r.patient_id), bp: maybeText(r.bp),
+      temperature: maybeNum(r.temperature), pulse: maybeNum(r.pulse),
+      spo2: maybeNum(r.spo2), weight: maybeNum(r.weight),
+      notMeasuredNote: text(r.not_measured_note),
       recordedBy: text(r.recorded_by_name), recordedAt: text(r.recorded_at),
     })),
     bills: bills.map((r) => ({

@@ -141,21 +141,47 @@ const supplierPhone = (n) => `+999703000${String(n).padStart(3, '0')}`
 // ---------------------------------------------------------------------------
 
 /**
- * Six PINs, all six digits, because that is what `requirePin` in `commands.ts`
- * enforces today. None of them is a repeated digit or a run, which that
- * function also rejects — a fixture PIN the validator would refuse is a
- * fixture PIN that cannot be re-created through `create_staff` in a test.
+ * Six PINs, and deliberately not all the same length.
  *
- * Slice 1 cuts the PIN to four digits. When it does, this constant and the
- * hashes derived from it are the only things in this file that change.
+ * Slice 1 moves the clinic from a six-digit PIN to a four-digit one, and a
+ * stored scrypt hash cannot be shortened — so there is a stretch of the
+ * rollout during which both lengths are live, one per staff member, recorded
+ * in `staff.pin_format`. That stretch is the interesting state and it is what
+ * these fixtures sit in: two people already reset, four still waiting.
+ *
+ * A fixture where everybody has been migrated would never exercise the
+ * compatibility path, and one where nobody has would never exercise the new
+ * one. Neither would catch the failure that matters — a six-digit PIN offered
+ * to an account that has been reset, or the reverse.
+ *
+ * None of them is a repeated digit or a run, which `requirePin` rejects: a
+ * fixture PIN the validator would refuse is one that cannot be re-created
+ * through `create_staff` in a test.
  */
 export const FIXTURE_PINS = {
-  doctor: '481902',
-  nurse: '730514',
+  doctor: '4819',
+  nurse: '7305',
   pharmacist: '268137',
   manager: '905283',
   relief: '614729',
   departed: '357046',
+}
+
+/**
+ * Where each of them is in the migration. `four` means they have been reset;
+ * `legacy_six` means an admin still has to sit down with them.
+ *
+ * Keep this in step with FIXTURE_PINS — a four-digit PIN marked `legacy_six`
+ * cannot sign in, which is the whole point of the column and an annoying way
+ * to discover it.
+ */
+export const FIXTURE_PIN_FORMATS = {
+  doctor: 'four',
+  nurse: 'four',
+  pharmacist: 'legacy_six',
+  manager: 'legacy_six',
+  relief: 'legacy_six',
+  departed: 'legacy_six',
 }
 
 /**
@@ -1056,6 +1082,7 @@ export async function seedClinic(sql, options = {}) {
         roles_json: rolesJson(staff.roles),
         pin_hash: secrets[key].hash,
         pin_salt: secrets[key].salt,
+        pin_format: FIXTURE_PIN_FORMATS[key],
         active: staff.active ? 1 : 0,
         last_login: staff.active ? clock.at(0, '08:30') : null,
         created_at: clock.at(-420, '09:00'),

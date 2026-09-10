@@ -8,6 +8,20 @@ export interface SessionView {
   lastSeen: string
 }
 
+/**
+ * Which length of PIN a staff member currently holds.
+ *
+ * `legacy_six` is the old six-digit PIN, still accepted until that person is
+ * reset. `four` is the new one. A stored scrypt hash cannot be converted, so
+ * the only way from one to the other is an admin resetting the person in front
+ * of them — and the only way to know how far the clinic has got is to count
+ * the rows still on `legacy_six`.
+ */
+export type PinFormat = 'legacy_six' | 'four'
+
+/** How many digits that format is, which is what the lock screen's pad needs. */
+export const PIN_LENGTH: Record<PinFormat, 4 | 6> = { legacy_six: 6, four: 4 }
+
 export interface StaffView {
   id: string
   name: string
@@ -16,6 +30,30 @@ export interface StaffView {
   roles: Role[]
   active: boolean
   lastLogin?: string
+  /** Admin-only view. Drives the reset queue during the PIN migration. */
+  pinFormat: PinFormat
+}
+
+/**
+ * One name on the lock screen.
+ *
+ * Deliberately thin, and deliberately unauthenticated: this list is served to
+ * anybody who can reach the clinic's URL, so everything on it is public.
+ *
+ * `pinLength` is the one thing here that is not simply a label. The pad
+ * submits on the last digit rather than making every staff member tap a
+ * confirm button hundreds of times a day, so it has to know whether this
+ * person's PIN is four digits or six. That does tell a stranger which accounts
+ * have been migrated, which is a real if small disclosure — the alternative is
+ * a confirm button for everyone, or a pad that guesses and locks people out of
+ * their own clinic by submitting early. It is also information an attacker
+ * obtains in one attempt anyway.
+ */
+export interface LockScreenStaffView {
+  id: string
+  name: string
+  roles: Role[]
+  pinLength: 4 | 6
 }
 
 export interface PatientView {
@@ -39,14 +77,28 @@ export interface AppointmentView {
   status: 'waiting' | 'in_consult' | 'done' | 'cancelled'
 }
 
+/**
+ * One set of readings, with the ones nobody took left out.
+ *
+ * Every field except the identifiers is optional, and an absent field means
+ * NOT MEASURED — never zero. The clinic runs days without a nurse, and the
+ * alternative to a blank is a doctor typing a plausible number for a reading
+ * he did not take, which is worse than a gap because nothing downstream can
+ * tell it from a real one.
+ *
+ * At least one reading is always present; the database refuses a row of
+ * nothing.
+ */
 export interface VitalView {
   id: string
   patientId: string
-  bp: string
-  temperature: number
-  pulse: number
-  spo2: number
-  weight: number
+  bp?: string
+  temperature?: number
+  pulse?: number
+  spo2?: number
+  weight?: number
+  /** Why something is missing, in the recorder's own words. Optional. */
+  notMeasuredNote: string
   recordedBy: string
   recordedAt: string
 }
@@ -386,6 +438,13 @@ export interface ClinicSnapshot {
   supplierReturns: SupplierReturnView[]
   settings: ClinicSettingsView
   doctorPresent: boolean
+  /**
+   * Active staff still holding a six-digit PIN. Zero is the PIN migration's
+   * exit gate — six-digit compatibility comes out of the code when this
+   * reaches it, and not before. Admin sees the number; everybody else gets 0,
+   * because it is a rollout figure and not their business.
+   */
+  legacyPinCount: number
   whatsapp: {
     configured: boolean
     businessNumberConfigured: boolean

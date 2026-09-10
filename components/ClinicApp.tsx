@@ -1,10 +1,23 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
-import { BusyContext, type ActionRunner } from './clinic-context'
+import type { ClinicSnapshot, CommandResponse, LockScreenStaffView, Role } from '@/lib/types'
+import { BusyContext, SelectedPatientContext, type ActionRunner } from './clinic-context'
 import { callApi, readToken, writeToken } from '@/lib/api'
 import { navigationFor, ROLE_LABEL, type View } from './navigation'
+
+/**
+ * How many digits a PIN chosen from here has.
+ *
+ * Four, matching `requirePin` in the backend. It is a constant rather than a
+ * literal because the number appears in six places on the first-start screen
+ * — the dots, the two prompts, the confirm comparison, the ready check — and
+ * five of those agreeing with the server while the sixth does not is an
+ * administrator account on a clinic with no other staff that nobody can sign
+ * into. The rule this must agree with is in
+ * supabase/functions/bootstrap/index.ts.
+ */
+const NEW_PIN_LENGTH = 4
 import { WorkspaceRouter } from './workspace-router'
 import {
   ActionButton,
@@ -37,6 +50,20 @@ export function ClinicApp() {
   const [notice, setNotice] = useState<{ tone: 'good' | 'bad'; message: string } | null>(null)
   const [view, setView] = useState<View>('overview')
   const [menuOpen, setMenuOpen] = useState(false)
+
+  /**
+   * The patient the clinic is currently working on, held above the
+   * workspaces rather than inside each of them.
+   *
+   * Queue, Vitals and Consult each used to keep their own copy, so the same
+   * patient was chosen from the same all-patient dropdown three times in one
+   * visit. The plan's first principle is that work follows the patient; this
+   * is where that stops being a principle.
+   *
+   * It lives beside `view` because the two move together — `Call in` selects
+   * a patient and opens Consult, and either half alone is useless.
+   */
+  const [selectedPatientId, setSelectedPatientId] = useState('')
 
   // The revision the screen is showing. A ref rather than state because it
   // must not re-create the poll on every tick.
@@ -127,6 +154,8 @@ export function ClinicApp() {
         const result = (await response.json()) as CommandResponse & {
           revision?: number
           snapshot?: ClinicSnapshot
+          /** Set by a command that only read something. See below. */
+          unchanged?: boolean
         }
         setNotice({ tone: result.ok ? 'good' : 'bad', message: result.message })
 
@@ -146,10 +175,16 @@ export function ClinicApp() {
 
         // The command already carries the clinic as it now stands. Fetching it
         // again would double the wait on every action for no new information.
+        //
+        // Unless the command changed nothing — asking whether a patient is
+        // already registered, say. Those answer without a snapshot on purpose,
+        // and the `else` below would then go and fetch the whole clinic to
+        // replace it with itself, which is the exact download the server just
+        // took care to avoid.
         if (result.ok && result.snapshot) {
           if (typeof result.revision === 'number') revision.current = result.revision
           setData(result.snapshot)
-        } else if (result.ok) {
+        } else if (result.ok && !result.unchanged) {
           await loadSnapshot(true)
         }
         return result
@@ -210,7 +245,7 @@ export function ClinicApp() {
         setView('overview')
 
         // The clinic came back with the PIN. Asking for it again would put a
-        // second wait between tapping six digits and seeing the queue.
+        // second wait between the last digit and seeing the queue.
         if (result.snapshot) {
           if (typeof result.revision === 'number') revision.current = result.revision
           setData(result.snapshot)
@@ -237,6 +272,9 @@ export function ClinicApp() {
     setBusy(false)
     setNotice(null)
     setView('overview')
+    // The next person to pick up this tablet is not treating the last
+    // person's patient.
+    setSelectedPatientId('')
   }
 
   if (initializing) {
@@ -255,8 +293,15 @@ export function ClinicApp() {
   const current = items.find((item) => item.id === view) ?? items[0]
   const roleName = roles.map((role) => ROLE_LABEL[role]).join(' · ')
 
+  const selectedPatient = {
+    patientId: selectedPatientId,
+    select: setSelectedPatientId,
+    goTo: (next: string) => setView(next as View),
+  }
+
   return (
     <BusyContext value={busy}>
+     <SelectedPatientContext value={selectedPatient}>
       <div className="flex min-h-screen">
         {/* The rail. Ink ground, because this is the spine of the building. */}
         <nav
@@ -400,6 +445,7 @@ export function ClinicApp() {
           </main>
         </div>
       </div>
+     </SelectedPatientContext>
     </BusyContext>
   )
 }
@@ -409,13 +455,23 @@ export function ClinicApp() {
  *
  * A username and a password is a desk-and-chair idea. This is a tablet on a
  * counter that four people share and hand to each other twenty times a day, and
- * on that device a name you tap and six digits you know is both faster and more
+ * on that device a name you tap and a PIN you know is both faster and more
  * honest about what is happening — nobody is "logging into an account", they
  * are saying which of the people standing here is about to do something.
  *
  * The staff list is fetched unauthenticated, because you cannot ask somebody to
  * identify themselves and also require them to be identified first. It carries
- * names and roles and nothing else.
+ * names, roles, and how many digits that person's PIN is.
+ *
+ * ── WHY THE PAD'S LENGTH COMES FROM THE SERVER ─────────────────────────────
+ *
+ * The clinic is moving from six digits to four, and a stored hash cannot be
+ * shortened, so for the length of the rollout both are live — one per staff
+ * member, recorded on their row. The pad submits on the last digit rather than
+ * making everyone tap a confirm button hundreds of times a day, so it has to
+ * know which. Hardcoding four would submit early for everybody not yet reset
+ * and lock them out of their own clinic; hardcoding six would never fire for
+ * anybody who had been.
  */
 function LoginScreen({
   onSignIn,
@@ -426,11 +482,18 @@ function LoginScreen({
   busy: boolean
   notice: { tone: 'good' | 'bad'; message: string } | null
 }) {
-  const [staff, setStaff] = useState<Array<{ id: string; name: string; roles: Role[] }>>([])
+  const [staff, setStaff] = useState<LockScreenStaffView[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<{ id: string; name: string; roles: Role[] } | null>(null)
+  const [selected, setSelected] = useState<LockScreenStaffView | null>(null)
   const [pin, setPin] = useState('')
+
+  // How many dots this person's pad draws, and when it fires. Four for anybody
+  // already reset, six for anybody still waiting. It falls back to six only if
+  // an older deployment of the staff endpoint omits the field, which is the
+  // safe direction: a pad that fires late asks for one more digit, while a pad
+  // that fires early refuses a PIN that was correct.
+  const pinLength = selected?.pinLength ?? 6
 
   // First start only: everything below exists for a database that has never
   // had a staff row in it. On every other day it is unreachable.
@@ -459,13 +522,13 @@ function LoginScreen({
     return () => { cancelled = true }
   }, [])
 
-  // Six digits and it goes. A confirm button would be a tap every staff member
-  // pays hundreds of times a day for nothing.
+  // The last digit and it goes. A confirm button would be a tap every staff
+  // member pays hundreds of times a day for nothing.
   useEffect(() => {
-    if (pin.length !== 6 || !selected || busy) return
+    if (!selected || pin.length !== pinLength || busy) return
     void onSignIn(selected.id, pin)
     setPin('')
-  }, [pin, selected, busy, onSignIn])
+  }, [pin, pinLength, selected, busy, onSignIn])
 
   // One message at a time: whatever the last sign-in attempt said, or — before
   // there has been one — whatever opening the clinic said.
@@ -479,15 +542,15 @@ function LoginScreen({
   // account nobody can ever sign into on a clinic that has no other staff.
   function pushPinDigit(digit: string) {
     setSaid(null)
-    if (newPin.length < 6) {
+    if (newPin.length < NEW_PIN_LENGTH) {
       setNewPin(newPin + digit)
       return
     }
-    const typedAgain = (confirmPin + digit).slice(0, 6)
-    if (typedAgain.length === 6 && typedAgain !== newPin) {
+    const typedAgain = (confirmPin + digit).slice(0, NEW_PIN_LENGTH)
+    if (typedAgain.length === NEW_PIN_LENGTH && typedAgain !== newPin) {
       setNewPin('')
       setConfirmPin('')
-      setSaid({ tone: 'bad', message: 'Those two PINs were not the same. Start the six digits again.' })
+      setSaid({ tone: 'bad', message: 'Those two PINs were not the same. Start the four digits again.' })
       return
     }
     setConfirmPin(typedAgain)
@@ -500,7 +563,8 @@ function LoginScreen({
   }
 
   const readyToOpen =
-    newName.trim() !== '' && newUsername.trim() !== '' && newPin.length === 6 && confirmPin === newPin
+    newName.trim() !== '' && newUsername.trim() !== '' &&
+    newPin.length === NEW_PIN_LENGTH && confirmPin === newPin
 
   async function openTheClinic() {
     setSaving(true)
@@ -529,8 +593,14 @@ function LoginScreen({
       // now; the next thing that has to happen is that PIN being typed against
       // the hash that was actually stored, while getting it wrong still costs
       // nothing but typing it again.
-      setStaff([result.staff])
-      setSelected(result.staff)
+      //
+      // pinLength is supplied here rather than taken from the response,
+      // because bootstrap answers with the staff record it created and not
+      // with a lock-screen row. It is NEW_PIN_LENGTH by construction: this
+      // account was made a moment ago, by the pad above, at that length.
+      const opened: LockScreenStaffView = { ...result.staff, pinLength: NEW_PIN_LENGTH }
+      setStaff([opened])
+      setSelected(opened)
       setOpening(false)
       setNewPin('')
       setConfirmPin('')
@@ -543,7 +613,7 @@ function LoginScreen({
   }
 
   if (opening) {
-    const step = newPin.length < 6 ? newPin : confirmPin
+    const step = newPin.length < NEW_PIN_LENGTH ? newPin : confirmPin
     return (
       <main className="mx-auto min-h-screen w-full max-w-lg px-5 py-10">
         <header className="border-b-2 border-ink pb-4">
@@ -593,11 +663,13 @@ function LoginScreen({
 
             <div className="border-t border-rule pt-4">
               <p className="eyebrow text-center">
-                {newPin.length < 6 ? 'Choose a six-digit PIN' : 'Type the same six digits again'}
+                {newPin.length < NEW_PIN_LENGTH
+                  ? 'Choose a four-digit PIN'
+                  : 'Type the same four digits again'}
               </p>
 
               <div className="mt-3 flex justify-center gap-3" role="status" aria-label="PIN entry">
-                {Array.from({ length: 6 }, (_, index) => (
+                {Array.from({ length: NEW_PIN_LENGTH }, (_, index) => (
                   <span
                     key={index}
                     className={`h-4 w-4 rounded-full border border-rule ${index < step.length ? 'bg-ink' : ''}`}
@@ -610,7 +682,7 @@ function LoginScreen({
               </div>
 
               <p className="mt-3 text-center text-[12px] leading-snug text-ink-2">
-                Six digits. Not the same one six times, and not a run like 123456 — those are
+                Four digits. Not the same one four times, and not a run like 1234 — those are
                 the first two anybody tries.
               </p>
             </div>
@@ -629,7 +701,7 @@ function LoginScreen({
           busy={saving}
           busyLabel="Opening…"
           disabled={!readyToOpen}
-          disabledReason="Fill in a name and a username, then type the same six digits twice."
+          disabledReason="Fill in a name and a username, then type the same four digits twice."
           onClick={() => void openTheClinic()}
         >
           Open the clinic
@@ -660,11 +732,17 @@ function LoginScreen({
           <img src="/logo-mark.png" alt="" className="mx-auto mb-5 h-20 w-auto" />
           <p className="eyebrow">{selected.roles.map((role) => ROLE_LABEL[role]).join(' · ')}</p>
           <h1 className="mt-1.5 text-[26px] leading-tight font-semibold tracking-tight">{selected.name}</h1>
-          <p className="mt-1 font-mono text-[13px] text-ink-2">Enter your six-digit PIN</p>
+          <p className="mt-1 font-mono text-[13px] text-ink-2">
+            {pinLength === 4 ? 'Enter your four-digit PIN' : 'Enter your six-digit PIN'}
+          </p>
         </header>
 
-        <div className="mt-7 flex justify-center gap-3" role="status" aria-label="PIN entry">
-          {Array.from({ length: 6 }, (_, index) => (
+        <div
+          className="mt-7 flex justify-center gap-3"
+          role="status"
+          aria-label={pinLength + '-digit PIN entry'}
+        >
+          {Array.from({ length: pinLength }, (_, index) => (
             <span
               key={index}
               className={`h-4 w-4 rounded-full border border-rule ${index < pin.length ? 'bg-ink' : ''}`}
@@ -681,7 +759,7 @@ function LoginScreen({
         <div className="mx-auto mt-7 w-72">
           <Numpad
             disabled={busy}
-            onDigit={(digit) => setPin((current) => (current + digit).slice(0, 6))}
+            onDigit={(digit) => setPin((current) => (current + digit).slice(0, pinLength))}
             onBackspace={() => setPin((current) => current.slice(0, -1))}
           />
         </div>

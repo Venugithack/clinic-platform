@@ -61,22 +61,28 @@ class Refusal extends Error {
 }
 
 /**
- * Six digits, and not a birthday-shaped run of one.
+ * Four digits, and not a birthday-shaped run of one.
  *
  * A deliberate copy of `requirePin` in _shared/commands.ts, down to the
  * wording, because that function is not exported and this one may not go
  * changing it. Two rules that must agree are better copied with a note than
  * left to drift silently: a PIN this accepts and `set_staff_pin` later refuses
  * would strand an administrator on their own account.
+ *
+ * There is no six-digit path here and there must never be one. This endpoint
+ * fires only on a database with no staff at all, so there is no legacy PIN to
+ * be compatible with — the compatibility in auth.ts exists for people who had
+ * an account before the clinic moved to four digits, and the first
+ * administrator of an empty clinic is by definition not one of them.
  */
 function checkedPin(raw: unknown): string {
   const pin = String(raw ?? '').trim()
-  if (!/^\d{6}$/.test(pin)) throw new Refusal('A PIN is exactly six digits.')
-  if (/^(\d)\1{5}$/.test(pin)) {
-    throw new Refusal('That PIN is the same digit six times. Choose another.')
+  if (!/^\d{4}$/.test(pin)) throw new Refusal('A PIN is exactly four digits.')
+  if (/^(\d)\1{3}$/.test(pin)) {
+    throw new Refusal('That PIN is the same digit four times. Choose another.')
   }
   if ('012345678901234567890'.includes(pin) || '098765432109876543210'.includes(pin)) {
-    throw new Refusal('That PIN is six digits in a row. Choose another.')
+    throw new Refusal('That PIN is four digits in a row. Choose another.')
   }
   return pin
 }
@@ -150,8 +156,8 @@ Deno.serve(async (request) => {
       const written = await db
         .prepare(
           `insert into staff
-            (id,name,username,phone,roles_json,pin_hash,pin_salt,active,created_at)
-           select ?::text,?::text,?::text,?::text,?::text,?::text,?::text,1,?::text
+            (id,name,username,phone,roles_json,pin_hash,pin_salt,pin_format,active,created_at)
+           select ?::text,?::text,?::text,?::text,?::text,?::text,?::text,'four',1,?::text
             where not exists (select 1 from staff)`,
         )
         .run(

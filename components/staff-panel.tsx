@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import type { ClinicSnapshot, Role, StaffView } from '@/lib/types'
+import { PIN_LENGTH, type ClinicSnapshot, type Role, type StaffView } from '@/lib/types'
 import { useBusy, type ActionRunner } from './clinic-context'
 import { Stack } from './shared-panels'
 import {
@@ -24,6 +24,27 @@ import {
 const ROLE_OPTIONS: Role[] = ['admin', 'doctor', 'nurse', 'pharmacy']
 const title = (role: string) => role[0].toUpperCase() + role.slice(1)
 
+/** What a PIN must be, said the same way the clinic server says it. */
+const PIN_RULE = 'Four digits. Not the same digit four times, and not a run like 1234 or 8901.'
+
+/**
+ * Why this PIN will be refused, before the round trip.
+ *
+ * A deliberate copy of the rule in `commands.ts`, kept word for word so the
+ * tablet and the server never say two different things about the same four
+ * digits. The server remains the authority — this only saves an administrator
+ * from typing a PIN twice, confirming it, and being told no.
+ */
+function pinProblem(pin: string): string | null {
+  if (!/^\d{4}$/.test(pin)) return 'A PIN is exactly four digits.'
+  if (/^(\d)\1{3}$/.test(pin)) return 'That PIN is the same digit four times. Choose another.'
+  // The runs wrap, so 8901 and 1098 are refused too: same keypad gesture.
+  if ('012345678901234567890'.includes(pin) || '098765432109876543210'.includes(pin)) {
+    return 'That PIN is four digits in a row. Choose another.'
+  }
+  return null
+}
+
 /**
  * The staff list, and the four things you actually need to do to it.
  *
@@ -38,6 +59,7 @@ const title = (role: string) => role[0].toUpperCase() + role.slice(1)
 export function StaffPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const busy = useBusy()
   const admins = data.staff.filter((s) => s.active && s.roles.includes('admin'))
+  const stillOnSix = data.legacyPinCount
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -58,8 +80,35 @@ export function StaffPanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
       <PageHeader
         eyebrow="Admin control"
         title="Staff & access"
-        sub={`${data.staff.filter((s) => s.active).length} active of ${data.staff.length}`}
+        sub={`${data.staff.filter((s) => s.active).length} active of ${data.staff.length} · ${
+          stillOnSix === 0 ? 'everyone on a four-digit PIN' : `${stillOnSix} still on six digits`
+        }`}
       />
+
+      {/*
+        The reset queue.
+
+        A stored PIN hash cannot be shortened, so the only way from six digits
+        to four is an administrator sitting with each person and resetting
+        them. This count is the whole state of that migration and its exit
+        gate: six-digit sign-in comes out of the clinic's code when it reaches
+        zero, and not one day before — deploying four-only while somebody is
+        still on six locks that person out of their own clinic.
+      */}
+      {stillOnSix > 0 ? (
+        <Notice tone="info">
+          {stillOnSix === 1
+            ? 'One active staff member still signs in with a six-digit PIN.'
+            : `${stillOnSix} active staff members still sign in with a six-digit PIN.`}{' '}
+          They are marked below. Give each of them a new four-digit PIN from their own row — they
+          are signed out when it is set, so do it with them standing there. Reset yourself last.
+        </Notice>
+      ) : (
+        <Notice tone="good">
+          Every active staff member signs in with a four-digit PIN. Six-digit sign-in can be taken
+          out of the clinic&rsquo;s code.
+        </Notice>
+      )}
 
       {admins.length === 1 ? (
         <Notice tone="info">
@@ -85,15 +134,15 @@ export function StaffPanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
               <Field
                 label="Sign-in PIN"
                 required
-                hint="Six digits. This is what they tap on the lock screen — tell them privately."
+                hint={`${PIN_RULE} This is what they tap on the lock screen — tell them privately.`}
               >
                 <Input
                   name="pin"
                   type="password"
                   inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  minLength={6}
-                  maxLength={6}
+                  pattern="[0-9]{4}"
+                  minLength={PIN_LENGTH.four}
+                  maxLength={PIN_LENGTH.four}
                   autoComplete="off"
                   required
                 />
@@ -172,7 +221,9 @@ function StaffRow({
     })
   }
 
-  const pinReady = /^[0-9]{6}$/.test(pin) && pin === confirmPin
+  const legacy = staff.pinFormat === 'legacy_six'
+  const problem = pin.length === PIN_LENGTH.four ? pinProblem(pin) : null
+  const pinReady = pinProblem(pin) === null && pin === confirmPin
 
   return (
     <div className="rounded-lg border border-line p-3">
@@ -187,6 +238,12 @@ function StaffRow({
             {staff.lastLogin ? `last signed in ${formatDate(staff.lastLogin)}` : 'never signed in'}
           </p>
         </div>
+        {/* Which PIN this person actually holds. The badge is what an
+            administrator working down the list reads; the word is on it
+            because the colour alone would not say which is which. */}
+        <Badge tone={legacy ? 'attn' : 'plain'}>
+          {PIN_LENGTH[staff.pinFormat]}-digit PIN
+        </Badge>
         <Badge tone={staff.active ? 'free' : 'stop'}>{staff.active ? 'Active' : 'Disabled'}</Badge>
         <ConfirmButton
           size="sm"
@@ -256,17 +313,45 @@ function StaffRow({
             <div className="mt-5 border-t border-line pt-4">
               <p className="eyebrow">New sign-in PIN</p>
               <p className="mt-1 text-[12px] text-ink-2">
-                Six digits. Typed twice because nobody can see what they typed, and a PIN with a
+                {PIN_RULE} Typed twice because nobody can see what they typed, and a PIN with a
                 typo in it locks {isSelf ? 'you' : 'them'} out of the clinic until someone resets
                 it. Every signed-in session ends immediately.
               </p>
+
+              {legacy ? (
+                <div className="mt-2">
+                  <Notice tone="info">
+                    {isSelf ? 'You are' : `${staff.name} is`} still on a six-digit PIN. Setting one
+                    here is what moves {isSelf ? 'you' : 'them'} to four digits — there is no other
+                    way, because the stored PIN cannot be shortened.
+                  </Notice>
+                </div>
+              ) : null}
+
+              {/*
+                Said before the confirmation, not after it. An administrator
+                resetting themselves is the last step of the clinic's reset
+                runbook and it signs them out of this very tablet — which is
+                correct, and is a nasty surprise if the first they hear of it
+                is the lock screen.
+              */}
+              {isSelf ? (
+                <div className="mt-2">
+                  <Notice tone="bad">
+                    This is your own account. Saving a new PIN signs you out everywhere,
+                    including this tablet, the moment it is saved. Sign in again with the new PIN
+                    straight away to prove it works before you leave the clinic.
+                  </Notice>
+                </div>
+              ) : null}
+
               <FieldRow cols={2}>
                 <Field label="New PIN">
                   <Input
                     type="password"
                     inputMode="numeric"
                     autoComplete="off"
-                    maxLength={6}
+                    maxLength={PIN_LENGTH.four}
                     value={pin}
                     onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))}
                   />
@@ -276,28 +361,40 @@ function StaffRow({
                     type="password"
                     inputMode="numeric"
                     autoComplete="off"
-                    maxLength={6}
+                    maxLength={PIN_LENGTH.four}
                     value={confirmPin}
                     onChange={(e) => setConfirmPin(e.target.value.replace(/[^0-9]/g, ''))}
                   />
                 </Field>
               </FieldRow>
-              {pin !== '' && confirmPin !== '' && pin !== confirmPin ? (
+              {problem ? <Notice tone="bad">{problem}</Notice> : null}
+              {!problem && pin !== '' && confirmPin !== '' && pin !== confirmPin ? (
                 <Notice tone="bad">The two PINs are not the same.</Notice>
               ) : null}
               <div className="mt-3">
                 <ConfirmButton
                   variant="primary"
+                  className="min-h-[56px]"
                   disabled={busy || !pinReady}
-                  title="Set a new PIN?"
+                  disabledReason={`${PIN_RULE} Type the same four digits in both blanks.`}
+                  title={isSelf ? 'Set your own PIN and sign out?' : 'Set a new PIN?'}
                   question={
-                    <>
-                      <span className="font-semibold">{staff.name}</span> will need the new PIN the
-                      next time they sign in, and every session they have open now ends. Make sure
-                      they are told it privately.
-                    </>
+                    isSelf ? (
+                      <>
+                        Your four-digit PIN changes now and you are{' '}
+                        <span className="font-semibold">signed out of every tablet</span>,
+                        including this one, immediately. Nothing else in the clinic is affected.
+                        Sign in again with the new PIN to check it works.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold">{staff.name}</span> will need the new
+                        four-digit PIN the next time they sign in, and every session they have
+                        open now ends. Make sure they are told it privately.
+                      </>
+                    )
                   }
-                  confirmLabel="Set the new PIN"
+                  confirmLabel={isSelf ? 'Set it and sign me out' : 'Set the new PIN'}
                   onConfirm={async () => {
                     const result = await run('set_staff_pin', { staffId: staff.id, pin })
                     if (result.ok) {
@@ -306,7 +403,7 @@ function StaffRow({
                     }
                   }}
                 >
-                  Set the new PIN
+                  {isSelf ? 'Set my new PIN' : 'Set the new PIN'}
                 </ConfirmButton>
               </div>
             </div>

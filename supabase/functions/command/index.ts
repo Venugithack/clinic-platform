@@ -25,6 +25,17 @@ Deno.serve(async (request) => {
     // has just happened on this connection; reading it back here costs about
     // thirty milliseconds and saves a whole trip to Mumbai and back.
     const revision = await currentRevision()
+
+    // A command that declares itself `unchanged` is a read — asking whether a
+    // patient is already registered, say. Sending it the whole clinic back
+    // would be a full download for an answer nobody asked to be refreshed by,
+    // and `find_possible_duplicates` runs while a nurse is still typing a
+    // name. The revision still goes, so the tablet can tell whether it has
+    // fallen behind for some other reason.
+    if ((result as { unchanged?: boolean }).unchanged) {
+      return json({ ok: true, ...result, revision })
+    }
+
     return json({ ok: true, ...result, revision, snapshot: await readSnapshot(session) })
   } catch (error) {
     // A refusal the clinic needs to read — "Only medicines marked OTC can be
