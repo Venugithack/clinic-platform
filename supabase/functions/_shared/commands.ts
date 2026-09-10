@@ -1175,7 +1175,35 @@ export async function runCommand(session: SessionView, action: string, payload: 
       requireRole(session, 'admin', 'pharmacy')
       const prescriptionId = value(payload, 'prescriptionId')
       await transaction(async () => {
-        const prescription = await db.prepare(`select items_json,dispensed_at from prescriptions where id=?`)
+        /**
+         * `for update` — and it has to be here, before a single unit moves.
+         *
+         * Without the lock this read is the whole bug. Two counters submitting
+         * the same prescription in the same second both saw `dispensed_at`
+         * null, both walked the items, and both allocated: a prescription for
+         * ten tablets took twenty off the shelf. The `dispensed_at is null`
+         * guard on the UPDATE below looks like it prevents that and does not —
+         * it runs after the stock has already gone, and its result was never
+         * examined, so the second transaction wrote nothing, said nothing and
+         * committed its allocations anyway.
+         *
+         * A sequential retry was always refused, which is why this survived:
+         * reproducing it needs two people at the counter at the same moment,
+         * and by the time the shelf disagrees with the ledger nobody can say
+         * which sale it was.
+         *
+         * The lock makes the second transaction wait here rather than race
+         * past. Postgres is READ COMMITTED, so when the first commits, the
+         * second acquires the lock and re-reads the row as it now stands —
+         * `dispensed_at` set — and refuses before allocating anything.
+         *
+         * Lock order is prescription, then batches by (expiry, id) inside
+         * allocateStock. Every path that touches both takes them in that
+         * order, which is what keeps two dispenses from deadlocking; an OTC
+         * sale takes only batches, in the same (expiry, id) order, so it
+         * cannot close a cycle either.
+         */
+        const prescription = await db.prepare(`select items_json,dispensed_at from prescriptions where id=? for update`)
           .get(prescriptionId) as { items_json: string; dispensed_at: string | null } | undefined
         if (!prescription) throw new Error('Prescription was not found.')
         if (prescription.dispensed_at) throw new Error('This prescription is already dispensed.')
@@ -1183,7 +1211,14 @@ export async function runCommand(session: SessionView, action: string, payload: 
         for (const item of items) {
           await allocateStock(item.medicineId, item.quantity, session.staffId, 'prescription', prescriptionId)
         }
-        await db.prepare('update prescriptions set dispensed_at=? where id=? and dispensed_at is null').run(isoNow(), prescriptionId)
+        // Belt and braces, and cheap. The lock above should make this
+        // unreachable; a guarded UPDATE whose row count nobody reads is
+        // exactly how the original defect stayed invisible, so this one is
+        // read. If it ever fires, the transaction rolls back and the stock
+        // allocated moments ago goes back with it.
+        const completed = await db.prepare('update prescriptions set dispensed_at=? where id=? and dispensed_at is null')
+          .run(isoNow(), prescriptionId)
+        if (Number(completed.changes) !== 1) throw new Error('This prescription is already dispensed.')
         await audit(session.staffId, 'prescription.dispensed', 'prescription', prescriptionId, `Dispensed ${items.length} item(s)`)
       })
       return { message: 'Prescription dispensed using earliest-expiry stock.' }

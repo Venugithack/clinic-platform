@@ -160,22 +160,28 @@ Recorded as a passing test in
 differed from ₹300? If it has, some bills are wrong and the correction is a
 data question, not a code question.
 
-### 32. A concurrent dispense can hand over twice the prescribed quantity
+### 32. A concurrent dispense could hand over twice the prescribed quantity — FIXED in code 2026-09-10, one question still open
 
-Two tablets dispensing the same prescription in the same moment both allocate.
+Two tablets dispensing the same prescription in the same moment both allocated.
 Reproduced against staging: a prescription for 10 tablets moved **20** off the
-shelf. `dispense_rx` guards completion with `dispensed_at is null` inside the
-UPDATE but never checks that the update changed a row.
+shelf. `dispense_rx` guarded completion with `dispensed_at is null` inside the
+UPDATE but never checked that the update changed a row.
 
-A sequential retry is correctly refused, which is why nobody has seen it. It
-needs two people at the counter at the same second.
+Fixed in Slice 0.1: the prescription row is taken `for update` before any stock
+moves, and the completing UPDATE's row count is checked. Two simultaneous
+submissions now produce one dispense, one rejection reading "already
+dispensed", and exactly ten tablets deducted — asserted in
+`tests/characterization/concurrency.test.mjs`, which no longer carries a `todo`.
 
-Recorded as a `todo` test in `tests/characterization/concurrency.test.mjs`;
-Slice 4 turns it green by fixing the code.
+**Not yet deployed.** The fix is committed and needs approval before it reaches
+the clinic.
 
-**Owner question:** has the pharmacy ever had two people dispensing at once? If
-so, the stock ledger may already contain a double allocation, and it is worth
-looking before Slice 3's opening count rather than after.
+**Owner question, still open:** has the pharmacy ever had two people dispensing
+at once? If so, the stock ledger may already contain a double allocation from
+before this fix, and it is worth looking **before** Slice 3's physical opening
+count rather than explaining a variance afterwards. The query is cheap: any
+`prescription`-type movement whose total for one prescription exceeds the
+quantity in that prescription's `items_json`.
 
 ### 33. A zero fee and no fee are the same thing
 

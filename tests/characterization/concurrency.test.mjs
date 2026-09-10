@@ -6,16 +6,19 @@
  * reduce stock below zero". This file establishes which half of that is
  * already true.
  *
- * The answer is: the stock ledger holds, and the prescription does not.
- * `allocateStock` guards every decrement with `available_quantity >= ?` in the
- * UPDATE itself, so a losing writer takes nothing and is told to retry.
- * `dispense_rx` guards its own completion with `dispensed_at is null` in the
- * UPDATE — and then does not look at whether that update changed a row. Two
- * concurrent dispenses of the same prescription both allocate.
+ * When this file was written the answer was: the stock ledger holds, and the
+ * prescription does not. `allocateStock` guards every decrement with
+ * `available_quantity >= ?` in the UPDATE itself, so a losing writer takes
+ * nothing. `dispense_rx` guarded its completion with `dispensed_at is null`
+ * in the UPDATE and then never looked at whether that update changed a row —
+ * so two concurrent dispenses of the same prescription both allocated, and a
+ * prescription for ten tablets moved twenty off the shelf.
  *
- * The failing case is marked `{ todo: ... }` rather than deleted or inverted.
- * It documents a real defect, it does not fail the suite today, and Slice 4
- * turns it green by fixing the code rather than by editing the test.
+ * That was recorded here as a failing `{ todo: ... }` test rather than
+ * described in a comment, and the fix in commands.ts — a `for update` on the
+ * prescription row taken before any stock moves, plus a checked row count on
+ * the completing UPDATE — turned it green without the assertion being edited.
+ * The assertion is unchanged; only the test's name and the todo marker went.
  */
 import assert from 'node:assert/strict'
 import { after, describe, test } from 'node:test'
@@ -133,48 +136,83 @@ describe('a prescription dispensed twice at once', () => {
     assert.equal(Number(await scalar('select available_quantity from jmc.batches')), 0)
   })
 
-  test(
-    'when stock is plentiful, the same prescription is dispensed twice',
-    {
-      todo:
-        'Defect, not a design. dispense_rx guards completion with `dispensed_at is null` ' +
-        'in the UPDATE but never checks that the update changed a row, so two concurrent ' +
-        'calls both pass the read, both allocate, and 20 tablets leave the shelf against ' +
-        'a prescription for 10. Slice 4 fixes this with an idempotency key and a row lock ' +
-        'taken before allocation; this test then passes without being edited.',
-    },
-    async () => {
-      const { counterA, counterB, prescriptionId } = await signedPrescription({ stock: 100, prescribed: 10 })
+  test('when stock is plentiful, the prescription is still dispensed exactly once', async () => {
+    const { counterA, counterB, prescriptionId } = await signedPrescription({ stock: 100, prescribed: 10 })
 
-      await Promise.allSettled([
-        as(counterA, 'dispense_rx', { prescriptionId }),
-        as(counterB, 'dispense_rx', { prescriptionId }),
-      ])
+    await Promise.allSettled([
+      as(counterA, 'dispense_rx', { prescriptionId }),
+      as(counterB, 'dispense_rx', { prescriptionId }),
+    ])
 
-      assert.equal(
-        Number(await scalar('select available_quantity from jmc.batches')),
-        90,
-        'a prescription for 10 must never move more than 10',
-      )
-    },
-  )
+    // The assertion that used to fail, unchanged. Before the row lock this
+    // read 80: both counters passed the `dispensed_at is null` check and both
+    // allocated, so a prescription for ten took twenty off the shelf. Stock
+    // being plentiful is what made it possible — with only ten on hand the
+    // batch guard caught it by accident, which is the test above.
+    assert.equal(
+      Number(await scalar('select available_quantity from jmc.batches')),
+      90,
+      'a prescription for 10 must never move more than 10',
+    )
+  })
 
-  test('the double dispense is real — this records it until Slice 4 removes it', async () => {
+  test('two simultaneous submissions: one dispense, one rejection, ten tablets', async () => {
     const { counterA, counterB, prescriptionId } = await signedPrescription({ stock: 100, prescribed: 10 })
 
     const both = await Promise.allSettled([
       as(counterA, 'dispense_rx', { prescriptionId }),
       as(counterB, 'dispense_rx', { prescriptionId }),
     ])
-    const succeeded = both.filter((r) => r.status === 'fulfilled').length
-    const remaining = Number(await scalar('select available_quantity from jmc.batches'))
 
-    // Whether both win is a race, so this asserts the invariant that actually
-    // holds today rather than a specific losing outcome: the shelf always
-    // agrees with the ledger, and 10 tablets left per successful call.
-    assert.equal(remaining, await ledgerTotal(), 'the ledger and the shelf never disagree')
-    assert.equal(remaining, 100 - 10 * succeeded)
-    assert.ok(succeeded >= 1)
+    // One dispense.
+    const won = both.filter((result) => result.status === 'fulfilled')
+    assert.equal(won.length, 1, `exactly one submission may succeed, got ${won.length}`)
+
+    // One rejection, and one a person at a counter can act on: the second
+    // pharmacist is told the prescription is already dispensed, not that
+    // something went wrong with the database.
+    const lost = both.filter((result) => result.status === 'rejected')
+    assert.equal(lost.length, 1)
+    assert.match(String(lost[0].reason.message), /already dispensed/)
+
+    // Exactly ten tablets, in the batch, in the ledger, and once in the
+    // movement history — a losing transaction that rolled back must leave no
+    // allocation behind.
+    assert.equal(Number(await scalar('select available_quantity from jmc.batches')), 90)
+    assert.equal(await ledgerTotal(), 90, 'the ledger and the shelf never disagree')
+    assert.equal(
+      Number(await scalar(
+        `select coalesce(sum(quantity_delta),0)::int from jmc.stock_movements
+          where movement_type='prescription'`,
+      )),
+      -10,
+    )
+    assert.equal(
+      await scalar(`select count(*)::int from jmc.stock_movements where movement_type='prescription'`),
+      1,
+    )
+
+    // And the prescription is marked dispensed once, by whoever won.
+    assert.ok(await scalar('select dispensed_at from jmc.prescriptions where id=$1', [prescriptionId]))
+    assert.equal(
+      await scalar(`select count(*)::int from jmc.audit_events where action='prescription.dispensed'`),
+      1,
+      'the audit trail must not record a dispense that rolled back',
+    )
+  })
+
+  test('the losing counter can retry once stock is restocked, and is still refused', async () => {
+    const { counterA, counterB, prescriptionId } = await signedPrescription({ stock: 100, prescribed: 10 })
+
+    await Promise.allSettled([
+      as(counterA, 'dispense_rx', { prescriptionId }),
+      as(counterB, 'dispense_rx', { prescriptionId }),
+    ])
+
+    // A pharmacist who saw the refusal and taps again does not get a second
+    // supply out of it. The refusal is about the prescription, not the shelf.
+    await assert.rejects(as(counterB, 'dispense_rx', { prescriptionId }), /already dispensed/)
+    assert.equal(Number(await scalar('select available_quantity from jmc.batches')), 90)
   })
 
   test('a sequential retry is refused, which is why this is not noticed', async () => {
