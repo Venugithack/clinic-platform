@@ -131,3 +131,87 @@ jobs:
             echo
             exit 1
           fi
+
+  # ── THE DATABASE, WHICH NOTHING ABOVE TOUCHES EITHER ──────────────────────
+  #
+  # The job above deliberately claims nothing about the data layer, and until
+  # Slice 0 that was the only honest position available: there was no way to
+  # apply a migration or run a query without pointing at the clinic's live
+  # database. There is now. This job builds the schema from
+  # supabase/migrations/ into a throwaway PostgreSQL 17 and runs the
+  # characterization suite against it — the real Edge Function code, the real
+  # SQL, no mocks.
+  #
+  # It is a separate job rather than more steps on the one above because it is
+  # the slower half and because a database failure and a typecheck failure are
+  # different news. Both must pass.
+  database:
+    name: migrations · characterization suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      # Named and ported to match what scripts/staging/guard.mjs will accept.
+      # The guard is an allowlist of loopback hosts and scratch database names,
+      # and it applies here exactly as it does on a developer's machine — CI is
+      # not a reason to have a second, weaker rule.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: staging
+          POSTGRES_DB: clinic_staging
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clinic_staging"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      STAGING_DB_URL: postgresql://postgres:staging@127.0.0.1:55432/clinic_staging
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Applies every migration inside a transaction and then checks that the
+      # tables landed in `jmc`. Both halves matter: `set local search_path` at
+      # the top of each migration file is a no-op outside a transaction, and a
+      # run without one silently builds the whole clinic in `public` — where,
+      # on the shared production database, the retired application lives and
+      # eight table names collide exactly.
+      - name: Build the schema from supabase/migrations/
+        run: node scripts/staging/apply-migrations.mjs
+
+      # The suite loads supabase/functions/_shared/*.ts under Node and runs it
+      # against that schema. Files run one at a time: they share one database
+      # and each resets it.
+      - name: Characterization suite
+        run: npm run test:db
+
+      # The backup this clinic depends on, rehearsed against the scratch
+      # database rather than the live one. It runs the same two scripts the
+      # nightly Backup workflow runs, so a break in them is caught here on a
+      # pull request instead of at 22:00 IST against production.
+      - name: Install the PostgreSQL 17 client
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Restore drill
+        env:
+          BACKUP_DB_URL: postgresql://postgres:staging@127.0.0.1:55432/clinic_staging
+          PGPASSWORD: staging
+          PGHOST: 127.0.0.1
+          PGPORT: '55432'
+          PGUSER: postgres
+          PGDATABASE: clinic_staging
+          SCRATCH_DB: clinic_restore_drill
+        run: ./scripts/db-restore-drill.sh

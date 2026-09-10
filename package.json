@@ -13,7 +13,12 @@
     "preview": "wrangler dev --ip 0.0.0.0 --port 3000",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/password.test.ts tests/order-status.test.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "test:db": "node --import ./tests/support/register.mjs --test --test-concurrency=1 \"tests/characterization/*.test.mjs\"",
+    "check": "npm run typecheck && npm test && npm run build",
+    "staging:up": "node scripts/staging/up.mjs",
+    "staging:down": "node scripts/staging/down.mjs",
+    "staging:destroy": "node scripts/staging/down.mjs --destroy",
+    "staging:drill": "node scripts/staging/restore-drill.mjs"
   },
   "dependencies": {
     "next": "^16.3.0",
@@ -26,6 +31,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "agent-browser": "^0.35.1",
+    "csv-parse": "^6.1.0",
     "postgres": "^3.4.9",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.0",

@@ -15,6 +15,11 @@ npm-debug.log*
 *.db-shm
 *.db-wal
 *.sql.gz
+# The whole backup tree, not just the dump extensions. db-backup.sh encrypts to
+# `.sql.gz.age`, which `*.sql.gz` does not match — the pattern is an extension,
+# and that filename ends in `.age`. This repository is PUBLIC.
+/.backups/
+*.age
 *.dump
 *.bak
 .env*.bak
@@ -30,3 +35,8 @@ npm-debug.log*
 
 # Build output
 /.open-next/
+
+# `deno check` writes this when the Edge Function typecheck is run locally
+# through `npm exec deno@...`. Deno is not a dependency of this repository and
+# CI checks without a lockfile, so an unmanaged one here would only drift.
+deno.lock
