@@ -1425,6 +1425,53 @@ are wrapped in nested `CASE` for the same class of reason: `AND` is not
 required to short-circuit, so a planner free to evaluate `('SOS')::bigint`
 first would fail the whole migration.
 
+### 6.5 The scope of a resolution, and the hole that was in it
+
+Slice 2.1 read `medicine_state` and `quantity_state` in
+`resolve_prescription_line` and then never tested them. Role and payload shape
+were checked; the line's own state was not. So a doctor reaching the command
+directly could record a resolution against **any** line, including an ordinary
+one signed through this application minutes earlier — and because
+`prescription_lines_effective` coalesces the newest resolution over the line,
+and Slice 4 hands over against that view, the counter would have supplied the
+amendment while the signed row and `items_json` still said something else.
+Nothing in the record would have looked edited, because nothing was: the
+resolution simply outranks the line.
+
+That is an amendment to signed clinical intent. OWNER_POLICY_REGISTER.md 21 and
+§4 of the brief both say an amendment is a new or replacement order, never a
+change to this one.
+
+Slice 2.1.1 (`20260911210000_slice2_1_1_resolution_scope.sql`) closes it with
+four rules:
+
+| Rule | Effect |
+|---|---|
+| The line must have been signed unreadable | `medicine_state = 'unresolved_legacy'` **or** `quantity_state = 'unknown_legacy'`. An ordinary line refuses every resolution, `cancel` included. |
+| A medicine may be named only where the medicine was unreadable | A quantity-only legacy problem cannot have its medicine replaced. |
+| A quantity may be named only where the quantity was unreadable | A medicine-only legacy problem keeps the quantity that was signed. |
+| Nothing follows a cancellation | The line is withdrawn; supplying it needs a new order. |
+
+Correction survives all four, because what is tested is the **line's** state and
+the line never changes. A doctor who identified the wrong medicine on Tuesday
+records another resolution on Thursday; both stay on the record and the later
+one governs.
+
+It is enforced twice, deliberately. `commands.ts` refuses in clinic language
+naming the line number and the medicine, which is what a doctor should meet.
+`jmc.enforce_resolution_scope()`, a `BEFORE INSERT` trigger on
+`prescription_line_resolutions`, is the enforcement: it also covers the psql
+session, the migration and the repair script that never pass through a command,
+and it takes `FOR UPDATE` on the line before testing for a cancellation, so two
+doctors resolving the same line queue rather than race. The migration ends by
+asserting that no resolution already recorded falls outside the scope it is
+about to make unbreakable.
+
+`action = 'cancel'` here is a **doctor** cancelling a legacy line they cannot
+determine. A patient who chooses not to collect a supplyable line is *Patient
+Declined*, a dispensing outcome recorded at the counter; OWNER_POLICY_REGISTER.md
+20 keeps the two apart and this command can only ever record the first.
+
 ---
 
 ## 7. Who actually enforces authorization

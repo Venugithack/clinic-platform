@@ -1086,6 +1086,28 @@ export async function runCommand(session: SessionView, action: string, payload: 
      * order meant, or what quantity it authorized, is a clinical judgement, and
      * OWNER_POLICY_REGISTER.md 21 is explicit that changing a prescribed
      * clinical drug or quantity needs doctor authorization.
+     *
+     * It resolves ONLY what the line was signed without. Slice 2.1 read
+     * `medicine_state` and `quantity_state` here and then did not test them,
+     * which left a doctor calling this command able to write a resolution
+     * against an ordinary line signed minutes earlier — and because
+     * `prescription_lines_effective` coalesces the newest resolution over the
+     * line, the counter would hand over the amendment while the signed row and
+     * `items_json` still said something else. Changing a prescribed medicine or
+     * quantity is a new or replacement order, not an edit to this one.
+     *
+     * These four refusals are friendly restatements of
+     * `jmc.enforce_resolution_scope()`, which is the enforcement. The trigger
+     * also covers the psql session and the repair script that never reach this
+     * function; what is here exists so a doctor meets a sentence rather than a
+     * constraint name.
+     *
+     * `action: 'cancel'` here is a DOCTOR cancelling an unreadable legacy line
+     * — the doctor cannot determine what it authorized and withdraws it. A
+     * patient who chooses not to collect a supplyable line is Patient Declined,
+     * which is a dispensing outcome and not a clinical determination about the
+     * order. OWNER_POLICY_REGISTER.md 20 keeps the two apart, and this command
+     * can only ever record the first.
      */
     case 'resolve_prescription_line': {
       requireRole(session, 'doctor')
@@ -1104,14 +1126,51 @@ export async function runCommand(session: SessionView, action: string, payload: 
 
       const resolutionId = randomUUID()
       await transaction(async () => {
-        const line = await db.prepare(`select id,medicine_state,quantity_state,medicine_name_snapshot
+        const line = await db.prepare(`select id,line_number,medicine_state,quantity_state,medicine_name_snapshot
           from prescription_lines where id=? for update`).get(lineId) as {
             id: string
+            line_number: number
             medicine_state: string
             quantity_state: string
             medicine_name_snapshot: string
           } | undefined
         if (!line) throw new Error('That prescription line was not found.')
+
+        const where = `Line ${line.line_number} (${line.medicine_name_snapshot})`
+        const medicineUnreadable = line.medicine_state === 'unresolved_legacy'
+        const quantityUnreadable = line.quantity_state === 'unknown_legacy'
+
+        // Cancellation is final, so it is the first thing tested and the first
+        // thing said. Read inside the transaction, after the `for update`
+        // above, so two doctors resolving the same line queue rather than race.
+        const cancellation = await db.prepare(`select
+            to_char(resolved_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as resolved_on
+          from prescription_line_resolutions
+          where prescription_line_id=? and action='cancel' order by resolved_at limit 1`)
+          .get(lineId) as { resolved_on: string } | undefined
+        if (cancellation) {
+          throw new Error(
+            `${where} was cancelled by a doctor on ${cancellation.resolved_on}. ` +
+            'Cancellation is final; supplying it now needs a new prescription.',
+          )
+        }
+
+        if (!medicineUnreadable && !quantityUnreadable) {
+          throw new Error(
+            `${where} records both its medicine and its quantity, so there is nothing to resolve. ` +
+            'A signed prescription is not amended — write a new prescription instead.',
+          )
+        }
+        if (medicineId && !medicineUnreadable) {
+          throw new Error(
+            `${where} already records which medicine was prescribed. Only its quantity may be determined.`,
+          )
+        }
+        if (quantity !== undefined && !quantityUnreadable) {
+          throw new Error(
+            `${where} already records the quantity prescribed. Only its medicine may be determined.`,
+          )
+        }
 
         if (medicineId) {
           const medicine = await db.prepare('select id from medicines where id=? and active=1').get(medicineId)

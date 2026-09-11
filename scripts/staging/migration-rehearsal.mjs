@@ -47,6 +47,7 @@ const SLICE2 = [
   '20260911045325_slice2_doctor_nurse_workspaces.sql',
   '20260911120000_slice2_clinical_vocabulary.sql',
   '20260911190000_slice2_1_unresolved_prescription_history.sql',
+  '20260911210000_slice2_1_1_resolution_scope.sql',
 ]
 
 const ok = (label) => console.log(`  ok   ${label}`)
@@ -204,6 +205,46 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     assert.equal(after.strength_snapshot, '500 mg')
     ok('and renaming the medicine afterwards does not reach back into history')
 
+    // ── the scope of a resolution ──────────────────────────────────────────
+    //
+    // Slice 2.1.1's trigger, over the same history. rx-1#1 is an ordinary line
+    // — it named a medicine and a quantity — so nothing may be recorded
+    // against it however the write arrives. rx-2#1 lost only its medicine and
+    // rx-4#1 only its quantity, so each may be told the one thing it does not
+    // know and not the other.
+    const lineId = async (prescription, number) => {
+      const [row] = await sql`select id from jmc.prescription_lines
+        where prescription_id=${prescription} and line_number=${number}`
+      return row.id
+    }
+    const resolve = (line, { medicine = null, quantity = null, action = 'amend' } = {}) =>
+      sql.unsafe(
+        `insert into jmc.prescription_line_resolutions
+           (id,prescription_line_id,action,medicine_id,prescribed_quantity,reason,resolved_by)
+         values ($1,$2,$3,$4,$5,'Rehearsal','s-doc')`,
+        [`res-${Math.random().toString(36).slice(2)}`, line, action, medicine, quantity],
+      )
+
+    await assert.rejects(resolve(await lineId('rx-1', 1), { medicine: 'm-2' }), /records both/)
+    await assert.rejects(resolve(await lineId('rx-1', 1), { action: 'cancel' }), /records both/)
+    ok('an ordinary signed line refuses every resolution, straight at the table')
+
+    await assert.rejects(resolve(await lineId('rx-2', 1), { quantity: 30 }), /already records the quantity/)
+    await assert.rejects(resolve(await lineId('rx-4', 1), { medicine: 'm-2' }), /already records which medicine/)
+    ok('and a resolution may only answer the part the line failed to record')
+
+    await resolve(await lineId('rx-2', 1), { medicine: 'm-1' })
+    const [resolved] = await sql`select effective_medicine_id,effective_quantity,dispensable
+      from jmc.prescription_lines_effective where prescription_id='rx-2'`
+    assert.equal(resolved.effective_medicine_id, 'm-1')
+    assert.equal(Number(resolved.effective_quantity), 6)
+    assert.equal(resolved.dispensable, true)
+    ok('a doctor resolving the unknown part unblocks the line and keeps the signed quantity')
+
+    await resolve(await lineId('rx-4', 2), { action: 'cancel' })
+    await assert.rejects(resolve(await lineId('rx-4', 2), { quantity: 5 }), /Cancellation is final/)
+    ok('nothing may follow a cancellation')
+
     // ── the vocabulary ─────────────────────────────────────────────────────
     const [{ count: phrases }] = await sql`select count(*)::int from jmc.clinical_phrases`
     const [{ count: releases }] = await sql`select count(*)::int from jmc.clinical_vocabulary_releases`
@@ -220,9 +261,15 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     }
     const [{ count: stillPhrases }] = await sql`select count(*)::int from jmc.clinical_phrases`
     const [{ count: stillLines }] = await sql`select count(*)::int from jmc.prescription_lines`
+    const [{ count: stillResolutions }] =
+      await sql`select count(*)::int from jmc.prescription_line_resolutions`
     assert.equal(stillPhrases, 80)
     assert.equal(stillLines, 5)
-    ok('applying both migrations a second time changes nothing and raises nothing')
+    // Slice 2.1.1 ends with an assertion that no existing resolution falls
+    // outside the scope it enforces. Re-applying it over the two just written
+    // is what proves that assertion passes on real rows rather than on none.
+    assert.equal(stillResolutions, 2)
+    ok('applying the migrations a second time changes nothing and raises nothing')
 
     // ── what an operator has to look at before running this for real ───────
     //

@@ -14,6 +14,7 @@
  * checks — so it processes exactly the legacy rows this file adds.
  */
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
@@ -307,10 +308,15 @@ describe('an unresolved line cannot be handed over', () => {
       12,
     )
 
+    // A DOCTOR cancelling: the quantity cannot be determined from any record,
+    // so the order is withdrawn. This is not the patient declining to collect
+    // it — OWNER_POLICY_REGISTER.md 20 keeps those apart, Patient Declined is a
+    // dispensing outcome recorded at the counter, and this command cannot
+    // record it.
     const zero = await lineOf('hist-zeroqty')
     await as(doctor, 'resolve_prescription_line', {
       prescriptionLineId: zero.id, action: 'cancel',
-      reason: 'Never supplied; the patient did not collect it',
+      reason: 'No counterfoil or pharmacy record gives the quantity; withdrawing the order',
     })
     const cancelled = await lineOf('hist-zeroqty')
     assert.equal(cancelled.cancelled, true)
@@ -353,5 +359,217 @@ describe('the tablets are told', () => {
     const counter = await snapshot.readSnapshot(sessionFor(pharmacy))
     const queued = counter.prescriptions.find((rx) => rx.prescriptionNumber === 'RX-900001')
     assert.equal(queued.items[0].needsReview, true)
+  })
+})
+
+/**
+ * What a resolution may touch.
+ *
+ * Slice 2.1 checked the doctor's role and the payload shape and then ignored
+ * the line's own state, so the command would happily write a resolution
+ * against an ordinary line signed through this application minutes earlier.
+ * Because `prescription_lines_effective` coalesces the newest resolution over
+ * the line, and Slice 4 hands over against that view, the counter would supply
+ * the amendment while the signed row and `items_json` still said something
+ * else — with nothing in the record looking edited, because nothing was.
+ *
+ * Every refusal below is asserted twice: once through the command, which is
+ * where a doctor meets it, and once through a direct INSERT, which is what a
+ * psql session or a repair script would do. The second is the enforcement.
+ */
+describe('a resolution answers only what the line failed to record', () => {
+  /** The resolution a doctor would have to type by hand to get past commands.ts. */
+  const insertResolution = (lineId, staffId, { medicineId = null, quantity = null, action = 'amend' } = {}) =>
+    rows(
+      `insert into jmc.prescription_line_resolutions
+         (id,prescription_line_id,action,medicine_id,prescribed_quantity,reason,resolved_by)
+       values ($1,$2,$3,$4,$5,'Direct write',$6)`,
+      [randomUUID(), lineId, action, medicineId, quantity, staffId],
+    )
+
+  test('an ordinary signed line cannot be amended, cancelled, or resolved at all', async () => {
+    const { doctor, medicineId, patientId } = await clinicWithHistory()
+
+    // Not the legacy-but-readable line, and not a line this test wrote: one
+    // signed through the application just now, which is what the clinic will
+    // have thousands of.
+    await as(doctor, 'sign_consultation', {
+      patientId, complaint: 'Fever', diagnosis: 'Acute viral febrile illness',
+      diagnosisStatus: 'provisional', consultationFee: 0,
+      prescriptionItems: [{ medicineId, instructions: 'After food', quantity: 10 }],
+    })
+    const signed = String(await scalar(
+      `select l.id from jmc.prescription_lines l
+         join jmc.prescriptions p on p.id = l.prescription_id
+        where p.id not like 'hist-%' order by p.signed_at desc limit 1`,
+    ))
+
+    for (const line of [signed, (await lineOf('hist-normal')).id]) {
+      await assert.rejects(
+        as(doctor, 'resolve_prescription_line', {
+          prescriptionLineId: line, medicineId, reason: 'Changed my mind about the brand',
+        }),
+        /records both its medicine and its quantity/,
+      )
+      await assert.rejects(
+        as(doctor, 'resolve_prescription_line', {
+          prescriptionLineId: line, quantity: 60, reason: 'Meant sixty',
+        }),
+        /records both its medicine and its quantity/,
+      )
+      await assert.rejects(
+        as(doctor, 'resolve_prescription_line', {
+          prescriptionLineId: line, action: 'cancel', reason: 'Withdrawing it',
+        }),
+        /records both its medicine and its quantity/,
+      )
+
+      // And the same three straight at the table.
+      await assert.rejects(insertResolution(line, doctor.id, { medicineId }), /records both/)
+      await assert.rejects(insertResolution(line, doctor.id, { quantity: 60 }), /records both/)
+      await assert.rejects(insertResolution(line, doctor.id, { action: 'cancel' }), /records both/)
+    }
+
+    assert.equal(await scalar(`select count(*)::int from jmc.prescription_line_resolutions`), 0)
+  })
+
+  test('a line that only lost its quantity cannot have its medicine replaced', async () => {
+    const { doctor, medicineId } = await clinicWithHistory()
+    const line = await lineOf('hist-noqty')
+    assert.equal(line.medicine_state, 'resolved')
+
+    // A second medicine, so the attempt is a real swap rather than a no-op.
+    await as(doctor, 'add_medicine', {
+      code: 'HIST-TRAM', name: 'Tramadol', genericName: 'Tramadol', strength: '50 mg',
+      dosageForm: 'capsule', route: 'Oral', unit: 'capsule', saleClass: 'prescription',
+      schedule: 'H', reorderLevel: 5, targetStock: 100, initialQuantity: 100,
+      batchNumber: 'HIST-T1', expiry: await clinicDate(400), mrp: 90,
+      purchasePrice: 50, sellingPrice: 80,
+    })
+    const other = String(await scalar(`select id from jmc.medicines where code='HIST-TRAM'`))
+
+    await assert.rejects(
+      as(doctor, 'resolve_prescription_line', {
+        prescriptionLineId: line.id, medicineId: other, quantity: 12,
+        reason: 'It was really Tramadol',
+      }),
+      /already records which medicine was prescribed/,
+    )
+    await assert.rejects(insertResolution(line.id, doctor.id, { medicineId: other }), /already records which medicine/)
+    await assert.rejects(
+      insertResolution(line.id, doctor.id, { medicineId: other, quantity: 12 }),
+      /already records which medicine/,
+    )
+
+    // The quantity alone is still resolvable, and the medicine is untouched.
+    await as(doctor, 'resolve_prescription_line', {
+      prescriptionLineId: line.id, quantity: 12, reason: 'Counterfoil records twelve',
+    })
+    const resolved = await lineOf('hist-noqty')
+    assert.equal(resolved.effective_medicine_id, medicineId)
+    assert.equal(Number(resolved.effective_quantity), 12)
+  })
+
+  test('a line that only lost its medicine cannot have its quantity rewritten', async () => {
+    const { doctor, medicineId } = await clinicWithHistory()
+    const line = await lineOf('hist-gone')
+    assert.equal(line.quantity_state, 'recorded')
+    assert.equal(Number(line.prescribed_quantity), 6)
+
+    await assert.rejects(
+      as(doctor, 'resolve_prescription_line', {
+        prescriptionLineId: line.id, medicineId, quantity: 30,
+        reason: 'Calpol, and thirty of them',
+      }),
+      /already records the quantity prescribed/,
+    )
+    await assert.rejects(insertResolution(line.id, doctor.id, { quantity: 30 }), /already records the quantity/)
+    await assert.rejects(
+      insertResolution(line.id, doctor.id, { medicineId, quantity: 30 }),
+      /already records the quantity/,
+    )
+
+    await as(doctor, 'resolve_prescription_line', {
+      prescriptionLineId: line.id, medicineId, reason: 'Pharmacy records show Calpol',
+    })
+    const resolved = await lineOf('hist-gone')
+    assert.equal(resolved.effective_medicine_id, medicineId)
+    assert.equal(Number(resolved.effective_quantity), 6, 'the signed quantity stands')
+  })
+
+  test('nothing may be recorded after a cancellation', async () => {
+    const { doctor, medicineId } = await clinicWithHistory()
+    const line = await lineOf('hist-gone')
+
+    await as(doctor, 'resolve_prescription_line', {
+      prescriptionLineId: line.id, action: 'cancel',
+      reason: 'The medicine cannot be identified from any record; withdrawing the order',
+    })
+
+    await assert.rejects(
+      as(doctor, 'resolve_prescription_line', {
+        prescriptionLineId: line.id, medicineId, reason: 'Found it after all',
+      }),
+      /cancelled by a doctor on \d{4}-\d{2}-\d{2}/,
+    )
+    await assert.rejects(
+      as(doctor, 'resolve_prescription_line', {
+        prescriptionLineId: line.id, action: 'cancel', reason: 'Cancelling again',
+      }),
+      /Cancellation is final/,
+    )
+    await assert.rejects(insertResolution(line.id, doctor.id, { medicineId }), /Cancellation is final/)
+    await assert.rejects(insertResolution(line.id, doctor.id, { action: 'cancel' }), /Cancellation is final/)
+
+    assert.equal(await scalar(`select count(*)::int from jmc.prescription_line_resolutions`), 1)
+    const cancelled = await lineOf('hist-gone')
+    assert.equal(cancelled.cancelled, true)
+    assert.equal(cancelled.dispensable, false)
+  })
+
+  test('a doctor may still correct a determination they made about an unknown part', async () => {
+    const { doctor, pharmacy } = await clinicWithHistory()
+    const line = await lineOf('hist-noqty')
+
+    await as(doctor, 'resolve_prescription_line', {
+      prescriptionLineId: line.id, quantity: 12, reason: 'Read the counterfoil as twelve',
+    })
+    await as(doctor, 'resolve_prescription_line', {
+      prescriptionLineId: line.id, quantity: 15, reason: 'Counterfoil re-read: fifteen, not twelve',
+    })
+
+    // The later determination governs, and the earlier one is still on record.
+    assert.equal(Number((await lineOf('hist-noqty')).effective_quantity), 15)
+    assert.equal(
+      await scalar(
+        `select count(*)::int from jmc.prescription_line_resolutions where prescription_line_id=$1`,
+        [line.id],
+      ),
+      2,
+    )
+
+    await as(pharmacy, 'dispense_rx', { prescriptionId: 'hist-noqty' })
+    assert.equal(
+      await scalar(`select sum(-quantity_delta)::int from jmc.stock_movements
+        where quantity_delta < 0 and reference_id='hist-noqty'`),
+      15,
+    )
+  })
+
+  test('and an unresolved line is still refused at the counter while the scope is enforced', async () => {
+    const { pharmacy } = await clinicWithHistory()
+
+    await assert.rejects(
+      as(pharmacy, 'dispense_rx', { prescriptionId: 'hist-gone' }),
+      /does not record which medicine it was/,
+    )
+    await assert.rejects(
+      as(pharmacy, 'dispense_rx', { prescriptionId: 'hist-noqty' }),
+      /does not record what quantity it authorized/,
+    )
+    assert.equal(
+      await scalar(`select count(*)::int from jmc.stock_movements where quantity_delta < 0`),
+      0,
+    )
   })
 })
