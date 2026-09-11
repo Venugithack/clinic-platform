@@ -67,9 +67,19 @@ export async function signIn(name, pin) {
 }
 
 /** The stations on the rail, in order, as a signed-in person sees them. */
+/**
+ * The rail, and only the rail.
+ *
+ * `nav button` used to be enough. It is not any more: Slice 6's Reports screen
+ * puts its own `<nav aria-label="Reports">` inside `<main>`, so an unscoped
+ * selector reads fourteen report names as if they were stations the moment
+ * that screen is open. The rail names itself, so ask for it by name.
+ */
+const RAIL = 'nav[aria-label="Clinic stations"]'
+
 export function railStations() {
   const raw = evaluate(
-    `JSON.stringify([...document.querySelectorAll('nav button, nav a')]
+    `JSON.stringify([...document.querySelectorAll('${RAIL} button, ${RAIL} a')]
        .map(el => (el.innerText || '').split('\\n')[0].trim())
        .filter(Boolean))`,
   )
@@ -94,7 +104,7 @@ export function railStations() {
  */
 export async function goToStation(label) {
   const clicked = evaluate(`(() => {
-    const item = [...document.querySelectorAll('nav button, nav a')]
+    const item = [...document.querySelectorAll('${RAIL} button, ${RAIL} a')]
       .find(el => (el.innerText || '').trim().toLowerCase()
         .startsWith(${JSON.stringify(label.toLowerCase())}))
     if (!item) return 'no-station'

@@ -1943,4 +1943,142 @@ It exercises consent, the access rules, the audit, the checksum, the ticket and
 the wrong-patient guards against real bytes. It says nothing about Supabase's
 own bucket policy — that the bucket is private, that anonymous reads are
 refused, that the service key is not exposed — which is a deployment check and
-is recorded in §12 of `docs/STAGING.md` as one.
+is recorded in §7.2 of `docs/STAGING.md` as one.
+
+---
+
+## 11. Slice 6: admin, reports and the things that were still open
+
+Slice 6 adds no clinical table. Its whole job is to make what the earlier
+slices recorded *readable* — by an admin who has to reconcile a day, by a
+doctor who has to clear a queue of unreadable history, and by whoever is
+holding the runbook on the morning of the cutover.
+
+### 11.1 Reports are a separate function, on purpose
+
+`supabase/functions/reports/index.ts` is its own Edge Function rather than more
+cases in `command`. Three reasons, in order of how much they matter:
+
+1. **They are reads, and the snapshot is not the place for them.** The
+   whole-clinic snapshot is polled. A stock valuation that walks every batch,
+   or a movement history over four hundred days, does not belong in something
+   that runs every few seconds — `CLAUDE_IMPLEMENTATION_BRIEF.md` §3 says so
+   in as many words, and it is why `ledger`, `receipts` and the image list are
+   also on demand.
+2. **The role gate is per report, not per function.** Fourteen reports with
+   four different audiences:
+
+   | Report | admin | doctor | nurse | pharmacy |
+   |---|:-:|:-:|:-:|:-:|
+   | `stock_on_hand` | ● | ● | | ● |
+   | `stock_movements` | ● | | | ● |
+   | `expiry_and_holds` | ● | ● | | ● |
+   | `package_audit` | ● | | | ● |
+   | `purchasing` | ● | | | ● |
+   | `outstanding_prescriptions` | ● | ● | | ● |
+   | `dispensing` | ● | | | ● |
+   | `consultation_fees` | ● | | | |
+   | `sales` | ● | | | ● |
+   | `payments` | ● | | ● | ● |
+   | `patient_dues` | ● | | ● | ● |
+   | `reversals` | ● | | | |
+   | `follow_ups` | ● | ● | ● | |
+   | `image_access` | ● | | | |
+
+   `payments` and `patient_dues` name the nurse because `take_payment` does:
+   the counter's role gate is `admin, nurse, pharmacy` and has been since
+   before this programme. A report that showed less than the command allows
+   would be theatre; one that showed more would be a leak. They match
+   deliberately, and §11.5 records the question that leaves open.
+
+   `GET /reports?report=index` returns only the reports the caller may run, so
+   the UI builds its menu from the server's answer rather than from a list in
+   the page that can drift away from the gate. A report the server lists and
+   the page has never heard of is named on screen rather than dropped, because
+   the backend is deployed separately from the bundle and the two can be a
+   release apart.
+3. **`image_access` is admin-only and reads no image.** It is the audit trail
+   of §10 — who opened what, when, and whether it was exported — which is
+   exactly the "required audit/technical metadata" that policy item 26 grants
+   an admin, and nothing more.
+
+### 11.2 The range is computed once, in Postgres
+
+Every dated report takes one `since` value: clinic-local midnight, `days` ago,
+as an ISO string. It is asked of the database
+
+```sql
+select to_char(
+  ((date_trunc('day', now() at time zone 'Asia/Kolkata') - ((? || ' days')::interval))
+     at time zone 'Asia/Kolkata') at time zone 'UTC',
+  'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+```
+
+rather than computed in JavaScript, for the reason `clinicInstant` gives at
+length: the runtime is UTC, the clinic is not, and date arithmetic done in the
+wrong one of those is five and a half hours wrong for part of every day —
+which for a day book means the evening's takings landing on tomorrow.
+
+`days` is bounded to 0..400 and defaults to 7. Zero means today.
+
+The same `since` fills every `?` in the report's SQL, counted from the text
+rather than repeated by hand, because the driver numbers placeholders
+positionally and a hand-kept count drifts the first time somebody adds a
+clause.
+
+### 11.3 The doctor review queue
+
+`prescription_lines` that nobody can read — `medicine_state <> 'resolved'` or
+`quantity_state <> 'resolved'` — are §6's problem, and Slice 2.1 gave them a
+resolution record. What was missing was the list. `ReviewQueuePanel` is that
+list: oldest first, one line at a time, doctor-only, and it writes through the
+same `resolve_prescription_line` command the consultation uses — including the
+scope check §6.5 added, so a doctor cannot resolve a line of a prescription
+they are not responsible for.
+
+It is in the doctor's rail rather than admin's because a non-doctor admin
+resolving a clinical line is precisely the thing the brief forbids. The count
+is the number in `ROLLOUT.md`'s second preflight query, and it is the one that
+decides how long the cutover takes.
+
+Building it surfaced a gap worth recording, because it is the shape of gap
+this architecture invites. The report gave the doctor the authoritative list —
+prescription number, patient, line number, the medicine as signed — and no
+identifier, while `resolve_prescription_line` takes a line id; and the
+snapshot's prescriptions are gated to the counter, so the one role permitted to
+settle a line was the one role holding no id for it. The first implementation
+worked around it by reading the clinical record and matching on patient name
+and medicine text, which is three inferences deep and wrong the day two
+patients share a name. The fix was two columns: `needsDoctor` now selects
+`l.id as prescription_line_id` and `p.id as patient_id` (and `quantity_unit`,
+so the field can name its own units). The generic table renderer drops any
+column named like an identifier, so none of the three reaches a reader — a
+browser journey asserts that no report prints a uuid.
+
+### 11.4 What the security sweep changed
+
+Nothing structural, which is the point — the invariants were set in Slice 3 and
+held. What it did produce:
+
+- Every view in `jmc` is `security_invoker`; the sweep asserts it rather than
+  trusting the migrations, and `slice6-gate.test.mjs` fails if a later one
+  forgets.
+- No object in `jmc` grants to `anon`, `authenticated`, `service_role` or
+  `PUBLIC`; asserted the same way.
+- No `SECURITY DEFINER` function exists anywhere in the schema.
+- Every function pins `search_path`.
+- Every foreign key has an index on its referencing column. This one was worth
+  automating: it found none missing, but it is the check that stops a later
+  slice adding a column that makes a delete scan a ledger.
+
+### 11.5 What Slice 6 leaves open
+
+- **The nurse at the counter.** Policy item 17 says the fee is collected "at
+  the pharmacy/payment counter" and does not name a role. The code lets a nurse
+  do it, inherited rather than decided, and this slice preserved that rather
+  than narrowing a capability the clinic may be using. It is a one-line change
+  in either direction once the owner says which.
+- **Everything in `ROLLOUT.md` §7**, which is the honest list: no real
+  supplier document, no real package, no classified formulary, no printer, no
+  tablet on clinic Wi-Fi, no Storage bucket, no CI run, and a production
+  database role nobody here has read.

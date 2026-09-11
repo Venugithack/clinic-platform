@@ -34,10 +34,19 @@ after(() => { closeBrowser() })
 const mainSays = (words) =>
   `document.querySelector('main').innerText.toLowerCase().includes(${JSON.stringify(String(words).toLowerCase())})`
 
-/** Move to one of the counter's three stations by the word on its button. */
+/**
+ * Move to one of the counter's three stations by the word on its button.
+ *
+ * Scoped to `main`. The unscoped `[role=group]` this used to take reached the
+ * first group anywhere on the page, and Slice 6 put one earlier in the DOM:
+ * the administrator's rail now labels its sections that way, so the first
+ * group on screen became People and access and the counter's own switcher was
+ * never found. The work surface is what these tests are about, and it is
+ * cheap to say so.
+ */
 function openStation(label) {
   const clicked = evaluate(`(() => {
-    const group = document.querySelector('[role=group]')
+    const group = document.querySelector('main [role=group]')
     const button = [...(group?.querySelectorAll('button') ?? [])]
       .find(b => (b.innerText || '').toLowerCase().includes(${JSON.stringify(label.toLowerCase())}))
     if (!button) return 'no-station:' + [...(group?.querySelectorAll('button') ?? [])]

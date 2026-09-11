@@ -7,6 +7,8 @@ import { ExpiringPanel } from './expiring-panel'
 import { FormularyPanel, OpeningCountPanel, ReceivingPanel } from './formulary-workspace'
 import type { View } from './navigation'
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
+import { ReportsPanel } from './reports-workspace'
+import { ReviewQueuePanel } from './review-queue-panel'
 import {
   AuditPanel,
   BedsPanel,
@@ -60,6 +62,18 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
       return <ConsultationPanel data={data} run={run} />
     case 'records':
       return <RecordsPanel data={data} />
+    /*
+     * The doctor's queue of legacy lines nobody can read.
+     *
+     * Not gated here: `resolve_prescription_line` requires the doctor role and
+     * refuses anybody else in its own words, and the rail offers this station
+     * to a doctor alone. A hidden button is not a security boundary and this
+     * screen does not pretend to be one.
+     */
+    case 'review':
+      return <ReviewQueuePanel data={data} run={run} />
+    case 'reports':
+      return <ReportsPanel />
     case 'beds':
       return <BedsPanel data={data} run={run} />
     case 'billing':

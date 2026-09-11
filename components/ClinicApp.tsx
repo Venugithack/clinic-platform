@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClinicSnapshot, CommandResponse, LockScreenStaffView, Role } from '@/lib/types'
 import { BusyContext, SelectedPatientContext, type ActionRunner } from './clinic-context'
 import { callApi, readToken, writeToken } from '@/lib/api'
-import { navigationFor, ROLE_LABEL, type View } from './navigation'
+import { navigationGroupsFor, ROLE_LABEL, type View } from './navigation'
 
 /**
  * How many digits a PIN chosen from here has.
@@ -289,7 +289,10 @@ export function ClinicApp() {
   if (!data) return <LoginScreen onSignIn={login} busy={busy} notice={notice} />
 
   const roles = data.session.roles
-  const items = navigationFor(roles)
+  // The rail in sections. Only the administrator's twenty stations are divided;
+  // every other role gets one unheaded group holding its flat rail unchanged.
+  const groups = navigationGroupsFor(roles)
+  const items = groups.flatMap((group) => group.items)
   const current = items.find((item) => item.id === view) ?? items[0]
   const roleName = roles.map((role) => ROLE_LABEL[role]).join(' · ')
 
@@ -337,23 +340,48 @@ export function ClinicApp() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-2 py-2">
-            {items.map((item) => {
-              const on = current?.id === item.id
+            {groups.map((group, index) => {
+              const headingId = group.heading
+                ? `rail-${group.heading.toLowerCase().replaceAll(' ', '-')}`
+                : undefined
+              const stations = group.items.map((item) => {
+                const on = current?.id === item.id
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-current={on ? 'page' : undefined}
+                    onClick={() => {
+                      setView(item.id)
+                      setMenuOpen(false)
+                    }}
+                    className={`flex min-h-[48px] w-full items-center rounded-box px-3 py-2 text-left text-[13px] font-semibold tracking-[0.1em] uppercase transition-colors ${
+                      on ? 'bg-paper text-ink' : 'text-paper/70 hover:bg-paper/10 hover:text-paper'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                )
+              })
+
+              // A named group rather than a heading: a screen reader announces
+              // "People and access, group" on entering it, and the page's
+              // heading outline stays the workspace's own — the rail is not
+              // four headings in front of the h1 every screen already sets.
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-current={on ? 'page' : undefined}
-                  onClick={() => {
-                    setView(item.id)
-                    setMenuOpen(false)
-                  }}
-                  className={`flex min-h-[48px] w-full items-center rounded-box px-3 py-2 text-left text-[13px] font-semibold tracking-[0.1em] uppercase transition-colors ${
-                    on ? 'bg-paper text-ink' : 'text-paper/70 hover:bg-paper/10 hover:text-paper'
-                  }`}
+                <div
+                  key={group.heading ?? `rail-top-${index}`}
+                  role={group.heading ? 'group' : undefined}
+                  aria-labelledby={headingId}
+                  className={index > 0 ? 'mt-3' : undefined}
                 >
-                  {item.label}
-                </button>
+                  {group.heading ? (
+                    <p id={headingId} className="eyebrow px-3 pt-1 pb-1.5 text-paper/60">
+                      {group.heading}
+                    </p>
+                  ) : null}
+                  {stations}
+                </div>
               )
             })}
           </div>

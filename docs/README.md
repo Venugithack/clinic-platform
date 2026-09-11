@@ -219,29 +219,30 @@ likely to bite. Treat them as the right shape rather than as a script.
 
 ---
 
-## 6. What is not covered
+## 6. What is covered, and what is not
 
-The honest list, because the previous version of this file claimed a test suite
-that no longer exists and sent people looking for it.
+This section has been wrong twice in opposite directions — once claiming a test
+suite that had been deleted, then once denying suites that had since been built.
+It is rewritten here against what `npm run` actually does today.
 
-**There is no database test suite.** No pgTAP, no fixtures, no seed. Nothing
-anywhere applies a migration or asserts that a query names a column that exists.
-The SQL in `supabase/migrations/` is checked by running it.
+### What runs
 
-**There is no end-to-end test.** No Playwright, no browser automation, no gate.
-Nothing proves a tablet can sign in, that a prescription reaches the counter, or
-that a bill prints. Every claim in §1 about how the halves talk is a claim about
-code that has been read, not code that has been exercised by a test.
+| Command | What it is |
+|---|---|
+| `npm run typecheck` | `tsc --noEmit` over the page. Does **not** see `supabase/` — `tsconfig.json` excludes it. |
+| `npm test` | Four unit tests, no database, no network. |
+| `npm run build` | The static export. |
+| `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
+| `npm run test:db` | **273 tests** over sixteen files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, and the Slice 6 security sweep — plus concurrency tests that open separate connections and race them. |
+| `npm run test:browser` | **35 journeys** through a real Chrome against the built export. `docs/STAGING.md` §5 lists them. |
+| `npm run staging:rehearse` | Applies the migrations to a database that already has history, then re-applies the backfills to prove they are idempotent. |
+| `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
 
-**`tests/` is two files and four tests** — `password.test.ts` and
-`order-status.test.ts`. `password.test.ts` is the interesting one: it runs the
-backend's *own* `_shared/password.ts` under Node, which works only because that
-file uses nothing but `node:crypto`, and it asserts that hashing does not block
-the event loop — the exact property whose absence killed sign-in on Cloudflare.
+`test:db`, `test:browser`, `staging:rehearse` and `staging:drill` all refuse any
+database that is not a loopback scratch database — `scripts/staging/guard.mjs`,
+and `docs/STAGING.md` §2 explains why that guard is not optional here.
 
-**`npm run typecheck` does not see the backend.** `tsconfig.json`'s `exclude`
-list contains `"supabase"`, so `tsc` never opens an Edge Function. CI covers
-this with a separate step; to run it yourself:
+The backend typecheck, which CI runs and `npm run typecheck` does not:
 
 ```bash
 shopt -s globstar
@@ -252,19 +253,45 @@ deno check --node-modules-dir=none supabase/functions/**/*.ts
 root's `package.json` and `node_modules` — the page's, not the functions' — and
 tries to resolve `npm:postgres` and `npm:csv-parse` out of a tree that has never
 held either, failing before it typechecks a line. Deno is not a dependency here;
-install it separately.
+`npm exec --yes -- deno@2.9.6` fetches the pinned version on demand.
 
-**CI checks four things and nothing else**: the page's types, the two unit
-tests, that the export builds, and the backend's types. See the comment at the
-top of `.github/workflows/ci.yml`, which says the same thing at the point where
-somebody might otherwise assume more.
+### What is still not covered
 
-**Automated off-site backups are not configured.** The retired workflow called
-`scripts/ci-pgdg.sh`, `scripts/db-backup.sh`, `scripts/db-start.sh` and
-`scripts/db-restore-drill.sh`, none of which exist any more. It has been disabled
-and preserved at `archive/github-workflows/backup.yml`. Therefore **the off-site
-encrypted backups described in `../archive/docs/HOSTING.md` §5 are not
-happening**, and neither is the restore drill.
+**CI runs two of those and reports a third.** `.github/workflows/ci.yml` has
+`check` (types, unit tests, build, backend types), `database` (migrations,
+`test:db`, the restore drill) and `browser`. **The `browser` job has never
+run** — nothing in this programme has been pushed — so it is a job that
+reports, not a gate, until it has been green twice. `docs/STAGING.md` §6 says
+the same at more length.
+
+**No test has ever touched the clinic's data.** The fixtures are synthetic and
+small. Nothing here proves a migration behaves against two years of real rows;
+`staging:rehearse` proves it against a *representative* history this repository
+made up. `docs/ROLLOUT.md` §2 is the set of count-only queries that ask the real
+database the same questions, and they have not been run either.
+
+**Nothing here tests hardware.** No printer, no tablet, no clinic Wi-Fi. Print
+layout is checked in a browser at A4 and 80 mm, which proves the CSS and
+nothing about paper.
+
+**Nothing here tests Supabase's own policies.** Clinical images are stored
+through `storage.ts`, which writes to a directory in staging and to Supabase
+Storage in the clinic. Every rule *this application* enforces is exercised;
+that the bucket is private and refuses an anonymous read is a deployment check,
+in `docs/STAGING.md` §7.2.
+
+**Backups run; the archive itself has never been restored from.**
+`.github/workflows/backup.yml` dumps five times a day plus a nightly and a
+monthly, encrypts with `age` and uploads to R2. A nightly `restore-drill` job
+proves the dump-and-restore path works — but read what it actually does: it
+takes a *fresh* dump from the live database and restores that onto plain
+PostgreSQL 17. It never downloads the object it uploaded, never decrypts it,
+and so cannot tell you that what is sitting in R2 is readable. That gap is the
+one worth closing first, because it is the one that only shows up on the day it
+matters.
+
+**There is still no branch protection.** Nothing forces a green CI before a
+merge to `main`.
 
 ---
 

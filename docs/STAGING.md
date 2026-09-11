@@ -187,7 +187,7 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives seventeen journeys through Chrome.
+starts the functions and the page, and drives thirty-five journeys through Chrome.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -205,6 +205,37 @@ then a template, a signature and a print; no sideways scroll and no control
 under 44px at 1024x768 and 768x1024; a real Tab press landing somewhere named
 and visibly marked; every control having an accessible name; a busy state
 while a command is in flight; and a dropped connection reported as words.
+
+Slices 3 to 6 added twenty more, each of them a thing no database test can
+see:
+
+- **Formulary and receiving** — building a package ladder and verifying it
+  against the pack; receiving boxes and strips and reading the base-unit
+  preview before posting; a blind opening count that genuinely hides the
+  expected figure until a number is entered; an unknown barcode queueing for
+  an admin.
+- **The counter** — a consultation fee arriving with no prescription behind
+  it; partial dispensing with prescribed, supplied, available and remaining
+  all on screen; a split payment across cash and UPI; pay-later leaving a
+  balance that the day book and the till agree about.
+- **Images** — capture refusing to start without an open patient and a
+  recorded consent; the pharmacy rail carrying no image control at all; and
+  an assertion that no durable image URL exists anywhere in the page's markup
+  after a photograph has been viewed.
+- **Admin and reports** — the administrator's twenty stations divided into the
+  five sections with nothing lost; a report about now offering no date range
+  and a dated one offering one; a pharmacist's report list with Consultation
+  fees, Reversals and Image access simply absent from it rather than greyed
+  out; no raw identifier printed at a reader; no sideways scroll at either
+  tablet orientation on the widest table this application draws; and the
+  review queue offered to a doctor and not to the pharmacy.
+
+The blind-count journey is the one worth singling out. Its first version
+passed without proving anything — the start screen and the counting screen
+share a heading, so a wait on the title was satisfied before the count began.
+It now requires the count reference and the "Counted zero" control to be
+present before it will assert, which is the difference between testing the
+screen and testing that a screen exists.
 
 ## 5a. Rehearsing a migration over a clinic that already has history
 
@@ -307,13 +338,21 @@ shell.
 
 Named rather than implied, in the register `docs/README.md` §6 uses.
 
-**The browser suite runs, and does not run in CI.** `npm run test:browser`
-drives seventeen journeys through a real Chrome — see §5. It is not wired into
-`.github/workflows/ci.yml`: the runner would need Docker for the staging
-database (which GitHub's ubuntu images have) and a Chrome download via
-`agent-browser install` (which they do not), and a pipeline that goes red for
-a missing browser teaches people to ignore it. Adding it is a small job and a
-deliberate one.
+**The browser suite is now in CI, and has never run there.** `.github/workflows/ci.yml`
+gained a `browser` job: Node 24, `npm ci`, Chrome pinned to `131.0.6778.85` by
+`browser-actions/setup-chrome`, and `npm run test:browser` with
+`AGENT_BROWSER_EXECUTABLE_PATH` pointing at it, so the driver takes the browser
+by path instead of discovering whatever the runner image happens to ship. It
+has no `services: postgres` block, unlike the `database` job, because
+`up.mjs` creates its own `jmc-staging` container on 55432 and a service
+container on the same host port would collide before a migration ran.
+
+Nothing in this programme has been pushed, so no runner has executed that job.
+Chrome headless on a GitHub runner has failure modes a laptop cannot reproduce
+— sandbox flags, missing fonts, the shared-memory size that makes it fall over
+in a container — and none of them have been ruled out here. Treat it as a job
+that reports rather than a gate, and make it a required check only after it has
+been green twice.
 
 **Deno is not a dependency of this repository**, and does not need to become
 one. `npm exec` fetches the pinned version on demand, so the check CI runs is
@@ -335,7 +374,74 @@ and small. Nothing here proves a migration will behave against two years of
 real rows; rehearsing that needs a restored copy of a production backup, which
 is a separate exercise and needs owner approval to handle real patient data.
 
-**`supabase start` is still not set up.** There is no `supabase/config.toml`.
-The full Supabase stack — Auth, Storage, PostgREST, the Deno edge runtime — is
-eleven containers this project does not currently need; Slice 5 needs private
-Storage and will need it then.
+**`supabase start` is still not set up**, and Slice 5 went around it. There is
+no `supabase/config.toml`; the full stack — Auth, Storage, PostgREST, the Deno
+edge runtime — is eleven containers, and clinical images needed one of them.
+So `storage.ts` writes through Supabase Storage when it is configured and to
+the directory named by `CLINIC_IMAGE_ROOT` when it is not, and the gate points
+that at a temporary directory it deletes afterwards.
+
+That exercises this application's rules — the ticket, the checksum, the
+role check, the audit row — against a real filesystem. It says nothing about
+Supabase's: that the bucket is private, that an anonymous GET is refused, that
+no service key reaches the browser. §`ROLLOUT.md` §7 carries that as a
+deployment check, because it can only be answered where the bucket is.
+
+---
+
+## 7. The checks that belong to a deployment, not to staging
+
+Staging can prove the clinic's logic. It cannot prove the things that are true
+only of the deployed artefact and the deployed project, and those have their
+own short list. `ROLLOUT.md` is the operating document; this is the part of it
+that is about this repository.
+
+### 7.1 What is in the bundle
+
+A static export bakes its configuration in at build time, so the deployed
+JavaScript is the only place the question can be asked:
+
+```bash
+# The live project must not appear in a build made anywhere but the deploy.
+grep -rIl "supabase.co\|service_role\|eyJhbGciOi" out/ || echo "clean"
+
+# What the page will actually call.
+grep -rho "https\?://[^\"']*functions/v1" out/ | sort -u
+```
+
+The browser gate does this for itself before it will serve a page — see §5's
+third guard — and refuses if the live project appears. Do the same by hand
+before a deploy, because the gate is not what publishes `out/`.
+
+### 7.2 What Storage will allow
+
+`storage.ts` runs against a directory under `CLINIC_IMAGE_ROOT` in staging, so
+every rule this application enforces is exercised and none of Supabase's are.
+At the project, once:
+
+- the bucket is **private** — an anonymous GET of a known object path is
+  refused;
+- the service key is in the Edge Function environment and **not** in any
+  `NEXT_PUBLIC_` variable;
+- no bucket policy grants `anon` or `authenticated` read.
+
+A durable, shareable image URL is the failure this design exists to prevent.
+If one can be produced by any means, stop and fix it before the feature is
+switched on for the clinic.
+
+### 7.3 What the database role is
+
+`§7.4` of `SCHEMA_AND_TYPES.md` sets out the whole argument. The short version:
+the application is written and tested against the pessimistic case — a role
+that is neither superuser nor `BYPASSRLS` — so it works either way, but nobody
+here has read what the deployed role actually is, because nothing in this
+programme queries production. Preflight query 7 in `ROLLOUT.md` reads it. It
+returns five booleans and no clinic data.
+
+### 7.4 What a printer does
+
+Print layout is checked in a browser at A4 and at 80 mm widths, which proves
+the CSS and proves nothing about paper. Margins, page breaks in a long medicine
+list, and whether a reprint is legibly marked as one are answered by an HP
+Smart Tank 580 with paper in it. `ROLLOUT.md` §7 keeps that open, and it should
+stay open until somebody in Chennai holds the page.

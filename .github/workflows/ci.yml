@@ -215,3 +215,84 @@ jobs:
           PGDATABASE: clinic_staging
           SCRATCH_DB: clinic_restore_drill
         run: ./scripts/db-restore-drill.sh
+
+  # ── THE SCREENS, WHICH NEITHER JOB ABOVE CLICKS ───────────────────────────
+  #
+  # `database` runs the clinic's logic; this runs its screens. Slices 1 to 5
+  # each found at least one defect that only a browser could see — a
+  # doctor-only account shown no register button, a rail with no Vitals
+  # station, a counter with no arithmetic on it, a consultation fee that agreed
+  # with the configured fee by coincidence — and none of those had a failing
+  # test until somebody opened the page.
+  #
+  # ── WHY THE BROWSER IS PINNED, AND WHY THAT MATTERS MORE THAN USUAL ───────
+  #
+  # `ubuntu-24.04` ships a Chrome whose version moves without anybody asking.
+  # A suite that clicks real controls and measures real layout is a suite whose
+  # verdict can change on a morning nobody touched the code, and the brief is
+  # explicit: do not add a knowingly flaky required check. So Chrome is
+  # installed at a fixed version and handed to the driver by path, the same way
+  # `deno-version` is pinned above for the same reason.
+  #
+  # ── WHAT HAS NOT BEEN VERIFIED ───────────────────────────────────────────
+  #
+  # This job has never run. Nothing in this programme has been pushed, so no
+  # runner has executed it, and the exact behaviour of Chrome headless on a
+  # GitHub runner — sandbox flags, missing fonts, the shared-memory size that
+  # makes headless Chrome fall over on a container — is not something a
+  # developer's machine can answer. It is written to be correct and is recorded
+  # here as unverified. Make it a required check on the branch only after it
+  # has been green twice; until then it is a job that reports, not a gate.
+  browser:
+    name: browser journeys
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    # No `services: postgres` here, unlike the job above, and the difference is
+    # not an oversight. `npm run test:browser` runs scripts/staging/up.mjs,
+    # which creates its OWN `jmc-staging` container on port 55432 — that is how
+    # a developer runs it and running the same thing in CI is the point. A
+    # service container bound to the same host port would collide, and
+    # `docker run` would fail before a single migration was applied. Docker is
+    # present on `ubuntu-24.04`, so up.mjs has what it needs.
+    #
+    # STAGING_DB_URL is not set here for the same reason: up.mjs builds the URL
+    # and hands it to every child process, and a second, differently-spelled
+    # copy in this file is a copy that goes stale.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Pinned exactly. `stable` would be a moving target and this job's whole
+      # value is that a red run means the code changed.
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          chrome-version: '131.0.6778.85'
+
+      - name: Browser journeys
+        # The driver takes the browser by path rather than discovering one, so
+        # the pin above is load-bearing rather than decorative.
+        env:
+          AGENT_BROWSER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: npm run test:browser
+
+      # The screenshots and the page it was looking at when something failed.
+      # A browser failure with no artifact is a bug report that says "it did
+      # not work", which nobody can act on.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure
+          path: |
+            out/
+            /tmp/agent-browser-*
+          retention-days: 7
+          if-no-files-found: ignore
