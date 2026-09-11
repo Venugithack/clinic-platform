@@ -1083,6 +1083,9 @@ export async function seedClinic(sql, options = {}) {
         pin_hash: secrets[key].hash,
         pin_salt: secrets[key].salt,
         pin_format: FIXTURE_PIN_FORMATS[key],
+        // The synthetic owner-doctor is the one explicit clinic-template
+        // publisher. Admin-only staff never receive clinical authority.
+        can_publish_clinical_templates: key === 'doctor' ? 1 : 0,
         active: staff.active ? 1 : 0,
         last_login: staff.active ? clock.at(0, '08:30') : null,
         created_at: clock.at(-420, '09:00'),
@@ -1127,8 +1130,18 @@ export async function seedClinic(sql, options = {}) {
         id: medicine.id,
         code: medicine.code,
         name: medicine.name,
+        generic_name: medicine.genericName ?? medicine.name,
         strength: medicine.strength,
         dosage_form: medicine.dosageForm,
+        route: medicine.route ?? (
+          medicine.dosageForm === 'cream' || medicine.dosageForm === 'dressing'
+            ? 'Topical'
+            : medicine.dosageForm === 'drops'
+              ? 'Ophthalmic'
+              : medicine.dosageForm === 'injection'
+                ? 'Injection'
+                : 'Oral'
+        ),
         unit: medicine.unit,
         barcode: medicine.barcode,
         sale_class: medicine.saleClass,
@@ -1210,10 +1223,10 @@ export async function seedClinic(sql, options = {}) {
     })))}`
 
     await tx`insert into jmc.encounters ${tx([
-      { key: 'fever', diagnosis: 'Acute viral fever', notes: 'Three days of fever with body ache. Chest clear, throat mildly congested.', advice: 'Plenty of fluids and rest. Return if the fever crosses three more days.' },
-      { key: 'acidity', diagnosis: 'Gastro-oesophageal reflux', notes: 'Burning after meals for two weeks. No alarm features, no weight loss.', advice: 'Avoid late dinners and lying down straight after eating.' },
-      { key: 'lastWeek', diagnosis: 'Essential hypertension, uncontrolled', notes: 'On amlodipine 5 mg. Home readings consistently above 145 systolic.', advice: 'Reduce salt. Bring the home readings book to the next visit.' },
-      { key: 'adviceOnly', diagnosis: 'Type 2 diabetes, review', notes: 'Sugars steady on diet alone. No medicine started today.', advice: 'Continue diet and walking. Repeat fasting sugar in three months.' },
+      { key: 'fever', complaint: 'Fever and body pain', duration: 3, unit: 'day', examination: 'Chest clear. Throat mildly congested.', diagnosis: 'Acute viral fever', notes: 'Three days of fever with body ache.', advice: 'Plenty of fluids and rest. Return if the fever crosses three more days.' },
+      { key: 'acidity', complaint: 'Burning after meals', duration: 2, unit: 'week', examination: 'No alarm features. No weight loss.', diagnosis: 'Gastro-oesophageal reflux', notes: 'Symptoms are worse after late dinners.', advice: 'Avoid late dinners and lying down straight after eating.' },
+      { key: 'lastWeek', complaint: 'Blood pressure review', duration: null, unit: null, examination: 'Home readings consistently above 145 systolic.', diagnosis: 'Essential hypertension, uncontrolled', notes: 'On amlodipine 5 mg.', advice: 'Reduce salt. Bring the home readings book to the next visit.' },
+      { key: 'adviceOnly', complaint: 'Diabetes review', duration: null, unit: null, examination: 'Sugars steady on diet alone.', diagnosis: 'Type 2 diabetes, review', notes: 'No medicine started today.', advice: 'Continue diet and walking. Repeat fasting sugar in three months.' },
     ].map((encounter) => {
       const plan = FIXTURE_ENCOUNTERS[encounter.key]
       return {
@@ -1221,7 +1234,12 @@ export async function seedClinic(sql, options = {}) {
         patient_id: patientId(plan.patient),
         doctor_id: staffId('doctor'),
         appointment_id: plan.appointment ? FIXTURE_APPOINTMENTS[plan.appointment].id : null,
+        complaint: encounter.complaint,
+        complaint_duration_value: encounter.duration,
+        complaint_duration_unit: encounter.unit,
+        examination: encounter.examination,
         diagnosis: encounter.diagnosis,
+        diagnosis_status: 'confirmed',
         notes: encounter.notes,
         advice: encounter.advice,
         created_at: clock.at(-plan.daysAgo, plan.time),
@@ -1251,6 +1269,86 @@ export async function seedClinic(sql, options = {}) {
         }
       }),
     )}`
+
+    // Signed lines are immutable snapshots. The old JSON is retained only for
+    // compatibility with dispensing until Slice 4 moves that flow over.
+    let prescriptionLineNumber = 0
+    await tx`insert into jmc.prescription_lines ${tx(
+      Object.entries(FIXTURE_PRESCRIPTIONS).flatMap(([key, prescription]) =>
+        PRESCRIPTION_ITEMS[key].map((item, index) => {
+          prescriptionLineNumber += 1
+          const medicine = FIXTURE_MEDICINES[item.medicine]
+          const route = medicine.route ?? (
+            medicine.dosageForm === 'cream' || medicine.dosageForm === 'dressing'
+              ? 'Topical'
+              : medicine.dosageForm === 'drops'
+                ? 'Ophthalmic'
+                : medicine.dosageForm === 'injection'
+                  ? 'Injection'
+                  : 'Oral'
+          )
+          return {
+            id: uid('d1', prescriptionLineNumber),
+            prescription_id: prescription.id,
+            line_number: index + 1,
+            medicine_id: medicine.id,
+            medicine_name_snapshot: `${medicine.name} ${medicine.strength}`.trim(),
+            generic_name_snapshot: medicine.genericName ?? medicine.name,
+            strength_snapshot: medicine.strength,
+            dosage_form_snapshot: medicine.dosageForm,
+            route_snapshot: route,
+            medicine_code_snapshot: medicine.code,
+            dose_amount: '',
+            dose_unit: '',
+            frequency: '',
+            timing: '',
+            duration_value: null,
+            duration_unit: null,
+            dosage_text: item.dosage,
+            instructions: item.instructions,
+            prescribed_quantity: item.quantity,
+            quantity_unit: medicine.unit,
+          }
+        }),
+      ),
+    )}`
+
+    await tx`insert into jmc.patient_clinical_profiles ${tx([
+      {
+        patient_id: patientId('hypertensive'), allergy_status: 'known',
+        allergy_notes: 'Staging fixture allergy — not a real patient',
+        clinical_flags: 'Bring home BP record', updated_by: staffId('doctor'),
+        updated_at: clock.at(-9, '10:25'),
+      },
+      {
+        patient_id: patientId('child'), allergy_status: 'no_known',
+        allergy_notes: '', clinical_flags: '', updated_by: staffId('doctor'),
+        updated_at: clock.at(-30, '11:10'),
+      },
+    ])}`
+
+    // The clinic-wide vocabulary is no longer seeded here. It arrives with
+    // `20260911120000_slice2_clinical_vocabulary.sql` as the owner-approved
+    // release, so staging exercises the real list rather than eleven phrases a
+    // fixture file invented. What belongs here is the layer above it: one
+    // doctor's own favourites and recents, which is what makes the ranking in
+    // the consultation screen visible — favourites first, then most used.
+    //
+    // Two of these are approved wording the doctor has favourited; the third is
+    // the doctor's own phrasing, which is not in the approved release and must
+    // still be suggested back to them.
+    await tx`insert into jmc.clinical_phrase_preferences ${tx([
+      { kind: 'complaint', text: 'Fever', favourite: 1, uses: 34, days: -1 },
+      { kind: 'advice', text: 'Drink adequate fluids', favourite: 1, uses: 28, days: -1 },
+      { kind: 'diagnosis', text: 'Acute viral febrile illness', favourite: 0, uses: 19, days: -2 },
+      { kind: 'instruction', text: 'After food', favourite: 0, uses: 41, days: -1 },
+      { kind: 'examination', text: 'Chest clear, no added sounds', favourite: 1, uses: 12, days: -3 },
+    ].map((row) => ({
+      doctor_id: staffId('doctor'), kind: row.kind, display_text: row.text,
+      normalized_text: row.text.trim().toLocaleLowerCase('en-IN').replace(/\s+/g, ' '),
+      favourite: row.favourite, use_count: row.uses,
+      last_used_at: clock.at(row.days, '11:40'),
+    })))}`
 
     await tx`insert into jmc.bills ${tx([
       { key: 'paidCashToday', createdDaysAgo: 0, createdTime: '09:20', paidTime: '09:35' },
@@ -1614,7 +1712,8 @@ export async function seedClinic(sql, options = {}) {
              setval('jmc.otc_receipt_seq',       ${Object.keys(FIXTURE_SALES).length + 1}, false),
              setval('jmc.purchase_order_seq',    ${Object.keys(FIXTURE_ORDERS).length + 1}, false),
              setval('jmc.supplier_return_seq',   2, false),
-             setval('jmc.stock_take_seq',        2, false)`)
+             setval('jmc.stock_take_seq',        2, false),
+             setval('jmc.prescription_number_seq', ${Object.keys(FIXTURE_PRESCRIPTIONS).length + 1}, false)`)
 
     if (verify) await assertConsistent(tx)
   })
@@ -1716,6 +1815,7 @@ async function assertConsistent(tx) {
     ['purchase_order_seq', 'purchase_orders', 'order_number'],
     ['supplier_return_seq', 'supplier_returns', 'note_number'],
     ['stock_take_seq', 'stock_takes', 'reference'],
+    ['prescription_number_seq', 'prescriptions', 'prescription_number'],
   ]
   for (const [sequence, table, column] of series) {
     const [row] = await tx.unsafe(`

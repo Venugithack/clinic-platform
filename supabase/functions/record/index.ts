@@ -18,7 +18,7 @@ Deno.serve(async (request) => {
   if (!patientId) return json({ ok: false, message: 'No patient asked for.' }, 400)
 
   try {
-    return json({ ok: true, record: await readPatientRecord(patientId) })
+    return json({ ok: true, record: await readPatientRecord(patientId, session.staffId) })
   } catch (error) {
     console.error('patient record failed:', error)
     return json({ ok: false, message: 'That record could not be read.' }, 500)

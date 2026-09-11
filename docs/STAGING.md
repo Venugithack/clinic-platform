@@ -19,6 +19,7 @@ Four commands, no Supabase account, no Deno, no `supabase/config.toml`:
 npm run staging:up       # a PostgreSQL 17 container, the migrations, the fixtures
 npm run test:db          # the characterization suite against it
 npm run staging:drill    # the real backup and restore scripts, rehearsed
+npm run staging:rehearse # the Slice 2 migrations, over a clinic that has history
 npm run staging:down     # stop it (add :destroy to remove it entirely)
 ```
 
@@ -33,6 +34,15 @@ database to empty and builds its own state through the real commands, which is
 deliberate — a test that leans on a fixture fails the day somebody adds a
 medicine to it for an unrelated reason. So the fixtures are for driving the app
 by hand and for the browser suite, and `npm run staging:up` puts them back.
+
+One thing is not wiped, because it is not fixture data. The approved clinical
+vocabulary — the eighty phrases of release `en-2026.09` — is installed by
+`20260911120000_slice2_clinical_vocabulary.sql` and carried across every reset
+by `tests/support/clinic.mjs`, the same way the clinic's own database will
+carry it. A database that has somehow lost it fails loudly and names
+`staging:up`, rather than quietly testing an autocomplete with nothing in it.
+The fixtures seed the layer above it instead: one doctor's favourites and use
+counts, which is what makes the ranking visible.
 
 To drive the actual application against it, run the Edge Functions locally too:
 
@@ -177,7 +187,7 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives sixteen journeys through Chrome.
+starts the functions and the page, and drives seventeen journeys through Chrome.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -188,10 +198,48 @@ time — the dev server would hide the one difference that matters.
 Four-digit sign-in at both tablet orientations, a wrong PIN, Delete;
 doctor-only and nurse rails; duplicate suggestions before registration;
 registering a walk-in, issuing a token, recording two readings out of five;
-Call in carrying the patient into Consult; no sideways scroll and no control
+Call in carrying the patient into Consult; one whole consultation — typing
+`fev` into Complaint, tapping the approved suggestion, saving it as a personal
+favourite, leaving the station and finding the draft rebuilt from the server,
+then a template, a signature and a print; no sideways scroll and no control
 under 44px at 1024x768 and 768x1024; a real Tab press landing somewhere named
 and visibly marked; every control having an accessible name; a busy state
 while a command is in flight; and a dropped connection reported as words.
+
+## 5a. Rehearsing a migration over a clinic that already has history
+
+```bash
+npm run staging:rehearse
+```
+
+`staging:up` applies every migration to an empty database. That is the right
+thing for a test database and the wrong thing for evidence about a migration,
+because the two backfills in Slice 2 — giving every existing prescription a
+number, and building normalized lines out of the legacy `items_json` — then run
+over zero rows. A backfill over zero rows proves nothing at all. In the clinic
+they run over two years of signed prescriptions, once, with no undo.
+
+So this builds the schema as it stood *before* Slice 2, puts deliberately
+awkward history into it, applies the two Slice 2 migrations the way
+`apply-migrations.mjs` does, and reads out what happened to each row. The
+awkward cases are not invented shapes; they are what a hand-maintained JSON
+column accumulates: an item pointing at a medicine row somebody later removed,
+a prescription with no items, and items written before quantity was a number.
+
+It confirms numbering is gapless and unique, that the sequence does not hand
+the next patient a number already printed on a slip, that identity snapshots
+come from the formulary rather than from parsing a name, and that a later
+rename does not reach back into signed history.
+
+It also prints two reconciliation notes, which are the point of running it:
+an item whose medicine row is gone produces **no** normalized line, and an item
+with a missing or zero quantity becomes quantity **1**, because the new column
+is `check (> 0)`. Both are silent data decisions about real prescriptions, and
+both need counting against the clinic's own rows — with the query the script
+prints — before anybody runs this for real.
+
+Like `test:db`, it rebuilds the schema and so destroys the fixtures; run
+`npm run staging:up` afterwards.
 
 ### The third guard
 
@@ -220,7 +268,7 @@ shell.
 Named rather than implied, in the register `docs/README.md` §6 uses.
 
 **The browser suite runs, and does not run in CI.** `npm run test:browser`
-drives sixteen journeys through a real Chrome — see §6. It is not wired into
+drives seventeen journeys through a real Chrome — see §5. It is not wired into
 `.github/workflows/ci.yml`: the runner would need Docker for the staging
 database (which GitHub's ubuntu images have) and a Chrome download via
 `agent-browser install` (which they do not), and a pipeline that goes red for

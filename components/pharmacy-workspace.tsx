@@ -575,11 +575,17 @@ export function InventoryPanel({
                 <Field label="Medicine name" required>
                   <Input name="name" required />
                 </Field>
+                <Field label="Generic name" hint="Used by the doctor’s medicine search.">
+                  <Input name="genericName" />
+                </Field>
                 <Field label="Strength">
                   <Input name="strength" placeholder="500mg" />
                 </Field>
                 <Field label="Dosage form">
                   <Input name="dosageForm" placeholder="Tablet" />
+                </Field>
+                <Field label="Usual route" hint="For example oral, topical, inhaled.">
+                  <Input name="route" placeholder="Oral" />
                 </Field>
                 <Field label="Stock unit" required hint="What one of it is called: tablets, bottles.">
                   <Input name="unit" placeholder="tablets" required />
@@ -738,6 +744,8 @@ export function InventoryPanel({
                       <span className="mt-0.5 block font-mono text-[12px] text-ink-2">
                         {medicine.code}
                         {medicine.dosageForm ? ` · ${medicine.dosageForm}` : ''}
+                        {medicine.genericName ? ` · ${medicine.genericName}` : ''}
+                        {medicine.route ? ` · ${medicine.route}` : ''}
                       </span>
                     </TD>
                     <TD>

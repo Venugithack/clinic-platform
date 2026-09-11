@@ -71,6 +71,7 @@ export function StaffPanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
       phone: values.get('phone'),
       pin: values.get('pin'),
       roles: values.getAll('roles'),
+      canPublishClinicalTemplates: values.get('canPublishClinicalTemplates') === 'yes',
     })
     if (result.ok) form.reset()
   }
@@ -149,6 +150,12 @@ export function StaffPanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
               </Field>
             </FieldRow>
             <RolePicker />
+            <CheckRow
+              name="canPublishClinicalTemplates"
+              value="yes"
+              label="May publish clinical templates for every doctor"
+              hint="Clinical authority only. This has no effect unless Doctor is also selected."
+            />
             <ActionButton type="submit" variant="primary" busy={busy} busyLabel="Creating…">
               Create account
             </ActionButton>
@@ -218,6 +225,7 @@ function StaffRow({
       username: values.get('username'),
       phone: values.get('phone'),
       roles: values.getAll('roles'),
+      canPublishClinicalTemplates: values.get('canPublishClinicalTemplates') === 'yes',
     })
   }
 
@@ -299,6 +307,13 @@ function StaffRow({
                 </Field>
               </FieldRow>
               <RolePicker selected={staff.roles} />
+              <CheckRow
+                name="canPublishClinicalTemplates"
+                value="yes"
+                defaultChecked={staff.canPublishClinicalTemplates}
+                label="May publish clinical templates for every doctor"
+                hint="Only a doctor should hold this authority. Ordinary admin access cannot change clinical wording."
+              />
               {isSelf ? (
                 <Notice tone="info">
                   This is your own account. You cannot take the admin role off it — that is how a

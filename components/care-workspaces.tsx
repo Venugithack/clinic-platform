@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import type { ClinicSnapshot, PrescriptionItemView, VitalView } from '@/lib/types'
+import type { ClinicSnapshot, PrescriptionItemView, VitalReviewRuleView, VitalView } from '@/lib/types'
 import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
 import { navigationFor } from './navigation'
 import { usePatientRecord } from './use-patient-record'
@@ -91,7 +91,41 @@ function NotMeasured({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
  * Since readings became optional this strip has a second job: saying which of
  * the five is missing, and carrying the recorder's own reason for it.
  */
-function VitalStrip({ vital, size = 'sm' }: { vital: VitalView; size?: 'sm' | 'lg' }) {
+function reviewWarnings(
+  vital: Pick<VitalView, 'bp' | 'temperature' | 'pulse' | 'spo2' | 'weight'>,
+  age: number | undefined,
+  rules: VitalReviewRuleView[],
+): string[] {
+  if (age === undefined) return []
+  const [systolic, diastolic] = String(vital.bp ?? '').split('/').map(Number)
+  const values: Record<VitalReviewRuleView['metric'], number | undefined> = {
+    systolic: Number.isFinite(systolic) ? systolic : undefined,
+    diastolic: Number.isFinite(diastolic) ? diastolic : undefined,
+    temperature: vital.temperature === undefined ? undefined : Number(vital.temperature),
+    pulse: vital.pulse === undefined ? undefined : Number(vital.pulse),
+    spo2: vital.spo2 === undefined ? undefined : Number(vital.spo2),
+    weight: vital.weight === undefined ? undefined : Number(vital.weight),
+  }
+  return [...new Set(rules.filter((rule) => {
+    const value = values[rule.metric]
+    if (value === undefined || age < rule.minimumAge || (rule.maximumAge !== undefined && age > rule.maximumAge)) return false
+    return (rule.minimumValue !== undefined && value < rule.minimumValue) ||
+      (rule.maximumValue !== undefined && value > rule.maximumValue)
+  }).map((rule) => rule.prompt))]
+}
+
+function VitalStrip({
+  vital,
+  age,
+  rules = [],
+  size = 'sm',
+}: {
+  vital: VitalView
+  age?: number
+  rules?: VitalReviewRuleView[]
+  size?: 'sm' | 'lg'
+}) {
+  const warnings = reviewWarnings(vital, age, rules)
   const cells = [
     { label: 'BP', value: vital.bp, unit: 'mmHg' },
     { label: 'Temp', value: vital.temperature, unit: '°C' },
@@ -129,6 +163,11 @@ function VitalStrip({ vital, size = 'sm' }: { vital: VitalView; size?: 'sm' | 'l
       </dl>
       {vital.notMeasuredNote ? (
         <p className="mt-1.5 text-[12px] leading-snug text-ink-2">{vital.notMeasuredNote}</p>
+      ) : null}
+      {warnings.length ? (
+        <ul className="mt-2 space-y-1" aria-label="Abnormal vital warnings">
+          {warnings.map((warning) => <li key={warning} className="text-[12px] font-semibold text-stop">Review: {warning}</li>)}
+        </ul>
       ) : null}
     </div>
   )
@@ -188,8 +227,20 @@ function PatientChooser({
 export function QueuePanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const busy = useBusy()
   const { patientId, select, goTo } = useSelectedPatient()
+  const [arrivalSearch, setArrivalSearch] = useState('')
+  const [arrivalReason, setArrivalReason] = useState('')
   const stations = stationsOf(data)
   const queue = data.appointments.filter((item) => item.status !== 'cancelled')
+  const selectedArrival = data.patients.find((patient) => patient.id === patientId)
+  const activePatientIds = new Set(queue.filter((item) => item.status !== 'done').map((item) => item.patientId))
+  const arrivalMatches = arrivalSearch.trim().length < 2
+      ? []
+      : data.patients.filter((patient) => {
+        const query = arrivalSearch.trim().toLocaleLowerCase('en-IN')
+        const digits = query.replace(/[^0-9]/g, '')
+        return patient.name.toLocaleLowerCase('en-IN').includes(query) ||
+          (digits.length > 0 && patient.phone.replace(/[^0-9]/g, '').includes(digits))
+      }).slice(0, 6)
 
   /** Open a patient, and go where that patient is worked on if we have it. */
   function openPatient(patient: string, view: 'consultation' | 'vitals') {
@@ -219,6 +270,19 @@ export function QueuePanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
     openPatient(patient, 'consultation')
   }
 
+  async function arrivePatient() {
+    if (!patientId || !arrivalReason.trim()) return
+    const result = await run('create_appointment', {
+      patientId,
+      reason: arrivalReason,
+      scheduledAt: new Date().toISOString(),
+    })
+    if (!result.ok) return
+    setArrivalSearch('')
+    setArrivalReason('')
+    if (stations.has('vitals')) goTo('vitals')
+  }
+
   return (
     <Stack>
       <PageHeader
@@ -226,6 +290,40 @@ export function QueuePanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
         title="Patient queue"
         sub={`${queue.filter((item) => item.status === 'waiting').length} waiting · ${queue.length} today`}
       />
+
+      <Card variant="record" data-print="hide">
+        <Disclosure label="Patient arrived" hint="Find them, record the reason, issue the token, then take vitals">
+          <div className="space-y-4">
+            <Field label="Find patient" hint="Name or mobile number">
+              <Input value={arrivalSearch} onChange={(event) => setArrivalSearch(event.target.value)} autoComplete="off" />
+            </Field>
+            {arrivalMatches.length ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Matching patients">
+                {arrivalMatches.map((patient) => (
+                  <button key={patient.id} type="button" className={`min-h-[56px] border px-3 py-2 text-left ${patient.id === patientId ? 'border-ink bg-active-wash' : 'border-rule bg-sheet'}`} onClick={() => select(patient.id)}>
+                    <span className="block text-[14px] font-semibold">{patient.name}</span>
+                    <span className="block text-[12px] text-ink-2">{patient.age} years · {patient.phone}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {selectedArrival ? (
+              <Notice tone={activePatientIds.has(selectedArrival.id) ? 'info' : 'good'}>
+                <span className="font-semibold">{selectedArrival.name}</span>{activePatientIds.has(selectedArrival.id) ? ' is already in the active queue.' : ' is selected for arrival.'}
+              </Notice>
+            ) : null}
+            <Field label="Reason for visit" required>
+              <Input value={arrivalReason} onChange={(event) => setArrivalReason(event.target.value)} autoComplete="off" />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton variant="primary" className={PRIMARY} busy={busy} busyLabel="Issuing token…" disabled={!selectedArrival || !arrivalReason.trim() || activePatientIds.has(patientId)} disabledReason={activePatientIds.has(patientId) ? 'This patient is already in the queue.' : 'Find the patient and record the reason first.'} onClick={arrivePatient}>
+                Issue token &amp; open vitals
+              </ActionButton>
+              <Button className={PRIMARY} onClick={() => goTo('patients')}>Register new patient</Button>
+            </div>
+          </div>
+        </Disclosure>
+      </Card>
 
       {queue.length === 0 ? (
         <Card>
@@ -260,7 +358,7 @@ export function QueuePanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
                   </div>
 
                   {vital ? (
-                    <VitalStrip vital={vital} />
+                    <VitalStrip vital={vital} age={data.patients.find((patient) => patient.id === appointment.patientId)?.age} rules={data.vitalReviewRules} />
                   ) : (
                     <p className="text-[12px] text-ink-2">No vitals recorded</p>
                   )}
@@ -378,6 +476,15 @@ export function VitalsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
   const previous = data.vitals.find((item) => item.patientId === patientId)
   const entering = READINGS.find((item) => item.key === active) ?? READINGS[0]
   const taken = READINGS.filter((item) => values[item.key].trim() !== '')
+  const liveWarnings = patient
+    ? reviewWarnings({
+        bp: values.bp || undefined,
+        temperature: values.temperature ? Number(values.temperature) : undefined,
+        pulse: values.pulse ? Number(values.pulse) : undefined,
+        spo2: values.spo2 ? Number(values.spo2) : undefined,
+        weight: values.weight ? Number(values.weight) : undefined,
+      }, patient.age, data.vitalReviewRules)
+    : []
 
   function press(character: string) {
     setValues((current) => {
@@ -452,7 +559,7 @@ export function VitalsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
                 <p className="eyebrow mb-1.5">
                   Last reading · {formatDate(previous.recordedAt)} · {previous.recordedBy}
                 </p>
-                <VitalStrip vital={previous} />
+                <VitalStrip vital={previous} age={patient.age} rules={data.vitalReviewRules} />
               </div>
             ) : null}
 
@@ -567,6 +674,13 @@ export function VitalsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
                 autoComplete="off"
               />
             </Field>
+
+            {liveWarnings.length ? (
+              <Notice tone="bad">
+                <span className="font-semibold">Review before saving:</span>{' '}
+                {liveWarnings.join(' · ')}
+              </Notice>
+            ) : null}
 
             <ActionButton
               variant="primary"

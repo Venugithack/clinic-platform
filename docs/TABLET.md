@@ -242,7 +242,7 @@ is designed around instead:
 | | Design |
 |---|---|
 | Device | Registered once by Venu, marked `is_clinic_device` (`PLAN.md` §13.2). A long-lived session lives on the device |
-| Person | **6-digit staff PIN** to unlock, per staff member |
+| Person | **4-digit staff PIN** to unlock, per staff member |
 | Idle | Locks after 3 minutes on the counter, 10 in the cabin |
 | Attribution | Every write carries the staff id from the PIN, so the audit log names a person, not a tablet |
 | Lost tablet | Session revoked from the admin screen. A PIN alone is useless on any other device |
@@ -250,6 +250,13 @@ is designed around instead:
 The device holds the session; the PIN holds the identity. Attribution stays
 exact — which the H1 register legally requires — and nobody types a password
 forty times a day.
+
+The four-digit length is an owner-confirmed speed decision. Because it provides
+only 10,000 combinations, it is acceptable only with one PIN per staff member,
+server-side wrong-attempt throttling and temporary lockout, weak-pattern
+rejection, salted slow hashing, short idle expiry, session revocation after a
+reset, and audit logging. Existing six-digit hashes must be replaced through a
+verified staff PIN reset; they must never be truncated.
 
 ---
 

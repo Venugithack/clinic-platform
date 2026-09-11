@@ -9,6 +9,12 @@ const EMPTY: Omit<PatientRecordView, 'patientId'> = {
   prescriptions: [],
   vitals: [],
   bills: [],
+  templates: [],
+  phrases: [],
+  phrasePreferences: [],
+  followUps: [],
+  clinicalProfile: { allergyStatus: 'not_recorded', allergyNotes: '', clinicalFlags: '' },
+  imageSeriesStatus: 'not_enabled',
 }
 
 /**
@@ -42,6 +48,7 @@ export function usePatientRecord(patientId: string): {
     // A doctor clicking down a list must not have an earlier, slower answer
     // land on top of the patient now on screen.
     let current = true
+    setRecord(EMPTY)
     setLoading(true)
 
     void (async () => {

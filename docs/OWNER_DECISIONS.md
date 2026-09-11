@@ -1,4 +1,10 @@
-# Decisions owed by the owner, ordered by what they block
+# Historical owner-decision questions
+
+> **Superseded 11 September 2026:** the owner has now answered this checklist.
+> The authoritative approved/partial/evidence status is recorded in
+> [`OWNER_POLICY_REGISTER.md`](OWNER_POLICY_REGISTER.md). The detail below is
+> retained to explain why each question existed and to preserve staging-findings
+> history; its “blocking” labels are no longer the current status.
 
 Slice 0's last work item is "obtain owner sign-off for unresolved choices that
 block a later slice". This is the list, consolidated from
@@ -16,7 +22,7 @@ default is worse than a delay.
 
 ---
 
-## Answered — 2026-09-10. These three were blocking Slice 1; they no longer are.
+## Answered decisions
 
 ### 1. The PIN migration stays two-stage, and the format is tracked explicitly — RESOLVED
 
@@ -68,26 +74,58 @@ Signing a consultation stays doctor-only, and an admin who is not a doctor
 still cannot sign. Authority follows the clinical role, not the level of
 access.
 
+### 4. English only for the first release — RESOLVED
+
+The first release uses English only for the staff interface, autocomplete,
+templates, clinical phrases, and printed prescriptions. Tamil and bilingual
+display/printing are deferred. Slice 2 must not add a language selector,
+machine translation, or Tamil content that the clinic has not reviewed.
+
+Source terminology may retain its language/provenance metadata where required,
+but the application does not need translation infrastructure solely for a
+hypothetical later release.
+
+### 6. Doctors control clinical templates — RESOLVED
+
+Each doctor may create, edit, use, and retire their own personal templates.
+Only Dr. Jayamurugan as owner-doctor, or another explicitly authorized doctor,
+may approve and publish a clinic-wide template. A non-doctor admin may manage
+access and operational metadata but cannot edit clinical template content.
+
+Templates are versioned and retired rather than historically overwritten. They
+always load as visible, editable drafts and never bypass doctor review or
+signature.
+
+### 7. Unsigned drafts survive sign-out and tablet changes — RESOLVED
+
+Unsigned consultation drafts are stored server-side and may be recovered by
+the responsible doctor after sign-out or on another authorized clinic tablet.
+They remain clearly marked `Draft`, stay invisible to pharmacy, and cannot be
+dispensed or printed as signed prescriptions. After seven days they receive a
+stale-draft warning for doctor review; they are not silently signed or deleted.
+
+### 8. Prescription printing is on request with a physical signature area — RESOLVED
+
+Signing does not automatically open the printer. After signing, the doctor sees
+a prominent `Print prescription` action. The first release leaves an area for a
+physical signature and does not store or place a digital signature image.
+Every reprint remains auditable.
+
 ---
 
 ## Blocking now — nothing
 
-No decision currently blocks Slice 1 coding. The **staff names and the reset
-appointment block production cutover, not development**: Slice 1 is built and
-verified against staging, and the reset runbook runs at the clinic when the
-owner schedules it.
+No decision currently blocks Slice 2 coding. Decision 5 below blocks production
+clinical content and the final Slice 2 acceptance gate, not implementation;
+Claude may build and test the structure with synthetic staging terms.
 
 ---
 
-## Blocking Slice 2 — the doctor's workspace
+## Required before Slice 2 production content is accepted
 
 | # | Decision | Why it matters |
 |---|---|---|
-| 4 | **English, Tamil, or both?** For the interface, for autocomplete, and separately for the printed prescription. | Changes the data model, not just the strings: instruction codes carry two display strings, and the printed sentence has to be reviewed by the doctor before signing. |
 | 5 | **Which complaints, diagnoses, instructions and advice phrases are actually common?** Twenty of each is enough to start. | The clinic-curated subset is what makes autocomplete fast. Without it the doctor gets either a blank box or an irrelevant national terminology. |
-| 6 | **Who may create, edit and retire templates?** | A template that silently changes a colleague's prescription draft is a clinical risk, not a convenience. |
-| 7 | **Should an unsigned consultation draft survive sign-out and reappear on another tablet?** | Determines whether encounters need a draft lifecycle. Cheaper to decide now than to add later. |
-| 8 | **Print automatically after signing, or only on request?** And is the doctor's signature preprinted, placed digitally, or signed by hand? | Decides the print trigger and whether the A4 layout leaves a signature block. |
 
 ---
 

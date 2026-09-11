@@ -247,7 +247,7 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
     }
   }
 
-  test('a signed prescription stores its lines as JSON and nothing else', async () => {
+  test('a signed prescription stores normalized immutable lines and retains legacy JSON for Slice 4', async () => {
     const { admin, doctor } = await clinic()
     const medicineId = await addMedicine(admin, {
       initialQuantity: 100, batchNumber: 'PCM-A', expiry: await clinicDate(400),
@@ -255,16 +255,14 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
     })
     await prescribe(doctor, medicineId, 10)
 
-    // There is no prescription_lines table. Slice 4 adds one; until then the
-    // remaining quantity cannot be enforced because there is nothing to
-    // enforce it against.
-    assert.equal(
-      await scalar(
-        `select count(*)::int from information_schema.tables
-          where table_schema='jmc' and table_name='prescription_lines'`,
-      ),
-      0,
-    )
+    const [line] = await rows(`select pl.prescribed_quantity,pl.medicine_name_snapshot,
+      pl.strength_snapshot,pl.dosage_form_snapshot,pl.medicine_code_snapshot
+      from jmc.prescription_lines pl`)
+    assert.equal(Number(line.prescribed_quantity), 10)
+    assert.equal(line.medicine_name_snapshot, 'Paracetamol 500 mg')
+    assert.equal(line.strength_snapshot, '500 mg')
+    assert.equal(line.dosage_form_snapshot, 'tablet')
+    assert.ok(line.medicine_code_snapshot)
 
     const items = JSON.parse(String(await scalar('select items_json from jmc.prescriptions')))
     assert.equal(items.length, 1)

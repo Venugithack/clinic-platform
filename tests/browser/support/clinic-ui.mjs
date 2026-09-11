@@ -142,10 +142,12 @@ export function fillField(label, value) {
       ?? (field?.htmlFor ? document.getElementById(field.htmlFor) : null)
       ?? field?.parentElement?.querySelector('input, textarea, select')
     if (!input) return 'no-field'
-    const setter = Object.getOwnPropertyDescriptor(
-      input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
-      'value',
-    ).set
+    const prototype = input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : input instanceof HTMLSelectElement
+        ? HTMLSelectElement.prototype
+        : HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value').set
     setter.call(input, ${JSON.stringify(value)})
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new Event('change', { bubbles: true }))

@@ -191,12 +191,11 @@ let launched = false
 export function launchBrowser() {
   if (launched) return ''
   launched = true
-  // allowFailure, because `open` with no URL leaves the CLI holding its pipes
-  // open after a clean exit and execFileSync reports a timeout for a command
-  // that plainly worked — the output says "launched browser" underneath the
-  // error. A genuine failure to launch surfaces on the first real navigation
-  // a moment later, with a message about that instead.
-  return ab(['open'], { timeout: 180_000, allowFailure: true })
+  // agent-browser launches Chrome successfully but keeps this command's pipes
+  // open. Five seconds is enough to start it; allowFailure converts that known
+  // pipe timeout into a hand-off to freshPage, whose real navigation is the
+  // authoritative launch check.
+  return ab(['open', PAGE_URL], { timeout: 5_000, allowFailure: true })
 }
 
 export const viewport = (width, height) => ab(['set', 'viewport', String(width), String(height)])

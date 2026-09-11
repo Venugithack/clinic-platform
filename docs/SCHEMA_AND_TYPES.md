@@ -1245,3 +1245,101 @@ planning aid drawn from brief §6; it proposes nothing.
 | **4** — dispensing, consultation fee, bills, payments | `prescriptions` plus new dispense header / lines / batch allocations; `bills` becomes immutable lines with derived status; new payments and payment allocations; `clinic_settings.consultation_fee` must actually be read (§3.5); `encounters` gains the fee's unique source key; `otc_sales`; `till_sessions` and `cash_movements` reconcile against real payments; `stock_movements` | `PrescriptionView`, `BillView`, `OtcSaleView`, `TillView`, `TillCloseView`, `ClinicSettingsView`, plus new dispense and payment views |
 | **5** — clinical images | new image series, image objects, consent, and image-access-log tables, referencing `encounters` and `patients`. Nothing may enter `ClinicSnapshot` | new views only; `EncounterView` gains image-series status |
 | **6** — admin and rollout | `audit_events` (image access, reprints, approvals); reporting reads across `batches`, `stock_movements`, `bills` + payments, `supplier_returns`, `stock_writeoffs`, `purchase_orders`, `prescriptions`; `clinic_settings` | `AuditView`, `ClinicSettingsView`, plus report views fetched on demand rather than added to the snapshot |
+
+---
+
+## 5. Slice 2 delta
+
+§1 characterizes the schema Slice 0 found. This section records what Slice 2
+added on top of it, so the two are never confused: everything above was read
+from a database built before this work, everything here was added by it.
+
+Thirteen tables, taking `jmc` from 29 to 42, across two migrations:
+`20260911045325_slice2_doctor_nurse_workspaces.sql` and
+`20260911120000_slice2_clinical_vocabulary.sql`.
+
+| Table | Holds | Written by |
+|---|---|---|
+| `prescription_lines` | the signed prescription, normalized — one row per medicine, with the identity snapshot taken from the formulary at signing | `sign_consultation` |
+| `consultation_drafts` · `consultation_draft_lines` | one unsigned sheet per doctor per patient, server-side so it survives sign-out | `save_consultation_draft` |
+| `clinical_vocabulary_releases` | the versioned approved vocabulary, with the approval reference it came from | migration only |
+| `clinical_phrases` | the clinic-wide wording the doctor is offered | migration; `publish_clinical_phrase` |
+| `clinical_phrase_preferences` | one doctor's favourites and use counts | `set_clinical_phrase_favourite`, and signing |
+| `consultation_templates` · `consultation_template_lines` | versioned personal and clinic templates | `save_clinical_template` |
+| `follow_ups` | the follow-up a signed encounter asked for | `sign_consultation` |
+| `prescription_prints` | one row per physical copy, numbered | `record_prescription_print` |
+| `patient_clinical_profiles` | allergy status and clinical flags | `save_patient_clinical_profile` |
+| `vital_review_rules` | the approved "Review this reading" prompts | migration/admin only; never inferred |
+| `observation_events` | the bed timeline: admit, note, instruction, handoff, discharge | `update_bed`, `record_observation`, and the handoff commands |
+
+### 5.1 These tables do not follow §3's representation hazards
+
+§3 records that the Slice 0 schema has no `timestamptz`, `numeric`, `boolean`,
+`uuid` or enum — everything is `text`, `integer` or `real`. The Slice 2 tables
+deliberately break that pattern rather than extend it: event times are
+`timestamptz`, dates are `date`, quantities are `integer`, and every closed set
+of values is a `check` constraint. Flags stay `integer 0/1` to match the
+surrounding code, which is the one legacy shape kept on purpose.
+
+Money is untouched here. `real` money is still a Slice 3/4 problem.
+
+### 5.2 What may change after it is written
+
+Append-only is enforced by trigger, not by convention:
+
+| Trigger | Refuses |
+|---|---|
+| `prescriptions_signed_immutable` | any change to a signed prescription's patient, doctor, encounter, items or number; any delete |
+| `prescription_lines_immutable` | every update and delete |
+| `consultation_templates_versioned` | editing a template version; deleting one. Retiring is the only permitted update |
+| `consultation_template_lines_immutable` | every update and delete |
+| `clinical_phrases_approved_immutable` | rewording or deleting approved wording. Only `active` and `retired_at` may move |
+
+The legacy `prescriptions.dispensed_at` marker is explicitly still writable —
+Slice 4 replaces it with dispense events.
+
+### 5.3 The clinical vocabulary is governed content, not seed data
+
+This is the part most easily lost, so it is written down rather than implied.
+
+**It is versioned.** `clinical_vocabulary_releases` holds one row per approved
+release — `en-2026.09` is the first — carrying the version, the locale, the
+approval reference and the date the owner approved it. Every phrase installed
+by a release points at it. Revising the vocabulary means publishing a new
+release beside this one, never editing the rows of the old one, which is what
+`CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §2.4 requires so that old
+visits stay intelligible.
+
+**The wording is transcribed, not authored.** All eighty phrases are copied
+verbatim from `SLICE3_CLINIC_APPROVAL_PACK.md` §7.A–D, which §8.C of that
+document records as signed off on 11 September 2026 and which
+`OWNER_POLICY_REGISTER.md` A.5 approves. Nothing was reworded on the way into
+the database: what the doctor approved is what the doctor sees. Changing a
+phrase is a new release, and it needs the doctor again — not a better sentence
+from whoever is editing the migration.
+
+**It is attributed.** `clinical_phrases` carries either a `release_id` or an
+`approved_by` staff member, and a check constraint refuses a row with neither.
+A clinic-wide suggestion with no stated source cannot be written.
+
+**It is the four lists the owner approved, and no more.** Twenty complaints,
+twenty assessments, twenty dosage directions, twenty pieces of advice. The
+`examination` kind exists in the table and is deliberately empty: the owner
+approved four lists, and writing findings wording would be inventing clinical
+policy. It contains no SNOMED CT, CDCI or commercial catalogue content, because
+the licensing in §2.3 of the research document is a Phase 0 gate that has not
+been cleared.
+
+**Three layers, and only one of them is clinic-wide.** The doctor sees the
+approved release, plus their own favourites and recents from
+`clinical_phrase_preferences`, ranked favourites-first. Signing a consultation
+writes to the preferences table only — a doctor's wording never joins the
+clinic-wide list as a side effect of using it. Changing the clinic-wide list
+takes the `can_publish_clinical_templates` authority, which is the same
+authority A.6 grants over clinic templates; an admin who is not a doctor cannot
+do it at all.
+
+**It is reference data.** Migrations install it and nothing in a clinic day
+removes it. `tests/support/clinic.mjs` therefore carries it across the truncate
+between tests, and refuses to run if it is absent rather than testing an
+autocomplete with nothing in it.

@@ -20,7 +20,7 @@ import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
 import postgres from 'postgres'
 import { auth, snapshot, STAGING_DB_URL } from '../support/backend.mjs'
-import { as, closeClinic, scalar, sessionFor } from '../support/clinic.mjs'
+import { as, closeClinic, emptyClinic, scalar, sessionFor } from '../support/clinic.mjs'
 import { seedClinic } from '../../scripts/staging/fixtures.mjs'
 import { FIXTURE_PINS, FIXTURE_PIN_FORMATS, FIXTURE_STAFF } from '../../scripts/staging/fixtures.mjs'
 
@@ -37,12 +37,7 @@ after(async () => { await closeClinic() })
 before(async () => {
   const admin = postgres(STAGING_DB_URL, { max: 1, prepare: false, onnotice: () => {} })
   try {
-    const tables = (await admin`
-      select c.relname as name from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname = 'jmc' and c.relkind = 'r'
-    `).map((row) => `jmc.${row.name}`)
-    await admin.unsafe(`truncate ${tables.join(', ')} restart identity cascade`)
+    await emptyClinic(admin)
     await admin.unsafe(`
       insert into jmc.clinic_revision (id, revision, changed_at)
       values (1, 0, to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))

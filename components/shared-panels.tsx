@@ -75,7 +75,9 @@ const BED_TONE = {
   out_of_service: 'stop',
 } as const
 
-export function OverviewPanel({ data }: { data: ClinicSnapshot }) {
+export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: ActionRunner }) {
+  const busy = useBusy()
+  const { select, goTo } = useSelectedPatient()
   const waiting = data.appointments.filter(
     (item) => item.status === 'waiting' || item.status === 'in_consult',
   )
@@ -83,6 +85,7 @@ export function OverviewPanel({ data }: { data: ClinicSnapshot }) {
   const unpaid = data.bills.filter((item) => item.status === 'unpaid')
   const occupied = data.beds.filter((item) => item.status === 'occupied')
   const attention = [...low].slice(0, 5)
+  const openFollowUps = data.followUps.filter((item) => item.status === 'open')
 
   return (
     <Stack>
@@ -122,6 +125,29 @@ export function OverviewPanel({ data }: { data: ClinicSnapshot }) {
         />
         <Stat label="Low stock" value={low.length} note="At or below reorder level" />
       </div>
+
+      {data.session.roles.includes('doctor') && openFollowUps.length ? (
+        <Card variant="record">
+          <CardHeader title="Follow-up reminders" sub={`${openFollowUps.length} open`} />
+          <CardBody className="space-y-2">
+            {openFollowUps.map((followUp) => {
+              const overdue = followUp.dueDate < clinicToday()
+              return (
+                <div key={followUp.id} className="flex flex-wrap items-center gap-3 border-b border-rule pb-2 last:border-b-0">
+                  <div className="min-w-[220px] flex-1">
+                    <p className="font-semibold">{followUp.patientName}</p>
+                    <p className={`text-[12px] ${overdue ? 'font-semibold text-stop' : 'text-ink-2'}`}>
+                      {overdue ? 'Overdue' : 'Due'} {followUp.dueDate} · {followUp.note || 'Review'}
+                    </p>
+                  </div>
+                  <Button size="sm" onClick={() => { select(followUp.patientId); goTo('consultation') }}>Open patient</Button>
+                  {run ? <ActionButton size="sm" busy={busy} onClick={() => run('complete_follow_up', { followUpId: followUp.id, status: 'completed' })}>Mark completed</ActionButton> : null}
+                </div>
+              )
+            })}
+          </CardBody>
+        </Card>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <Card>
@@ -762,7 +788,16 @@ function PatientMessage({
 
 export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const [editing, setEditing] = useState<BedView | null>(null)
+  const [observing, setObserving] = useState<BedView | null>(null)
+  const [clock, setClock] = useState(() => Date.now())
   const free = data.beds.filter((bed) => bed.status === 'available').length
+  const canNurse = data.session.roles.some((role) => role === 'admin' || role === 'nurse')
+  const canDoctor = data.session.roles.includes('doctor')
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   return (
     <Stack>
@@ -772,7 +807,7 @@ export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunn
         sub={`${free} free · ${data.beds.length - free} in use · ${data.beds.length} beds`}
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {data.beds.map((bed) => (
           <Card key={bed.id} variant={bed.status === 'occupied' ? 'record' : 'panel'}>
             <div className="flex h-full flex-col px-4 py-3">
@@ -791,10 +826,26 @@ export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunn
               {bed.notes ? (
                 <p className="mt-2 text-[12px] leading-snug text-ink-2">{bed.notes}</p>
               ) : null}
-              <div className="mt-auto pt-3" data-print="hide">
-                <Button size="sm" onClick={() => setEditing(bed)}>
-                  Update bed
-                </Button>
+              {bed.status === 'occupied' ? (
+                <div className="mt-3 space-y-2 border-t border-rule pt-3">
+                  <ObservationTimer at={bed.nextCheckAt} clock={clock} />
+                  {bed.doctorInstructions ? (
+                    <p className="text-[12px]"><span className="font-semibold">Doctor:</span> {bed.doctorInstructions}</p>
+                  ) : null}
+                  {bed.handoffRequestedAt && !bed.handoffResolvedAt ? (
+                    <Badge tone="stop">Doctor handoff requested</Badge>
+                  ) : bed.handoffResolvedAt ? (
+                    <Badge tone="free">Handoff acknowledged</Badge>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="mt-auto flex flex-wrap gap-2 pt-3" data-print="hide">
+                {canNurse ? <Button size="sm" onClick={() => setEditing(bed)}>Update bed</Button> : null}
+                {bed.status === 'occupied' && (canNurse || canDoctor) ? (
+                  <Button size="sm" variant={bed.handoffRequestedAt && !bed.handoffResolvedAt ? 'primary' : 'secondary'} onClick={() => setObserving(bed)}>
+                    Observation actions
+                  </Button>
+                ) : null}
               </div>
             </div>
           </Card>
@@ -802,8 +853,33 @@ export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunn
       </div>
 
       <BedForm bed={editing} data={data} run={run} onClose={() => setEditing(null)} />
+      <ObservationForm
+        bed={observing}
+        data={data}
+        run={run}
+        onClose={() => setObserving(null)}
+      />
     </Stack>
   )
+}
+
+function ObservationTimer({ at, clock }: { at?: string; clock: number }) {
+  if (!at) return <p className="text-[12px] text-ink-2">Next check not scheduled</p>
+  const difference = new Date(at).getTime() - clock
+  if (!Number.isFinite(difference)) return <p className="text-[12px] text-stop">Next check time needs review</p>
+  const minutes = Math.max(0, Math.ceil(Math.abs(difference) / 60_000))
+  return difference <= 0 ? (
+    <p className="font-mono text-[13px] font-semibold text-stop">Check overdue · {minutes} min</p>
+  ) : (
+    <p className="font-mono text-[13px] font-semibold text-attn">Next check · {minutes} min</p>
+  )
+}
+
+function localDateTime(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
 }
 
 function BedForm({
@@ -821,6 +897,15 @@ function BedForm({
   const [status, setStatus] = useState('available')
   const [patientId, setPatientId] = useState('')
   const [notes, setNotes] = useState('')
+  const [nextCheckAt, setNextCheckAt] = useState('')
+
+  useEffect(() => {
+    if (!bed) return
+    setStatus(bed.status)
+    setPatientId(bed.patientId ?? '')
+    setNotes(bed.notes ?? '')
+    setNextCheckAt(localDateTime(bed.nextCheckAt))
+  }, [bed])
 
   // Re-key on the bed so each opening starts from that bed's own state.
   const key = bed?.id ?? 'none'
@@ -845,7 +930,9 @@ function BedForm({
             disabledReason="Choose which patient is in this bed."
             onClick={async () => {
               if (!bed) return
-              const result = await run('update_bed', { bedId: bed.id, status, patientId, notes })
+              const result = await run('update_bed', {
+                bedId: bed.id, status, patientId, notes, nextCheckAt,
+              })
               if (result.ok) onClose()
             }}
           >
@@ -857,10 +944,10 @@ function BedForm({
       <div className="space-y-4">
         <Field label="Status" required>
           <Select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="available">Available</option>
+            {bed?.status === 'occupied' ? null : <option value="available">Available</option>}
             <option value="occupied">Occupied</option>
-            <option value="cleaning">Cleaning</option>
-            <option value="out_of_service">Out of service</option>
+            {bed?.status === 'occupied' ? null : <option value="cleaning">Cleaning</option>}
+            {bed?.status === 'occupied' ? null : <option value="out_of_service">Out of service</option>}
           </Select>
         </Field>
         {status === 'occupied' ? (
@@ -878,6 +965,114 @@ function BedForm({
         <Field label="Notes" hint="Anything the next person on shift needs to know.">
           <Input value={notes} onChange={(event) => setNotes(event.target.value)} />
         </Field>
+        {status === 'occupied' ? (
+          <Field label="Next check" hint="Starts the observation countdown on the bed board.">
+            <Input type="datetime-local" value={nextCheckAt} onChange={(event) => setNextCheckAt(event.target.value)} />
+          </Field>
+        ) : null}
+      </div>
+    </Modal>
+  )
+}
+
+function ObservationForm({
+  bed,
+  data,
+  run,
+  onClose,
+}: {
+  bed: BedView | null
+  data: ClinicSnapshot
+  run: ActionRunner
+  onClose: () => void
+}) {
+  const busy = useBusy()
+  const canNurse = data.session.roles.some((role) => role === 'admin' || role === 'nurse')
+  const canDoctor = data.session.roles.includes('doctor')
+  const [note, setNote] = useState('')
+  const [nextCheckAt, setNextCheckAt] = useState('')
+  const [instructions, setInstructions] = useState('')
+  const [outcome, setOutcome] = useState<'discharged' | 'transferred'>('discharged')
+  const [closureNote, setClosureNote] = useState('')
+
+  useEffect(() => {
+    setNote('')
+    setNextCheckAt(localDateTime(bed?.nextCheckAt))
+    setInstructions(bed?.doctorInstructions ?? '')
+    setOutcome('discharged')
+    setClosureNote('')
+  }, [bed])
+
+  return (
+    <Modal open={bed !== null} onClose={onClose} title="Observation actions" sub={bed ? `${bed.label} · ${bed.patientName ?? 'No patient'}` : undefined}>
+      <div className="space-y-5">
+        {canNurse ? (
+          <section className="space-y-3">
+            <p className="eyebrow">Nursing observation</p>
+            <Field label="Observation note"><Textarea value={note} onChange={(event) => setNote(event.target.value)} /></Field>
+            <Field label="Next check"><Input type="datetime-local" value={nextCheckAt} onChange={(event) => setNextCheckAt(event.target.value)} /></Field>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton busy={busy} disabled={!note.trim() && !nextCheckAt} onClick={async () => {
+                if (!bed) return
+                const result = await run('record_observation', { bedId: bed.id, note, nextCheckAt })
+                if (result.ok) { setNote(''); onClose() }
+              }}>Save observation</ActionButton>
+              <ActionButton busy={busy} onClick={async () => {
+                if (!bed) return
+                const result = await run('request_observation_handoff', { bedId: bed.id, note })
+                if (result.ok) onClose()
+              }}>Request doctor handoff</ActionButton>
+            </div>
+          </section>
+        ) : null}
+
+        {canDoctor ? (
+          <section className="space-y-3 border-t border-rule pt-4">
+            <p className="eyebrow">Doctor instruction</p>
+            <Field label="Instruction"><Textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} /></Field>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton busy={busy} disabled={!instructions.trim()} onClick={async () => {
+                if (!bed) return
+                const result = await run('set_observation_instructions', { bedId: bed.id, instructions })
+                if (result.ok) onClose()
+              }}>Save instruction</ActionButton>
+              {bed?.handoffRequestedAt && !bed.handoffResolvedAt ? (
+                <ActionButton variant="primary" busy={busy} onClick={async () => {
+                  const result = await run('resolve_observation_handoff', { bedId: bed.id, note: instructions })
+                  if (result.ok) onClose()
+                }}>Acknowledge handoff</ActionButton>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {canNurse ? (
+          <section className="space-y-3 border-t border-rule pt-4">
+            <p className="eyebrow">Close observation</p>
+            <FieldRow>
+              <Field label="Outcome"><Select value={outcome} onChange={(event) => setOutcome(event.target.value as 'discharged' | 'transferred')}><option value="discharged">Discharged</option><option value="transferred">Transferred</option></Select></Field>
+              <Field label="Outcome note" required><Input value={closureNote} onChange={(event) => setClosureNote(event.target.value)} /></Field>
+            </FieldRow>
+            <ConfirmButton
+              variant="danger"
+              confirmVariant="danger"
+              busy={busy}
+              disabled={!closureNote.trim()}
+              title={outcome === 'discharged' ? 'Discharge patient?' : 'Record transfer?'}
+              question={`${outcome === 'discharged' ? 'Discharge' : 'Transfer'} ${bed?.patientName ?? 'this patient'} and mark ${bed?.label ?? 'this bed'} for cleaning? The observation history is kept.`}
+              confirmLabel={outcome === 'discharged' ? 'Confirm discharge' : 'Confirm transfer'}
+              onConfirm={async () => {
+                if (!bed) return
+                const result = await run('close_observation', {
+                  bedId: bed.id, outcome, note: closureNote, confirmed: true,
+                })
+                if (result.ok) onClose()
+              }}
+            >
+              {outcome === 'discharged' ? 'Discharge patient' : 'Record transfer'}
+            </ConfirmButton>
+          </section>
+        ) : null}
       </div>
     </Modal>
   )

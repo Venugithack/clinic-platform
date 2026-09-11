@@ -317,6 +317,160 @@ describe('a doctor working alone, end to end', () => {
 
 // ── the tablet, both ways up ───────────────────────────────────────────────
 
+// One-screen consultation.
+describe('the doctor finishes one visit without rebuilding the case', () => {
+  test('draft, predictive text, medicine identity, signing and print stay in one flow', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(DOCTOR_ADMIN.name, DOCTOR_ADMIN.pin)
+    await goToStation('Queue')
+
+    const calledPatient = evaluate(`(() => {
+      const button = [...document.querySelectorAll('main button')]
+        .find(item => !item.disabled && (item.innerText || '').trim().toLowerCase() === 'call in')
+      if (!button) return 'none'
+      let row = button
+      while (row && !/JMC/.test(row.innerText)) row = row.parentElement
+      const lines = (row?.innerText || '').split(String.fromCharCode(10)).map(line => line.trim())
+      const name = lines.find(line => line.length > 3
+        && line.slice(0, 3) !== 'JMC'
+        && !['waiting', 'call in', 'vitals', 'mark done'].includes(line.toLowerCase()))
+      button.click()
+      return name || 'unnamed'
+    })()`).replace(/^"|"$/g, '')
+    assert.notEqual(calledPatient, 'none', 'the doctor needs a waiting visit to consult')
+
+    await waitFor(
+      `!!document.querySelector('[aria-label="Consultation form"]')`,
+      { what: 'the one-screen consultation', timeout: 20_000 },
+    )
+    const opened = workText()
+    assert.match(opened, /previous visit/i)
+    assert.match(opened, /before \/ after images/i)
+    assert.match(opened, /private image storage is not enabled yet/i)
+    assert.match(opened, /fee ₹200 goes to pharmacy/i)
+
+    // Typing narrows the clinic vocabulary; choosing the suggestion is a tap,
+    // not another round of typing on the tablet keyboard.
+    fillField('Complaint', 'fev')
+    await waitFor(
+      `[...document.querySelectorAll('[aria-label="Complaint suggestions"] button')]
+        .some(button => (button.innerText || '').toLowerCase().includes('fever'))`,
+      { what: 'a complaint prediction' },
+    )
+    clickButton('fever')
+    clickButton('Save this wording as a favourite')
+    await waitFor(
+      `document.body.innerText.includes('Added to favourites.')`,
+      { what: 'the personal favourite confirmation', timeout: 20_000 },
+    )
+    fillField('Duration', '2')
+    fillField('Examination findings', 'Mild pharyngeal erythema; chest clear')
+    fillField('Diagnosis', 'Acute viral upper respiratory infection')
+    fillField('Cause / aetiology', 'Likely viral')
+    fillField('Advice to patient', 'Fluids, rest, and return if breathing worsens')
+
+    clickButton('Add medicine')
+    fillField('Search medicine', 'Paracetamol')
+    await waitFor(
+      `[...document.querySelectorAll('main button')]
+        .some(button => (button.innerText || '').includes('Paracetamol · 500 mg · tablet'))`,
+      { what: 'an identified formulary medicine' },
+    )
+    clickButton('Paracetamol · 500 mg · tablet')
+    fillField('Instruction', 'Take after food when feverish')
+
+    clickButton('Save draft')
+    await waitFor(
+      `document.body.innerText.includes('Draft saved for you.')`,
+      { what: 'the private draft confirmation', timeout: 20_000 },
+    )
+
+    // Leave the station entirely. Returning must rebuild the controlled form
+    // from the server-side private draft, including its normalized line.
+    await goToStation('Records')
+    await goToStation('Consult')
+    await waitFor(
+      `(() => {
+        const label = [...document.querySelectorAll('label')]
+          .find(item => item.innerText.trim().toLowerCase().startsWith('diagnosis'))
+        const input = label?.querySelector('input') ?? document.getElementById(label?.htmlFor || '')
+        return input?.value === 'Acute viral upper respiratory infection'
+      })()`,
+      { what: 'the draft restored from the server', timeout: 20_000 },
+    )
+    assert.match(workText(), /Paracetamol 500 mg/)
+    await waitFor(
+      `(() => {
+        const label = [...document.querySelectorAll('label')]
+          .find(item => item.innerText.trim().toLowerCase().startsWith('instruction'))
+        const input = label?.querySelector('input') ?? document.getElementById(label?.htmlFor || '')
+        return input?.value === 'Take after food when feverish'
+      })()`,
+      { what: 'the medicine instruction restored from the server' },
+    )
+
+    openDisclosure('Templates')
+    fillField('Template name', 'Browser fever plan')
+    clickButton('Save current sheet as template')
+    await waitFor(
+      `document.body.innerText.includes('Personal template saved.')`,
+      { what: 'the personal template confirmation', timeout: 20_000 },
+    )
+    await waitFor(
+      `[...document.querySelectorAll('main button')]
+        .some(button => (button.innerText || '').toLowerCase().includes('save as v2'))`,
+      { what: 'the version action on the saved template', timeout: 20_000 },
+    )
+    clickButton('Save as v2')
+    await waitFor(
+      `[...document.querySelectorAll('main p')]
+        .some(item => (item.innerText || '').includes('personal · v2 ·'))`,
+      { what: 'the second immutable template version', timeout: 20_000 },
+    )
+
+    // The same workspace must fit the tablet when it is turned upright too.
+    setViewport(PORTRAIT)
+    const overflow = Number(evaluate(
+      `document.documentElement.scrollWidth - document.documentElement.clientWidth`,
+    ))
+    assert.ok(overflow <= 1, `the consultation scrolls sideways by ${overflow}px in portrait`)
+
+    // Printing is requested only after signing. Stub the physical dialog, but
+    // exercise everything before it: immutable record, audited copy number,
+    // and generation of the exact printable sheet.
+    evaluate(`window.print = () => { document.body.dataset.printCalled = 'yes' }`)
+    clickButton('Sign & finish')
+    await waitFor(
+      `(document.querySelector('main')?.innerText ?? '').includes('A signed record cannot be edited.')`,
+      { what: 'the signed consultation', timeout: 20_000 },
+    )
+    assert.ok(
+      evaluate(`(() => {
+        const label = [...document.querySelectorAll('label')]
+          .find(item => item.innerText.trim().toLowerCase().startsWith('diagnosis'))
+        const input = label?.querySelector('input') ?? document.getElementById(label?.htmlFor || '')
+        return input?.matches(':disabled') === true
+      })()`).includes('true'),
+      'signed clinical fields must be frozen on screen as well as in the database',
+    )
+    assert.ok(buttonExists('Print prescription'))
+    clickButton('Print prescription')
+    await waitFor(
+      `document.body.dataset.printCalled === 'yes'`,
+      { what: 'the prescription print dialog', timeout: 20_000 },
+    )
+
+    const printSheet = evaluate(`document.querySelector('.prescription-print')?.textContent ?? ''`)
+    assert.match(printSheet, /RX-[0-9]{6}/)
+    assert.match(printSheet, /Paracetamol 500 mg/)
+    assert.match(printSheet, /Twice daily/)
+    assert.match(printSheet, /Doctor.s signature/)
+    evaluate(`delete document.documentElement.dataset.printMode`)
+  })
+})
+
+// Tablet layout, both ways up.
 describe('the same tablet, turned', () => {
   for (const shape of [LANDSCAPE, PORTRAIT]) {
     test(`the queue is usable and does not scroll sideways — ${shape.name}`, async () => {
@@ -399,13 +553,18 @@ describe('using it without a mouse, and when things go wrong', () => {
 
     const nameless = evaluate(`(() => {
       const unnamed = [...document.querySelectorAll('button, a[href], input, select, textarea')]
-        .filter(el => el.offsetParent !== null)
+        // offsetParent is still non-null for descendants of a closed native
+        // <details> in Chrome. Such controls have no rendered box and are not
+        // in the accessibility tree, so only inspect controls actually drawn.
+        .filter(el => el.getClientRects().length > 0
+          && getComputedStyle(el).visibility !== 'hidden')
+        .filter(el => !el.closest('details:not([open])'))
         .filter(el => !(el.innerText || '').trim()
           && !el.getAttribute('aria-label')
           && !el.getAttribute('title')
           && !(el.labels && el.labels.length)
           && !el.getAttribute('aria-labelledby'))
-        .map(el => el.tagName + (el.className ? '.' + String(el.className).split(' ')[0] : ''))
+        .map(el => el.outerHTML.slice(0, 80) + '...' + el.outerHTML.slice(-180))
       return JSON.stringify([...new Set(unnamed)].slice(0, 8))
     })()`)
 

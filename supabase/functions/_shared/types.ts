@@ -6,6 +6,8 @@ export interface SessionView {
   roles: Role[]
   username: string
   lastSeen: string
+  /** Clinical authority, distinct from operational admin access. */
+  canPublishClinicalTemplates: boolean
 }
 
 /**
@@ -32,6 +34,8 @@ export interface StaffView {
   lastLogin?: string
   /** Admin-only view. Drives the reset queue during the PIN migration. */
   pinFormat: PinFormat
+  /** May approve a doctor-authored template for the whole clinic. */
+  canPublishClinicalTemplates: boolean
 }
 
 /**
@@ -109,17 +113,37 @@ export interface EncounterView {
   patientName: string
   doctorName: string
   diagnosis: string
+  complaint: string
+  complaintDurationValue?: number
+  complaintDurationUnit?: 'day' | 'week' | 'month'
+  examination: string
+  diagnosisStatus: 'unspecified' | 'provisional' | 'differential' | 'confirmed'
+  aetiology: string
+  aetiologyCertainty: 'not_stated' | 'suspected' | 'confirmed'
   notes: string
   advice: string
+  followUpDate?: string
   createdAt: string
 }
 
 export interface PrescriptionItemView {
   medicineId: string
   medicineName: string
+  genericName?: string
+  strength?: string
+  dosageForm?: string
+  route?: string
+  medicineCode?: string
+  doseAmount?: string
+  doseUnit?: string
+  frequency?: string
+  timing?: string
+  durationValue?: number
+  durationUnit?: 'day' | 'week' | 'month'
   dosage: string
   instructions: string
   quantity: number
+  quantityUnit?: string
 }
 
 export interface PrescriptionView {
@@ -127,9 +151,107 @@ export interface PrescriptionView {
   patientId: string
   patientName: string
   doctorName: string
+  prescriptionNumber: string
   items: PrescriptionItemView[]
   signedAt: string
   dispensedAt?: string
+  printCount: number
+}
+
+export type ClinicalPhraseKind =
+  | 'complaint'
+  | 'examination'
+  | 'diagnosis'
+  | 'instruction'
+  | 'advice'
+
+export interface ClinicalPhraseView {
+  id: string
+  kind: ClinicalPhraseKind
+  text: string
+  source: string
+}
+
+export interface ClinicalPhrasePreferenceView {
+  kind: ClinicalPhraseKind
+  text: string
+  favourite: boolean
+  useCount: number
+  lastUsedAt?: string
+}
+
+export interface ConsultationDraftView {
+  id: string
+  patientId: string
+  appointmentId?: string
+  complaint: string
+  complaintDurationValue?: number
+  complaintDurationUnit?: 'day' | 'week' | 'month'
+  examination: string
+  diagnosis: string
+  diagnosisStatus: 'provisional' | 'differential' | 'confirmed'
+  aetiology: string
+  aetiologyCertainty: 'not_stated' | 'suspected' | 'confirmed'
+  notes: string
+  advice: string
+  followUpDate?: string
+  items: PrescriptionItemView[]
+  createdAt: string
+  updatedAt: string
+  stale: boolean
+}
+
+export interface ConsultationTemplateView {
+  id: string
+  seriesId: string
+  version: number
+  scope: 'personal' | 'clinic'
+  ownerDoctorId: string
+  ownerDoctorName: string
+  title: string
+  complaint: string
+  complaintDurationValue?: number
+  complaintDurationUnit?: 'day' | 'week' | 'month'
+  examination: string
+  diagnosis: string
+  diagnosisStatus: 'provisional' | 'differential' | 'confirmed'
+  aetiology: string
+  aetiologyCertainty: 'not_stated' | 'suspected' | 'confirmed'
+  notes: string
+  advice: string
+  followUpAfterDays?: number
+  items: PrescriptionItemView[]
+  createdAt: string
+}
+
+export interface FollowUpView {
+  id: string
+  patientId: string
+  patientName: string
+  encounterId: string
+  doctorId: string
+  doctorName: string
+  dueDate: string
+  note: string
+  status: 'open' | 'completed' | 'cancelled'
+  createdAt: string
+}
+
+export interface PatientClinicalProfileView {
+  allergyStatus: 'not_recorded' | 'no_known' | 'known'
+  allergyNotes: string
+  clinicalFlags: string
+  updatedAt?: string
+}
+
+export interface VitalReviewRuleView {
+  id: string
+  metric: 'systolic' | 'diastolic' | 'temperature' | 'pulse' | 'spo2' | 'weight'
+  minimumValue?: number
+  maximumValue?: number
+  minimumAge: number
+  maximumAge?: number
+  prompt: string
 }
 
 export interface BillView {
@@ -152,6 +274,11 @@ export interface BedView {
   patientName?: string
   admittedAt?: string
   notes?: string
+  nextCheckAt?: string
+  doctorInstructions?: string
+  handoffRequestedAt?: string
+  handoffRequestedBy?: string
+  handoffResolvedAt?: string
 }
 
 export type SaleClass = 'otc' | 'prescription' | 'restricted' | 'unknown'
@@ -172,8 +299,10 @@ export interface MedicineView {
   id: string
   code: string
   name: string
+  genericName: string
   strength: string
   dosageForm: string
+  route: string
   unit: string
   barcode: string
   saleClass: SaleClass
@@ -412,6 +541,13 @@ export interface PatientRecordView {
   prescriptions: PrescriptionView[]
   vitals: VitalView[]
   bills: BillView[]
+  draft?: ConsultationDraftView
+  templates: ConsultationTemplateView[]
+  phrases: ClinicalPhraseView[]
+  phrasePreferences: ClinicalPhrasePreferenceView[]
+  followUps: FollowUpView[]
+  clinicalProfile: PatientClinicalProfileView
+  imageSeriesStatus: 'not_enabled' | 'none' | 'available'
 }
 
 export interface ClinicSnapshot {
@@ -420,6 +556,7 @@ export interface ClinicSnapshot {
   patients: PatientView[]
   appointments: AppointmentView[]
   vitals: VitalView[]
+  vitalReviewRules: VitalReviewRuleView[]
   encounters: EncounterView[]
   prescriptions: PrescriptionView[]
   bills: BillView[]
@@ -436,6 +573,7 @@ export interface ClinicSnapshot {
   stockTakeHistory: StockTakeHistoryView[]
   writeoffs: StockWriteoffView[]
   supplierReturns: SupplierReturnView[]
+  followUps: FollowUpView[]
   settings: ClinicSettingsView
   doctorPresent: boolean
   /**

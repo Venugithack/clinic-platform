@@ -29,7 +29,8 @@ display: 294 ──decompose──► "19 strips + 9 loose"
 
 ### The detail that separates working software from broken software
 
-**Pack configuration and MRP live on the batch, not on the drug.**
+**Package configuration is versioned below the drug; the batch records what
+actually arrived.**
 
 Manufacturers change strip sizes between production runs, and MRP changes
 between batches — that is exactly why it is printed on the strip. If the
@@ -38,24 +39,26 @@ silently corrupts every historical quantity you have.
 
 | Field | Lives on | Why |
 |---|---|---|
-| `base_unit` (tablet / ml / piece) | drug | never changes |
-| `salt_composition`, `strength` | drug | drives substitution, §7 |
-| `units_per_strip`, `strips_per_box` | **batch** | changes between production runs |
-| `mrp` | **batch** | printed per batch; selling above it is illegal |
+| `base_unit` (tablet / bottle / piece) | clinic formulary item | stock arithmetic |
+| structured ingredients, strength, form | clinical/branded drug | exact medicine identity |
+| strip/box hierarchy and identifiers | **versioned package SKU** | describes one physical trade item |
+| confirmed conversion factors | **immutable batch receipt snapshot** | preserves what actually arrived |
+| `mrp` plus labelled package basis | **batch** | printed on received stock |
 | `cost_per_base_unit` | **batch** | what this batch actually cost, §4 |
 | `qty_on_hand` | batch, in base units | cache over the ledger |
 
-The drug carries a *default* pack config to prefill the receiving screen. The
-batch records what actually arrived. They are allowed to differ, and when they
-do, the batch wins.
+The package SKU/version prefills the receiving screen. Staff confirm it against
+the physical pack, and the batch stores that confirmed snapshot. If the pack
+changes, create a new package version; never rewrite a conversion used by old
+stock.
 
 ### Consequences that fall out for free
 
 - **Loose-strip tracking is automatic.** 47 tablets on hand with 15 to a strip
   is 3 strips and 2 loose, computed, never stored, never drifting.
-- **Sale price** is `batch.mrp ÷ units_in_pack`, rounded to the paise, with a
-  hard invariant: a line total can never exceed `mrp × packs sold`. Rounding a
-  loose-tablet price up past MRP is a legal problem, not a rounding problem.
+- **Loose-unit line price** is calculated proportionally from the batch MRP and
+  its labelled package basis, then rounded once at line level under the approved
+  policy. A line total must never exceed the applicable proportional MRP.
 - **Two batches of the same drug at different MRPs** coexist correctly, and
   FEFO decides which one the patient is charged for.
 
@@ -63,9 +66,11 @@ do, the batch wins.
 
 ## 2. Barcode, from the tablet camera
 
-Both screens are tablets (`TABLET.md`). Tablets have cameras. Every Indian
-pharmacy strip carries a barcode. This is free accuracy, and it is the single
-highest-value addition in this document after §1.
+Both screens are tablets (`TABLET.md`). Tablets have cameras. Some medicine
+packages carry usable barcodes or QR codes, but coverage and payloads are not
+universal. The current Indian mandate applies to defined Schedule H2 products
+and expands in stages; the workflow must always retain fast text search and
+manual verification. See `CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §7.
 
 | Where | What it removes |
 |---|---|
@@ -81,8 +86,11 @@ the fallback. No scanner hardware, no cost, no drivers.
 A pharmacist reaching for the wrong box is the error that actually harms
 someone, and this catches it before the patient is holding it.
 
-Barcodes map many-to-one onto batches: the first scan of an unknown code prompts
-"which drug is this?" once, and remembers.
+A normal GTIN/EAN maps to one package SKU and packaging level, not directly to
+every batch. A structured QR/DataMatrix may additionally contain batch and
+expiry. The first unknown scan asks staff to confirm the exact medicine,
+strength, form, and package level; batch is scanned or entered separately when
+the payload does not contain it.
 
 ---
 
@@ -199,14 +207,16 @@ composition and strength as structured fields**, not inside the brand name.
 
 | | |
 |---|---|
-| Equivalence | Same salt + same strength + same dosage form = substitutable |
+| Candidate match | Same ingredients + strengths + dosage form + route/release characteristics; this is not substitution authority |
 | Shown as | Brand, in stock, MRP, and the price difference against what was prescribed |
-| Who decides | **The doctor.** The counter proposes over the realtime link (§11.1); the doctor approves. Never automatic |
-| Recorded | Both the prescribed drug and the dispensed drug, with the approval and who gave it |
+| Who decides | **The doctor.** The counter requests a prescription change; the doctor reviews and issues an amended/replacement order. Never automatic |
+| Recorded | Original prescription, proposed product, decision, doctor-authorized order, and actual dispensed product |
 
-This is the clean side of `PLAN.md` §5.3 rule 8. Matching identical salts is a
-lookup, not a clinical inference — no interaction checking, no therapeutic
-alternatives, no "similar" drugs. Same salt, same strength, or nothing.
+Matching composition is a lookup aid, not a clinical or legal conclusion.
+Pharmacy Practice Regulations 2015 regulation 4.3 says the pharmacist should
+not substitute the prescription. The system may help the pharmacist request a
+doctor-authorized change, but it cannot dispense the alternative against the
+unchanged prescription.
 
 It also makes the drug master a harder client deliverable (§9). Worth it: it
 turns the headline feature from a badge into something that answers a real

@@ -278,7 +278,10 @@ instructions.
 | File | State |
 |---|---|
 | `../archive/docs/PLAN.md` · `../archive/docs/PROPOSAL.md` | pre-build design and the client proposal. The *product* reasoning still holds. The architecture (RLS, plpgsql transitions, Supabase Realtime) describes the retired application |
-| `INVENTORY.md` | the unit model, FEFO, costing, the expiry return window. **Still the reference.** Almost entirely design, almost nothing implementation |
+| `PRODUCT_UX_PLAN.md` | the consolidated owner-session workflow and delivery plan for doctor, nurse, pharmacy, admin, payment, printing, and clinical images |
+| `CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` | current evidence and implementation recommendation for clinical autocomplete, diagnoses/aetiology, CDCI, medicine identity, package SKUs, batches, barcodes, and partial dispensing |
+| `CLAUDE_IMPLEMENTATION_BRIEF.md` | the coding handoff: mandatory reading, agent boundaries, phased gates, invariants, safety rules, and definition of done |
+| `INVENTORY.md` | the unit model, FEFO, costing, and expiry return window. Read it with the later clinical/medicine research where package identity, barcode coverage, or substitution is involved |
 | `WHATSAPP.md` | Meta policy and the deep-link route. Still applies, and independent of either architecture. Verify the policy dates against Meta rather than this file |
 | `TABLET.md` | the interaction brief. Still useful; its auth section describes device tokens, which are gone |
 | `../archive/docs/HOSTING.md` | the ₹0 argument. The conclusion held; the route changed completely (Workers, then the split in §1). **§5's backups are described as running and are not** — see §6 |

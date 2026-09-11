@@ -14,7 +14,11 @@ import type {
   BillView,
   ClinicSettingsView,
   ClinicSnapshot,
+  ClinicalPhraseKind,
+  ConsultationDraftView,
+  ConsultationTemplateView,
   EncounterView,
+  FollowUpView,
   MedicineView,
   OtcSaleView,
   PatientView,
@@ -80,6 +84,112 @@ const maybeText = (value: unknown) => {
   if (value == null) return undefined
   const asText = String(value)
   return asText === '' ? undefined : asText
+}
+
+const jsonArray = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value
+  if (value == null || value === '') return []
+  try {
+    const parsed = JSON.parse(String(value)) as unknown
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function prescriptionItems(value: unknown, legacy: unknown): PrescriptionItemView[] {
+  const normalized = jsonArray(value)
+  return (normalized.length > 0 ? normalized : jsonArray(legacy)) as PrescriptionItemView[]
+}
+
+const LINE_JSON = `jsonb_build_object(
+  'medicineId', l.medicine_id,
+  'medicineName', l.medicine_name_snapshot,
+  'genericName', l.generic_name_snapshot,
+  'strength', l.strength_snapshot,
+  'dosageForm', l.dosage_form_snapshot,
+  'route', l.route_snapshot,
+  'medicineCode', l.medicine_code_snapshot,
+  'doseAmount', l.dose_amount,
+  'doseUnit', l.dose_unit,
+  'frequency', l.frequency,
+  'timing', l.timing,
+  'durationValue', l.duration_value,
+  'durationUnit', l.duration_unit,
+  'dosage', l.dosage_text,
+  'instructions', l.instructions,
+  'quantity', l.prescribed_quantity,
+  'quantityUnit', l.quantity_unit
+)`
+
+const DRAFT_LINE_JSON = `jsonb_build_object(
+  'medicineId', l.medicine_id,
+  'medicineName', trim(concat(m.name, ' ', m.strength)),
+  'genericName', m.generic_name,
+  'strength', m.strength,
+  'dosageForm', m.dosage_form,
+  'route', coalesce(nullif(l.route, ''), m.route),
+  'medicineCode', m.code,
+  'doseAmount', l.dose_amount,
+  'doseUnit', l.dose_unit,
+  'frequency', l.frequency,
+  'timing', l.timing,
+  'durationValue', l.duration_value,
+  'durationUnit', l.duration_unit,
+  'dosage', l.dosage_text,
+  'instructions', l.instructions,
+  'quantity', l.prescribed_quantity,
+  'quantityUnit', m.unit
+)`
+
+function encounterView(r: Row): EncounterView {
+  return {
+    id: text(r.id),
+    patientId: text(r.patient_id),
+    patientName: text(r.patient_name),
+    doctorName: text(r.doctor_name),
+    diagnosis: text(r.diagnosis),
+    complaint: text(r.complaint),
+    complaintDurationValue: maybeNum(r.complaint_duration_value),
+    complaintDurationUnit: optional(r.complaint_duration_unit) as EncounterView['complaintDurationUnit'],
+    examination: text(r.examination),
+    diagnosisStatus: text(r.diagnosis_status) as EncounterView['diagnosisStatus'],
+    aetiology: text(r.aetiology),
+    aetiologyCertainty: text(r.aetiology_certainty) as EncounterView['aetiologyCertainty'],
+    notes: text(r.notes),
+    advice: text(r.advice),
+    followUpDate: optional(r.follow_up_date),
+    createdAt: text(r.created_at),
+  }
+}
+
+function prescriptionView(r: Row): PrescriptionView {
+  return {
+    id: text(r.id),
+    patientId: text(r.patient_id),
+    patientName: text(r.patient_name),
+    doctorName: text(r.doctor_name),
+    prescriptionNumber: text(r.prescription_number),
+    items: prescriptionItems(r.normalized_items, r.items_json),
+    signedAt: text(r.signed_at),
+    dispensedAt: optional(r.dispensed_at),
+    printCount: num(r.print_count),
+  }
+}
+
+function followUpView(r: Row): FollowUpView {
+  return {
+    id: text(r.id),
+    patientId: text(r.patient_id),
+    patientName: text(r.patient_name),
+    encounterId: text(r.encounter_id),
+    doctorId: text(r.doctor_id),
+    doctorName: text(r.doctor_name),
+    dueDate: text(r.due_date),
+    note: text(r.note),
+    status: text(r.status) as FollowUpView['status'],
+    createdAt: text(r.created_at),
+  }
 }
 
 /**
@@ -301,12 +411,14 @@ export async function readSnapshot(
   // that screen, and a record of who was last at the tablet and when is exactly
   // the sort of thing a colleague should have to be an admin to read.
   const staff: StaffView[] = staffAdmin
-    ? (await all(`select id,name,username,phone,roles_json,active,last_login,pin_format from staff order by name`)).map((r) => ({
+    ? (await all(`select id,name,username,phone,roles_json,active,last_login,pin_format,
+        can_publish_clinical_templates from staff order by name`)).map((r) => ({
         id: text(r.id), name: text(r.name), username: text(r.username), phone: text(r.phone),
         roles: JSON.parse(text(r.roles_json)) as Role[], active: flag(r.active), lastLogin: optional(r.last_login),
         // The reset queue. An admin working through the PIN migration needs to
         // see who is still on six digits without asking them one at a time.
         pinFormat: text(r.pin_format) === 'legacy_six' ? 'legacy_six' : 'four',
+        canPublishClinicalTemplates: flag(r.can_publish_clinical_templates),
       }))
     : []
 
@@ -360,6 +472,21 @@ export async function readSnapshot(
       }))
     : []
 
+  // No built-in clinical thresholds: a rule is sent only after a doctor has
+  // approved and recorded it. An empty list produces no warning.
+  const vitalReviewRules = careRegister
+    ? (await all(`select id,metric,minimum_value,maximum_value,minimum_age,maximum_age,prompt
+        from vital_review_rules where active=1 order by metric,minimum_age`)).map((r) => ({
+        id: text(r.id),
+        metric: text(r.metric) as ClinicSnapshot['vitalReviewRules'][number]['metric'],
+        minimumValue: maybeNum(r.minimum_value),
+        maximumValue: maybeNum(r.maximum_value),
+        minimumAge: num(r.minimum_age),
+        maximumAge: maybeNum(r.maximum_age),
+        prompt: text(r.prompt) || 'Review this reading',
+      }))
+    : []
+
   // The Records station is the only screen that reads these, and only a doctor
   // has one — an admin does not, which is deliberate and is why this is gated
   // on the station and not on seniority. A hundred diagnoses and a hundred sets
@@ -368,10 +495,7 @@ export async function readSnapshot(
   const encounters: EncounterView[] = clinicalRecord
     ? (await all(`select e.*,p.name patient_name,s.name doctor_name from encounters e
         join patients p on p.id=e.patient_id join staff s on s.id=e.doctor_id
-        order by e.created_at desc limit 100`)).map((r) => ({
-        id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), doctorName: text(r.doctor_name),
-        diagnosis: text(r.diagnosis), notes: text(r.notes), advice: text(r.advice), createdAt: text(r.created_at),
-      }))
+        order by e.created_at desc limit 100`)).map(encounterView)
     : []
 
   // Every prescription still waiting to be dispensed, however old, plus a
@@ -380,13 +504,14 @@ export async function readSnapshot(
   // medicine. It is also the only list the Counter draws, and the Counter is
   // the only station that draws it.
   const prescriptions: PrescriptionView[] = pharmacyCounter
-    ? (await all(`select rx.*,p.name patient_name,s.name doctor_name from prescriptions rx
+    ? (await all(`select rx.*,p.name patient_name,s.name doctor_name,
+          coalesce((select jsonb_agg(${LINE_JSON} order by l.line_number)
+                      from prescription_lines l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
+          (select count(*)::int from prescription_prints pp where pp.prescription_id=rx.id) print_count
+        from prescriptions rx
         join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
         where rx.dispensed_at is null or rx.signed_at >= ${CLINIC_DAY_START}
-        order by rx.signed_at desc`)).map((r) => ({
-        id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), doctorName: text(r.doctor_name),
-        items: JSON.parse(text(r.items_json)) as PrescriptionItemView[], signedAt: text(r.signed_at), dispensedAt: optional(r.dispensed_at),
-      }))
+        order by rx.signed_at desc`)).map(prescriptionView)
     : []
 
   // Same rule, same reason: an unpaid bill is money owed to the clinic and
@@ -399,16 +524,25 @@ export async function readSnapshot(
       createdAt: text(r.created_at), paidAt: optional(r.paid_at),
     }))
 
-  const beds: BedView[] = (await all(`select b.*,p.name patient_name from beds b left join patients p on p.id=b.patient_id
-    order by b.label`)).map((r) => ({
-      id: text(r.id), label: text(r.label), status: text(r.status) as BedView['status'], patientId: optional(r.patient_id),
-      patientName: optional(r.patient_name), admittedAt: optional(r.admitted_at), notes: optional(r.notes),
-    }))
+  const beds: BedView[] = careRegister
+    ? (await all(`select b.*,p.name patient_name,hr.name handoff_requested_by_name
+        from beds b left join patients p on p.id=b.patient_id
+        left join staff hr on hr.id=b.handoff_requested_by
+        order by b.label`)).map((r) => ({
+        id: text(r.id), label: text(r.label), status: text(r.status) as BedView['status'], patientId: optional(r.patient_id),
+        patientName: optional(r.patient_name), admittedAt: optional(r.admitted_at), notes: optional(r.notes),
+        nextCheckAt: optional(r.next_check_at), doctorInstructions: optional(r.doctor_instructions),
+        handoffRequestedAt: optional(r.handoff_requested_at),
+        handoffRequestedBy: optional(r.handoff_requested_by_name),
+        handoffResolvedAt: optional(r.handoff_resolved_at),
+      }))
+    : []
 
   const medicines: MedicineView[] = (await all(`select m.*,s.name preferred_supplier_name,
       coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=${CLINIC_TODAY}),0) total_available
     from medicines m left join suppliers s on s.id=m.preferred_supplier_id order by m.name`)).map((r) => ({
-      id: text(r.id), code: text(r.code), name: text(r.name), strength: text(r.strength), dosageForm: text(r.dosage_form),
+      id: text(r.id), code: text(r.code), name: text(r.name), genericName: text(r.generic_name),
+      strength: text(r.strength), dosageForm: text(r.dosage_form), route: text(r.route),
       unit: text(r.unit), barcode: text(r.barcode), saleClass: text(r.sale_class) as MedicineView['saleClass'],
       schedule: text(r.schedule) as MedicineView['schedule'],
       reorderLevel: num(r.reorder_level), targetStock: num(r.target_stock), preferredSupplierId: optional(r.preferred_supplier_id),
@@ -501,12 +635,24 @@ export async function readSnapshot(
         }))
     : []
 
+  // The doctor's Today queue: open follow-ups only, bounded and ordered by
+  // what needs attention first. It contains no notes from the encounter.
+  const followUps: FollowUpView[] = clinicalRecord
+    ? (await all(`select f.*,p.name patient_name,s.name doctor_name
+        from follow_ups f
+        join patients p on p.id=f.patient_id
+        join staff s on s.id=f.doctor_id
+        where f.doctor_id=? and f.status='open'
+        order by f.due_date limit 100`, session.staffId)).map(followUpView)
+    : []
+
   return {
     session,
     staff,
     patients,
     appointments,
     vitals,
+    vitalReviewRules,
     encounters,
     prescriptions,
     bills,
@@ -582,6 +728,7 @@ export async function readSnapshot(
           status: text(r.status) as SupplierReturnView['status'],
         }))
       : [],
+    followUps,
     settings: await readSettings(),
     doctorPresent: knownDoctorPresence ?? await doctorLoggedIn(),
     // Zero is the PIN migration's exit gate. Only an admin is told the figure;
@@ -599,8 +746,22 @@ export async function readSnapshot(
  * why they are no longer in the snapshot. Fetched here they are bounded by one
  * person's lifetime of care rather than by the whole clinic's.
  */
-export async function readPatientRecord(patientId: string): Promise<PatientRecordView> {
-  const [encounters, prescriptions, vitals, bills] = await Promise.all([
+export async function readPatientRecord(
+  patientId: string,
+  responsibleDoctorId?: string,
+): Promise<PatientRecordView> {
+  const [
+    encounters,
+    prescriptions,
+    vitals,
+    bills,
+    followUps,
+    profiles,
+    phrases,
+    preferences,
+    drafts,
+    templates,
+  ] = await Promise.all([
     all(
       `select e.*,p.name patient_name,s.name doctor_name from encounters e
          join patients p on p.id=e.patient_id join staff s on s.id=e.doctor_id
@@ -608,7 +769,11 @@ export async function readPatientRecord(patientId: string): Promise<PatientRecor
       patientId,
     ),
     all(
-      `select rx.*,p.name patient_name,s.name doctor_name from prescriptions rx
+      `select rx.*,p.name patient_name,s.name doctor_name,
+          coalesce((select jsonb_agg(${LINE_JSON} order by l.line_number)
+                      from prescription_lines l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
+          (select count(*)::int from prescription_prints pp where pp.prescription_id=rx.id) print_count
+         from prescriptions rx
          join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
         where rx.patient_id=? order by rx.signed_at desc`,
       patientId,
@@ -623,20 +788,114 @@ export async function readPatientRecord(patientId: string): Promise<PatientRecor
         where b.patient_id=? order by b.created_at desc`,
       patientId,
     ),
+    all(
+      `select f.*,p.name patient_name,s.name doctor_name from follow_ups f
+         join patients p on p.id=f.patient_id join staff s on s.id=f.doctor_id
+        where f.patient_id=? order by f.due_date desc`,
+      patientId,
+    ),
+    all(
+      `select allergy_status,allergy_notes,clinical_flags,updated_at
+         from patient_clinical_profiles where patient_id=?`,
+      patientId,
+    ),
+    responsibleDoctorId
+      // A withdrawn phrase, and every phrase belonging to a superseded
+      // vocabulary release, drops out of the suggestions offered for new work.
+      // Neither disappears from a visit that already used the wording: signed
+      // encounters keep their own text.
+      ? all(`select p.id,p.kind,p.display_text,p.source from clinical_phrases p
+          left join clinical_vocabulary_releases r on r.id=p.release_id
+          where p.active=1 and (p.release_id is null or r.retired_at is null)
+          order by p.kind,p.display_text`)
+      : Promise.resolve([]),
+    responsibleDoctorId
+      ? all(`select kind,display_text,favourite,use_count,last_used_at
+          from clinical_phrase_preferences where doctor_id=?
+          order by favourite desc,last_used_at desc nulls last limit 120`, responsibleDoctorId)
+      : Promise.resolve([]),
+    responsibleDoctorId
+      ? all(
+          `select d.*,
+              coalesce((select jsonb_agg(${DRAFT_LINE_JSON} order by l.line_number)
+                          from consultation_draft_lines l
+                          join medicines m on m.id=l.medicine_id
+                         where l.draft_id=d.id), '[]'::jsonb) draft_items
+             from consultation_drafts d
+            where d.patient_id=? and d.doctor_id=?`,
+          patientId,
+          responsibleDoctorId,
+        )
+      : Promise.resolve([]),
+    responsibleDoctorId
+      ? all(
+          `select t.*,s.name owner_doctor_name,
+              coalesce((select jsonb_agg(${DRAFT_LINE_JSON} order by l.line_number)
+                          from consultation_template_lines l
+                          join medicines m on m.id=l.medicine_id
+                         where l.template_version_id=t.id), '[]'::jsonb) template_items
+             from consultation_templates t
+             join staff s on s.id=t.owner_doctor_id
+            where t.retired_at is null
+              and (t.scope='clinic' or t.owner_doctor_id=?)
+            order by t.scope,t.title`,
+          responsibleDoctorId,
+        )
+      : Promise.resolve([]),
   ])
 
+  const draftRow = drafts[0]
+  const draft: ConsultationDraftView | undefined = draftRow
+    ? {
+        id: text(draftRow.id),
+        patientId: text(draftRow.patient_id),
+        appointmentId: optional(draftRow.appointment_id),
+        complaint: text(draftRow.complaint),
+        complaintDurationValue: maybeNum(draftRow.complaint_duration_value),
+        complaintDurationUnit: optional(draftRow.complaint_duration_unit) as ConsultationDraftView['complaintDurationUnit'],
+        examination: text(draftRow.examination),
+        diagnosis: text(draftRow.diagnosis),
+        diagnosisStatus: text(draftRow.diagnosis_status) as ConsultationDraftView['diagnosisStatus'],
+        aetiology: text(draftRow.aetiology),
+        aetiologyCertainty: text(draftRow.aetiology_certainty) as ConsultationDraftView['aetiologyCertainty'],
+        notes: text(draftRow.notes),
+        advice: text(draftRow.advice),
+        followUpDate: optional(draftRow.follow_up_date),
+        items: jsonArray(draftRow.draft_items) as PrescriptionItemView[],
+        createdAt: text(draftRow.created_at),
+        updatedAt: text(draftRow.updated_at),
+        stale: Date.now() - new Date(text(draftRow.updated_at)).getTime() >= 7 * 24 * 60 * 60 * 1000,
+      }
+    : undefined
+
+  const templateViews: ConsultationTemplateView[] = templates.map((r) => ({
+    id: text(r.id),
+    seriesId: text(r.series_id),
+    version: num(r.version),
+    scope: text(r.scope) as ConsultationTemplateView['scope'],
+    ownerDoctorId: text(r.owner_doctor_id),
+    ownerDoctorName: text(r.owner_doctor_name),
+    title: text(r.title),
+    complaint: text(r.complaint),
+    complaintDurationValue: maybeNum(r.complaint_duration_value),
+    complaintDurationUnit: optional(r.complaint_duration_unit) as ConsultationTemplateView['complaintDurationUnit'],
+    examination: text(r.examination),
+    diagnosis: text(r.diagnosis),
+    diagnosisStatus: text(r.diagnosis_status) as ConsultationTemplateView['diagnosisStatus'],
+    aetiology: text(r.aetiology),
+    aetiologyCertainty: text(r.aetiology_certainty) as ConsultationTemplateView['aetiologyCertainty'],
+    notes: text(r.notes),
+    advice: text(r.advice),
+    followUpAfterDays: maybeNum(r.follow_up_after_days),
+    items: jsonArray(r.template_items) as PrescriptionItemView[],
+    createdAt: text(r.created_at),
+  }))
+
+  const profile = profiles[0]
   return {
     patientId,
-    encounters: encounters.map((r) => ({
-      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name),
-      doctorName: text(r.doctor_name), diagnosis: text(r.diagnosis), notes: text(r.notes),
-      advice: text(r.advice), createdAt: text(r.created_at),
-    })),
-    prescriptions: prescriptions.map((r) => ({
-      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name),
-      doctorName: text(r.doctor_name), items: JSON.parse(text(r.items_json)),
-      signedAt: text(r.signed_at), dispensedAt: optional(r.dispensed_at),
-    })),
+    encounters: encounters.map(encounterView),
+    prescriptions: prescriptions.map(prescriptionView),
     vitals: vitals.map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), bp: maybeText(r.bp),
       temperature: maybeNum(r.temperature), pulse: maybeNum(r.pulse),
@@ -650,5 +909,28 @@ export async function readPatientRecord(patientId: string): Promise<PatientRecor
       paymentMethod: optional(r.payment_method) as 'cash' | 'upi' | 'card' | undefined,
       createdAt: text(r.created_at), paidAt: optional(r.paid_at),
     })),
+    draft,
+    templates: templateViews,
+    phrases: phrases.map((r) => ({
+      id: text(r.id), kind: text(r.kind) as ClinicalPhraseKind,
+      text: text(r.display_text), source: text(r.source),
+    })),
+    phrasePreferences: preferences.map((r) => ({
+      kind: text(r.kind) as ClinicalPhraseKind,
+      text: text(r.display_text), favourite: flag(r.favourite),
+      useCount: num(r.use_count), lastUsedAt: optional(r.last_used_at),
+    })),
+    followUps: followUps.map(followUpView),
+    clinicalProfile: profile
+      ? {
+          allergyStatus: text(profile.allergy_status) as PatientRecordView['clinicalProfile']['allergyStatus'],
+          allergyNotes: text(profile.allergy_notes),
+          clinicalFlags: text(profile.clinical_flags),
+          updatedAt: optional(profile.updated_at),
+        }
+      : { allergyStatus: 'not_recorded', allergyNotes: '', clinicalFlags: '' },
+    // Slice 5 owns private image storage and access. Saying it is not enabled
+    // is truthful patient context; pretending an empty array means "none" is not.
+    imageSeriesStatus: 'not_enabled',
   }
 }

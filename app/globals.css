@@ -134,12 +134,36 @@
   }
 }
 
+/* A signed prescription is mounted beside the working sheet so it can use
+   the browser's native print dialogue, but it must never appear on screen. */
+.prescription-print {
+  display: none;
+}
+
 /* Chrome does not belong on paper.
    A receipt, a bill and a supplier order are what staff actually print, and
    each is a document someone walks out holding — so the record fills the page
    and everything around it disappears. Printing stays native: window.print()
    hands the tablet's own AirPrint/Mopria sheet to the operator. */
 @media print {
+  html[data-print-mode='prescription'] body * {
+    visibility: hidden;
+  }
+
+  html[data-print-mode='prescription'] .prescription-print,
+  html[data-print-mode='prescription'] .prescription-print * {
+    visibility: visible;
+  }
+
+  html[data-print-mode='prescription'] .prescription-print {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    min-height: 257mm;
+    background: #fff;
+  }
+
   [data-print='hide'] {
     display: none !important;
   }

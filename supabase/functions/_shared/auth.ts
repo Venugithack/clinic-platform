@@ -69,6 +69,7 @@ type StaffAuthRow = {
   pin_salt: string
   active: number
   pin_format: PinFormat
+  can_publish_clinical_templates: number
 }
 
 /**
@@ -91,6 +92,7 @@ type SessionRow = {
   last_seen: string
   expires_at: string
   active: number
+  can_publish_clinical_templates: number
 }
 
 /**
@@ -146,7 +148,8 @@ export async function createSession(
     return { reason: 'locked', minutes: PIN_ATTEMPT_WINDOW_MINUTES }
   }
 
-  const staff = (await db.prepare(`select id,name,username,roles_json,pin_hash,pin_salt,active,pin_format
+  const staff = (await db.prepare(`select id,name,username,roles_json,pin_hash,pin_salt,active,pin_format,
+      can_publish_clinical_templates
     from staff where id=?`).get(staffId)) as StaffAuthRow | undefined
 
   // The PIN offered has to be the length this account actually holds.
@@ -199,6 +202,7 @@ function toView(row: SessionRow | (StaffAuthRow & { staff_id: string; last_seen:
     username: row.username,
     roles: JSON.parse(row.roles_json) as Role[],
     lastSeen: row.last_seen,
+    canPublishClinicalTemplates: Boolean(Number(row.can_publish_clinical_templates ?? 0)),
   }
 }
 
@@ -209,7 +213,7 @@ export async function getSession(
   if (!rawToken) return null
   const hashed = tokenHash(rawToken)
   const row = await db.prepare(`select s.staff_id, st.name, st.username, st.roles_json,
-      s.last_seen, s.expires_at, st.active
+      s.last_seen, s.expires_at, st.active, st.can_publish_clinical_templates
     from sessions s join staff st on st.id=s.staff_id
     where s.token_hash=?`).get(hashed) as SessionRow | undefined
   if (!row || !row.active || row.expires_at <= isoNow()) {

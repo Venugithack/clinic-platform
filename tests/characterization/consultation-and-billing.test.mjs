@@ -77,7 +77,7 @@ describe('saving a consultation', () => {
     assert.equal(bill.paid_at, null)
   })
 
-  test('the diagnosis is one required free-text value — no code, no status, no second diagnosis', async () => {
+  test('the diagnosis stays free text, with structured clinical context beside it', async () => {
     const { doctor } = await clinic()
     const patientId = await addPatient(doctor)
 
@@ -86,19 +86,41 @@ describe('saving a consultation', () => {
       /diagnosis is required/,
     )
 
-    await as(doctor, 'save_consultation', { patientId, diagnosis: 'Viral fever', consultationFee: 0 })
-    const [encounter] = await rows('select diagnosis from jmc.encounters')
+    await as(doctor, 'save_consultation', {
+      patientId,
+      complaint: 'Fever and body pain',
+      complaintDurationValue: 3,
+      complaintDurationUnit: 'day',
+      examination: 'Chest clear',
+      diagnosis: 'Viral fever',
+      diagnosisStatus: 'provisional',
+      aetiology: 'Likely viral',
+      aetiologyCertainty: 'suspected',
+      consultationFee: 0,
+    })
+    const [encounter] = await rows(`select diagnosis,complaint,complaint_duration_value,
+      complaint_duration_unit,examination,diagnosis_status,aetiology,aetiology_certainty
+      from jmc.encounters`)
     assert.equal(encounter.diagnosis, 'Viral fever')
+    assert.equal(encounter.complaint, 'Fever and body pain')
+    assert.equal(Number(encounter.complaint_duration_value), 3)
+    assert.equal(encounter.complaint_duration_unit, 'day')
+    assert.equal(encounter.examination, 'Chest clear')
+    assert.equal(encounter.diagnosis_status, 'provisional')
+    assert.equal(encounter.aetiology, 'Likely viral')
+    assert.equal(encounter.aetiology_certainty, 'suspected')
 
-    // There is nowhere to record that this was provisional, nowhere to put a
-    // second differential, and no coded identity. Slice 2 and the terminology
-    // research both start here.
+    // The owner's English wording remains the recorded identity in this slice;
+    // status and cause add structure without pretending an unreviewed coding
+    // system is ready for clinical use.
     const columns = (await rows(
       `select column_name from information_schema.columns
         where table_schema='jmc' and table_name='encounters' order by column_name`,
     )).map((r) => r.column_name)
     assert.deepEqual(columns, [
-      'advice', 'appointment_id', 'created_at', 'diagnosis', 'doctor_id', 'id', 'notes', 'patient_id',
+      'advice', 'aetiology', 'aetiology_certainty', 'appointment_id', 'complaint',
+      'complaint_duration_unit', 'complaint_duration_value', 'created_at', 'diagnosis',
+      'diagnosis_status', 'doctor_id', 'examination', 'follow_up_date', 'id', 'notes', 'patient_id',
     ])
   })
 

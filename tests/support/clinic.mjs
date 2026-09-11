@@ -25,16 +25,47 @@ const admin = postgres(STAGING_DB_URL, {
   connection: { search_path: 'jmc' },
 })
 
-/** Everything the migrations create, minus the two rows that must survive. */
-async function clinicTables() {
-  const rows = await admin`
+/**
+ * Empty every table on `connection`, carrying the migration-installed
+ * reference data across.
+ *
+ * The approved clinical vocabulary is reference data: migrations install it,
+ * and on the clinic's database no day's work removes it. TRUNCATE does, and
+ * not because the tables are named in the list — `clinical_phrases` points a
+ * foreign key at `staff`, so CASCADE reaches it however the list is written.
+ * So it is carried across rather than excluded, and what comes back is
+ * whatever the migrations installed, not a copy kept in this file that a later
+ * vocabulary release would silently contradict.
+ *
+ * Exported because the Slice 1 gate rebuilds the fixtures on its own
+ * connection, and two truncate rules that drift apart is how the vocabulary
+ * disappeared in the first place.
+ */
+export async function emptyClinic(connection) {
+  const tables = (await connection`
     select c.relname as name
       from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
      where n.nspname = 'jmc' and c.relkind = 'r'
      order by c.relname
-  `
-  return rows.map((row) => row.name)
+  `).map((row) => `jmc.${row.name}`)
+
+  const releases = await connection`select * from jmc.clinical_vocabulary_releases`
+  const released = await connection`select * from jmc.clinical_phrases where release_id is not null`
+
+  // Carrying nothing across is indistinguishable, three assertions later, from
+  // a vocabulary that was never approved. Say which it is here instead.
+  if (releases.length === 0) {
+    throw new Error(
+      'No clinical vocabulary release is installed. The migrations seed it, so ' +
+        'this database predates them or was emptied by hand: run "npm run staging:up".',
+    )
+  }
+
+  await connection.unsafe(`truncate ${tables.join(', ')} restart identity cascade`)
+
+  await connection`insert into jmc.clinical_vocabulary_releases ${connection(releases)}`
+  if (released.length > 0) await connection`insert into jmc.clinical_phrases ${connection(released)}`
 }
 
 /**
@@ -47,9 +78,7 @@ async function clinicTables() {
  * enough that ordering deletes by hand is a maintenance job nobody will do.
  */
 export async function resetClinic() {
-  const tables = await clinicTables()
-  const list = tables.map((t) => `jmc.${t}`).join(', ')
-  await admin.unsafe(`truncate ${list} restart identity cascade`)
+  await emptyClinic(admin)
 
   await admin.unsafe(`
     insert into jmc.clinic_revision (id, revision, changed_at)
@@ -68,7 +97,7 @@ export async function resetClinic() {
   // climbing across tests and an assertion on 'OTC-0001' passes once.
   for (const seq of [
     'appointment_token_seq', 'otc_receipt_seq', 'purchase_order_seq',
-    'supplier_return_seq', 'stock_take_seq',
+    'supplier_return_seq', 'stock_take_seq', 'prescription_number_seq',
   ]) {
     await admin.unsafe(`select setval('jmc.${seq}', 1, false)`)
   }
@@ -98,6 +127,7 @@ export async function makeStaff({
   // for a six-digit PIN gets a staff member who can actually use it. Pass it
   // explicitly only to build the broken pairing on purpose.
   pinFormat = pin.length === 6 ? 'legacy_six' : 'four',
+  canPublishClinicalTemplates = false,
   active = true,
 } = {}) {
   staffCounter += 1
@@ -105,14 +135,15 @@ export async function makeStaff({
   const secret = await password.hashPassword(pin)
   await admin.unsafe(
     `insert into jmc.staff
-       (id, name, username, phone, roles_json, pin_hash, pin_salt, pin_format, active, created_at)
-     values ($1,$2,$3,'',$4,$5,$6,$7,$8, to_char(now() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS"Z"'))`,
+       (id, name, username, phone, roles_json, pin_hash, pin_salt, pin_format,
+        can_publish_clinical_templates, active, created_at)
+     values ($1,$2,$3,'',$4,$5,$6,$7,$8,$9, to_char(now() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS"Z"'))`,
     [
       id, name, username ?? `staff${staffCounter}`, JSON.stringify(roles),
-      secret.hash, secret.salt, pinFormat, active ? 1 : 0,
+      secret.hash, secret.salt, pinFormat, canPublishClinicalTemplates ? 1 : 0, active ? 1 : 0,
     ],
   )
-  return { id, name, username: username ?? `staff${staffCounter}`, roles, pin, pinFormat }
+  return { id, name, username: username ?? `staff${staffCounter}`, roles, pin, pinFormat, canPublishClinicalTemplates }
 }
 
 /** The SessionView shape the command layer expects, without a sign-in round trip. */
@@ -123,6 +154,7 @@ export function sessionFor(staff) {
     username: staff.username,
     roles: staff.roles,
     lastSeen: new Date().toISOString(),
+    canPublishClinicalTemplates: Boolean(staff.canPublishClinicalTemplates),
   }
 }
 

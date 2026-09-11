@@ -22,6 +22,35 @@ const CLINIC_TODAY = `(now() at time zone 'Asia/Kolkata')::date`
 type Payload = Record<string, unknown>
 type Line = { medicineId: string; quantity: number }
 
+type StructuredLine = PrescriptionItemView & {
+  genericName: string
+  strength: string
+  dosageForm: string
+  route: string
+  medicineCode: string
+  doseAmount: string
+  doseUnit: string
+  frequency: string
+  timing: string
+  durationValue?: number
+  durationUnit?: 'day' | 'week' | 'month'
+  quantityUnit: string
+}
+
+type ClinicalFields = {
+  complaint: string
+  complaintDurationValue?: number
+  complaintDurationUnit?: 'day' | 'week' | 'month'
+  examination: string
+  diagnosis: string
+  diagnosisStatus: 'provisional' | 'differential' | 'confirmed'
+  aetiology: string
+  aetiologyCertainty: 'not_stated' | 'suspected' | 'confirmed'
+  notes: string
+  advice: string
+  followUpDate?: string
+}
+
 function value(payload: Payload, key: string) {
   const result = payload[key]
   if (result == null || String(result).trim() === '') throw new Error(`${key} is required.`)
@@ -40,6 +69,58 @@ function numberValue(payload: Payload, key: string, minimum = 0) {
 
 function booleanValue(payload: Payload, key: string) {
   return payload[key] === true || payload[key] === 1 || payload[key] === 'true'
+}
+
+function optionalPositiveInteger(payload: Payload, key: string): number | undefined {
+  const raw = optional(payload, key)
+  if (!raw) return undefined
+  const result = Number(raw)
+  if (!Number.isInteger(result) || result <= 0) throw new Error(`${key} must be a whole number above zero.`)
+  return result
+}
+
+function optionalDate(payload: Payload, key: string): string | undefined {
+  const result = optional(payload, key)
+  if (!result) return undefined
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(Date.parse(`${result}T00:00:00Z`))) {
+    throw new Error(`${key} is not a valid date.`)
+  }
+  return result
+}
+
+function clinicalFields(payload: Payload, requireDiagnosis: boolean): ClinicalFields {
+  const diagnosis = optional(payload, 'diagnosis')
+  if (requireDiagnosis && !diagnosis) throw new Error('diagnosis is required.')
+  const complaintDurationValue = optionalPositiveInteger(payload, 'complaintDurationValue')
+  const complaintDurationUnit = optional(payload, 'complaintDurationUnit')
+  if (complaintDurationValue && !['day', 'week', 'month'].includes(complaintDurationUnit)) {
+    throw new Error('Choose whether the duration is in days, weeks, or months.')
+  }
+  return {
+    complaint: optional(payload, 'complaint'),
+    complaintDurationValue,
+    complaintDurationUnit: complaintDurationValue
+      ? (complaintDurationUnit as ClinicalFields['complaintDurationUnit'])
+      : undefined,
+    examination: optional(payload, 'examination'),
+    diagnosis,
+    diagnosisStatus: requireChoice(
+      payload,
+      'diagnosisStatus',
+      ['provisional', 'differential', 'confirmed'] as const,
+      'provisional',
+    ),
+    aetiology: optional(payload, 'aetiology'),
+    aetiologyCertainty: requireChoice(
+      payload,
+      'aetiologyCertainty',
+      ['not_stated', 'suspected', 'confirmed'] as const,
+      'not_stated',
+    ),
+    notes: optional(payload, 'notes'),
+    advice: optional(payload, 'advice'),
+    followUpDate: optionalDate(payload, 'followUpDate'),
+  }
 }
 
 /**
@@ -125,6 +206,7 @@ const SERIES = {
   PO: 'purchase_order_seq',
   RET: 'supplier_return_seq',
   ST: 'stock_take_seq',
+  RX: 'prescription_number_seq',
 } as const
 
 async function sequence(prefix: keyof typeof SERIES) {
@@ -134,7 +216,7 @@ async function sequence(prefix: keyof typeof SERIES) {
   const row = (await db
     .prepare(`select nextval('jmc.${SERIES[prefix]}') as value`)
     .get()) as { value: string | number }
-  return `${prefix}-${String(row.value).padStart(4, '0')}`
+  return `${prefix}-${String(row.value).padStart(prefix === 'RX' ? 6 : 4, '0')}`
 }
 
 /**
@@ -198,6 +280,219 @@ function parsedLines(payload: Payload): Line[] {
     const quantity = Math.floor(numberValue(row, 'quantity', 1))
     return { medicineId, quantity }
   })
+}
+
+function normalizedPhrase(input: string): string {
+  return input.trim().toLocaleLowerCase('en-IN').replace(/\s+/g, ' ')
+}
+
+async function structuredPrescriptionItems(payload: Payload): Promise<StructuredLine[]> {
+  if (!Array.isArray(payload.prescriptionItems)) return []
+
+  const result: StructuredLine[] = []
+  for (const entry of payload.prescriptionItems as Payload[]) {
+    if (!optional(entry, 'medicineId')) continue
+    const medicineId = value(entry, 'medicineId')
+    const medicine = (await db
+      .prepare(`select id,code,name,generic_name,strength,dosage_form,route,unit
+          from medicines where id=? and active=1`)
+      .get(medicineId)) as {
+        id: string
+        code: string
+        name: string
+        generic_name: string
+        strength: string
+        dosage_form: string
+        route: string
+        unit: string
+      } | undefined
+    if (!medicine) throw new Error('A selected medicine is inactive or no longer exists.')
+
+    const durationValue = optionalPositiveInteger(entry, 'durationValue')
+    const durationUnit = optional(entry, 'durationUnit')
+    if (durationValue && !['day', 'week', 'month'].includes(durationUnit)) {
+      throw new Error('Choose whether the medicine duration is in days, weeks, or months.')
+    }
+    const doseAmount = optional(entry, 'doseAmount')
+    const doseUnit = optional(entry, 'doseUnit')
+    const frequency = optional(entry, 'frequency')
+    const timing = optional(entry, 'timing')
+    const route = optional(entry, 'route') || medicine.route
+    const dosage = optional(entry, 'dosage') || [doseAmount && `${doseAmount} ${doseUnit}`.trim(), frequency, timing]
+      .filter(Boolean)
+      .join(' · ')
+
+    result.push({
+      medicineId,
+      medicineName: `${medicine.name} ${medicine.strength}`.trim(),
+      genericName: medicine.generic_name,
+      strength: medicine.strength,
+      dosageForm: medicine.dosage_form,
+      route,
+      medicineCode: medicine.code,
+      doseAmount,
+      doseUnit,
+      frequency,
+      timing,
+      durationValue,
+      durationUnit: durationValue ? durationUnit as StructuredLine['durationUnit'] : undefined,
+      dosage,
+      instructions: optional(entry, 'instructions'),
+      quantity: Math.floor(numberValue(entry, 'quantity', 1)),
+      quantityUnit: medicine.unit || 'unit',
+    })
+  }
+  return result
+}
+
+async function insertDraftLines(draftId: string, items: StructuredLine[]) {
+  for (const [index, item] of items.entries()) {
+    await db.prepare(`insert into consultation_draft_lines
+      (id,draft_id,line_number,medicine_id,dose_amount,dose_unit,frequency,timing,route,
+       duration_value,duration_unit,dosage_text,instructions,prescribed_quantity)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        randomUUID(), draftId, index + 1, item.medicineId, item.doseAmount, item.doseUnit,
+        item.frequency, item.timing, item.route, item.durationValue ?? null,
+        item.durationUnit ?? null, item.dosage, item.instructions, item.quantity,
+      )
+  }
+}
+
+async function insertTemplateLines(templateId: string, items: StructuredLine[]) {
+  for (const [index, item] of items.entries()) {
+    await db.prepare(`insert into consultation_template_lines
+      (id,template_version_id,line_number,medicine_id,dose_amount,dose_unit,frequency,timing,route,
+       duration_value,duration_unit,dosage_text,instructions,prescribed_quantity)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        randomUUID(), templateId, index + 1, item.medicineId, item.doseAmount, item.doseUnit,
+        item.frequency, item.timing, item.route, item.durationValue ?? null,
+        item.durationUnit ?? null, item.dosage, item.instructions, item.quantity,
+      )
+  }
+}
+
+async function insertSignedLines(prescriptionId: string, items: StructuredLine[]) {
+  for (const [index, item] of items.entries()) {
+    await db.prepare(`insert into prescription_lines
+      (id,prescription_id,line_number,medicine_id,medicine_name_snapshot,generic_name_snapshot,
+       strength_snapshot,dosage_form_snapshot,route_snapshot,medicine_code_snapshot,
+       dose_amount,dose_unit,frequency,timing,duration_value,duration_unit,dosage_text,
+       instructions,prescribed_quantity,quantity_unit)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        randomUUID(), prescriptionId, index + 1, item.medicineId, item.medicineName,
+        item.genericName, item.strength, item.dosageForm, item.route, item.medicineCode,
+        item.doseAmount, item.doseUnit, item.frequency, item.timing,
+        item.durationValue ?? null, item.durationUnit ?? null, item.dosage,
+        item.instructions, item.quantity, item.quantityUnit,
+      )
+  }
+}
+
+async function rememberClinicalPhrases(doctorId: string, fields: ClinicalFields, items: StructuredLine[]) {
+  const phrases: Array<{ kind: string; text: string }> = [
+    { kind: 'complaint', text: fields.complaint },
+    { kind: 'examination', text: fields.examination },
+    { kind: 'diagnosis', text: fields.diagnosis },
+    { kind: 'advice', text: fields.advice },
+    ...items.map((item) => ({ kind: 'instruction', text: item.instructions })),
+  ].filter((item) => item.text.trim().length > 0)
+
+  for (const phrase of phrases) {
+    await db.prepare(`insert into clinical_phrase_preferences
+      (doctor_id,kind,display_text,normalized_text,favourite,use_count,last_used_at)
+      values (?,?,?,?,0,1,now())
+      on conflict (doctor_id,kind,normalized_text) do update
+      set display_text=excluded.display_text,
+          use_count=clinical_phrase_preferences.use_count+1,
+          last_used_at=excluded.last_used_at`).run(
+        doctorId, phrase.kind, phrase.text, normalizedPhrase(phrase.text),
+      )
+  }
+}
+
+async function requireActiveAppointment(patientId: string, appointmentId: string) {
+  if (!appointmentId) return
+  const appointment = await db.prepare(`select id from appointments
+    where id=? and patient_id=? and status in ('waiting','in_consult') for update`)
+    .get(appointmentId, patientId)
+  if (!appointment) {
+    throw new Error('That visit is already finished or does not belong to this patient.')
+  }
+}
+
+async function completeConsultation(session: SessionView, payload: Payload) {
+  const encounterId = randomUUID()
+  const signedAt = isoNow()
+  const patientId = value(payload, 'patientId')
+  const fields = clinicalFields(payload, true)
+  const prescriptionItems = await structuredPrescriptionItems(payload)
+  let prescriptionId: string | undefined
+  let prescriptionNumber: string | undefined
+
+  await transaction(async () => {
+    const appointmentId = optional(payload, 'appointmentId')
+    await requireActiveAppointment(patientId, appointmentId)
+    await db.prepare(`insert into encounters
+      (id,patient_id,doctor_id,appointment_id,diagnosis,notes,advice,created_at,
+       complaint,complaint_duration_value,complaint_duration_unit,examination,
+       diagnosis_status,aetiology,aetiology_certainty,follow_up_date)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        encounterId, patientId, session.staffId, optional(payload, 'appointmentId') || null,
+        fields.diagnosis, fields.notes, fields.advice, signedAt, fields.complaint,
+        fields.complaintDurationValue ?? null, fields.complaintDurationUnit ?? null,
+        fields.examination, fields.diagnosisStatus, fields.aetiology,
+        fields.aetiologyCertainty, fields.followUpDate ?? null,
+      )
+
+    if (prescriptionItems.length > 0) {
+      prescriptionId = randomUUID()
+      prescriptionNumber = await sequence('RX')
+      await db.prepare(`insert into prescriptions
+        (id,patient_id,encounter_id,doctor_id,items_json,signed_at,prescription_number)
+        values (?,?,?,?,?,?,?)`).run(
+          prescriptionId, patientId, encounterId, session.staffId,
+          JSON.stringify(prescriptionItems), signedAt, prescriptionNumber,
+        )
+      await insertSignedLines(prescriptionId, prescriptionItems)
+    }
+
+    if (appointmentId) {
+      await db.prepare(`update appointments set status='done' where id=?`).run(appointmentId)
+    }
+
+    if (fields.followUpDate) {
+      await db.prepare(`insert into follow_ups
+        (id,patient_id,encounter_id,doctor_id,due_date,note,status,created_at)
+        values (?,?,?,?,?,?,'open',now())`).run(
+          randomUUID(), patientId, encounterId, session.staffId, fields.followUpDate,
+          optional(payload, 'followUpNote') || fields.advice,
+        )
+    }
+
+    // Slice 4 replaces this client-provided fee with the configured fee
+    // snapshot and waiver rules. Slice 2 preserves current billing behaviour.
+    const fee = Number(payload.consultationFee ?? 0)
+    if (fee > 0) {
+      await db.prepare(`insert into bills (id,patient_id,label,amount,status,created_at)
+        values (?,?,?,?, 'unpaid',?)`).run(randomUUID(), patientId, 'Consultation', fee, signedAt)
+    }
+
+    await rememberClinicalPhrases(session.staffId, fields, prescriptionItems)
+    await db.prepare('delete from consultation_drafts where patient_id=? and doctor_id=?')
+      .run(patientId, session.staffId)
+    await audit(
+      session.staffId,
+      'encounter.completed',
+      'encounter',
+      encounterId,
+      `Signed consultation for ${patientId}${prescriptionNumber ? ` as ${prescriptionNumber}` : ''}`,
+    )
+  })
+
+  return {
+    message: prescriptionId ? 'Consultation and prescription signed.' : 'Consultation signed.',
+    data: { encounterId, prescriptionId, prescriptionNumber, signedAt },
+  }
 }
 
 type Allocation = { batchId: string; batchNumber: string; quantity: number; unitPrice: number }
@@ -507,44 +802,314 @@ export async function runCommand(session: SessionView, action: string, payload: 
       return { message: 'Vitals saved.' }
     }
 
-    case 'save_consultation': {
+    case 'save_consultation_draft': {
       requireRole(session, 'doctor')
-      const encounterId = randomUUID()
       const patientId = value(payload, 'patientId')
-      const prescriptionItems = Array.isArray(payload.prescriptionItems)
-        ? (payload.prescriptionItems as Payload[]).filter((item) => optional(item, 'medicineId')).map((item) => ({
-            medicineId: value(item, 'medicineId'),
-            medicineName: value(item, 'medicineName'),
-            dosage: value(item, 'dosage'),
-            instructions: optional(item, 'instructions'),
-            quantity: Math.floor(numberValue(item, 'quantity', 1)),
-          })) satisfies PrescriptionItemView[]
-        : []
+      const fields = clinicalFields(payload, false)
+      const items = await structuredPrescriptionItems(payload)
+      let draftId = optional(payload, 'draftId') || randomUUID()
+
       await transaction(async () => {
-        await db.prepare(`insert into encounters
-          (id,patient_id,doctor_id,appointment_id,diagnosis,notes,advice,created_at)
-          values (?,?,?,?,?,?,?,?)`).run(
-            encounterId, patientId, session.staffId, optional(payload, 'appointmentId') || null,
-            value(payload, 'diagnosis'), optional(payload, 'notes'), optional(payload, 'advice'), isoNow(),
-          )
-        if (prescriptionItems.length > 0) {
-          const prescriptionId = randomUUID()
-          await db.prepare(`insert into prescriptions (id,patient_id,encounter_id,doctor_id,items_json,signed_at)
-            values (?,?,?,?,?,?)`).run(
-              prescriptionId, patientId, encounterId, session.staffId, JSON.stringify(prescriptionItems), isoNow(),
+        await requireActiveAppointment(patientId, optional(payload, 'appointmentId'))
+        const existing = (await db.prepare(`select id from consultation_drafts
+          where patient_id=? and doctor_id=? for update`).get(
+            patientId, session.staffId,
+          )) as { id: string } | undefined
+        if (existing) draftId = String(existing.id)
+
+        if (existing) {
+          await db.prepare(`update consultation_drafts set
+            appointment_id=?,complaint=?,complaint_duration_value=?,complaint_duration_unit=?,
+            examination=?,diagnosis=?,diagnosis_status=?,aetiology=?,aetiology_certainty=?,
+            notes=?,advice=?,follow_up_date=?,updated_at=now()
+            where id=? and doctor_id=?`).run(
+              optional(payload, 'appointmentId') || null, fields.complaint,
+              fields.complaintDurationValue ?? null, fields.complaintDurationUnit ?? null,
+              fields.examination, fields.diagnosis, fields.diagnosisStatus, fields.aetiology,
+              fields.aetiologyCertainty, fields.notes, fields.advice,
+              fields.followUpDate ?? null, draftId, session.staffId,
+            )
+        } else {
+          await db.prepare(`insert into consultation_drafts
+            (id,patient_id,doctor_id,appointment_id,complaint,complaint_duration_value,
+             complaint_duration_unit,examination,diagnosis,diagnosis_status,aetiology,
+             aetiology_certainty,notes,advice,follow_up_date,created_at,updated_at)
+            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,now(),now())`).run(
+              draftId, patientId, session.staffId, optional(payload, 'appointmentId') || null,
+              fields.complaint, fields.complaintDurationValue ?? null,
+              fields.complaintDurationUnit ?? null, fields.examination, fields.diagnosis,
+              fields.diagnosisStatus, fields.aetiology, fields.aetiologyCertainty,
+              fields.notes, fields.advice, fields.followUpDate ?? null,
             )
         }
-        if (optional(payload, 'appointmentId')) {
-          await db.prepare(`update appointments set status='done' where id=?`).run(optional(payload, 'appointmentId'))
-        }
-        const fee = Number(payload.consultationFee ?? 0)
-        if (fee > 0) {
-          await db.prepare(`insert into bills (id,patient_id,label,amount,status,created_at)
-            values (?,?,?,?, 'unpaid',?)`).run(randomUUID(), patientId, 'Consultation', fee, isoNow())
-        }
-        await audit(session.staffId, 'encounter.completed', 'encounter', encounterId, `Consultation saved for ${patientId}`)
+        await db.prepare('delete from consultation_draft_lines where draft_id=?').run(draftId)
+        await insertDraftLines(draftId, items)
+        await audit(session.staffId, 'consultation.draft_saved', 'consultation_draft', draftId, `Saved draft for ${patientId}`)
       })
-      return { message: 'Consultation and prescription saved.' }
+      return { message: 'Draft saved for you.', data: { draftId } }
+    }
+
+    case 'discard_consultation_draft': {
+      requireRole(session, 'doctor')
+      const draftId = value(payload, 'draftId')
+      await transaction(async () => {
+        const removed = await db.prepare(`delete from consultation_drafts
+          where id=? and doctor_id=?`).run(draftId, session.staffId)
+        if (removed.changes !== 1) throw new Error('That draft is no longer available.')
+        await audit(session.staffId, 'consultation.draft_discarded', 'consultation_draft', draftId, 'Discarded own consultation draft')
+      })
+      return { message: 'Draft discarded.' }
+    }
+
+    case 'set_clinical_phrase_favourite': {
+      requireRole(session, 'doctor')
+      const kind = requireChoice(
+        payload,
+        'kind',
+        ['complaint', 'examination', 'diagnosis', 'instruction', 'advice'] as const,
+      )
+      const displayText = value(payload, 'text')
+      const favourite = booleanValue(payload, 'favourite')
+      await transaction(async () => {
+        await db.prepare(`insert into clinical_phrase_preferences
+          (doctor_id,kind,display_text,normalized_text,favourite,use_count,last_used_at)
+          values (?,?,?,?,?,0,null)
+          on conflict (doctor_id,kind,normalized_text) do update
+          set display_text=excluded.display_text,favourite=excluded.favourite`).run(
+            session.staffId, kind, displayText, normalizedPhrase(displayText), favourite ? 1 : 0,
+          )
+        await audit(session.staffId, 'clinical_phrase.favourite', 'clinical_phrase', `${kind}:${normalizedPhrase(displayText)}`, `${favourite ? 'Favourited' : 'Unfavourited'} ${kind} phrase`)
+      })
+      return { message: favourite ? 'Added to favourites.' : 'Removed from favourites.' }
+    }
+
+    /*
+     * The clinic-wide vocabulary has to stay extensible — the clinic is a mixed
+     * practice and OWNER_POLICY_REGISTER.md F.36 says so explicitly — but
+     * extending it is clinical content, not access metadata. A.5 draws the line
+     * the other way round from what a role check would suggest: any doctor may
+     * add their own favourites, and nobody changes the clinic-wide approved list
+     * except the doctor the owner authorized. That is the same authority A.6
+     * grants over clinic templates, so it is the same flag; splitting it would
+     * invent a distinction the owner never made.
+     */
+    case 'publish_clinical_phrase': {
+      requireRole(session, 'doctor')
+      if (!session.canPublishClinicalTemplates) {
+        throw new Error('You are not authorized to change the clinic-wide clinical vocabulary.')
+      }
+      const kind = requireChoice(
+        payload,
+        'kind',
+        ['complaint', 'examination', 'diagnosis', 'instruction', 'advice'] as const,
+      )
+      const displayText = value(payload, 'text')
+      const normalized = normalizedPhrase(displayText)
+      if (!normalized) throw new Error('A clinical phrase needs some wording.')
+      let restored = false
+
+      await transaction(async () => {
+        const existing = (await db.prepare(`select id,display_text,active from clinical_phrases
+          where kind=? and normalized_text=? for update`).get(kind, normalized)) as {
+            id: string; display_text: string; active: number
+          } | undefined
+
+        if (existing && Number(existing.active) === 1) {
+          throw new Error(`"${existing.display_text}" is already in the clinic list.`)
+        }
+        if (existing) {
+          // Approved wording is immutable, so a withdrawn phrase comes back as
+          // itself rather than as this doctor's re-typing of it.
+          restored = true
+          await db.prepare('update clinical_phrases set active=1,retired_at=null where id=?')
+            .run(existing.id)
+          await audit(session.staffId, 'clinical_phrase.restored', 'clinical_phrase', existing.id, `Restored ${kind} phrase ${existing.display_text}`)
+          return
+        }
+
+        const id = randomUUID()
+        await db.prepare(`insert into clinical_phrases
+          (id,kind,display_text,normalized_text,source,active,approved_by,approved_at)
+          values (?,?,?,?,'clinic',1,?,now())`).run(
+            id, kind, displayText.trim(), normalized, session.staffId,
+          )
+        await audit(session.staffId, 'clinical_phrase.published', 'clinical_phrase', id, `Published ${kind} phrase ${displayText.trim()}`)
+      })
+
+      return {
+        message: restored
+          ? 'That wording is back in the clinic list.'
+          : 'Added to the clinic list.',
+      }
+    }
+
+    case 'retire_clinical_phrase': {
+      requireRole(session, 'doctor')
+      if (!session.canPublishClinicalTemplates) {
+        throw new Error('You are not authorized to change the clinic-wide clinical vocabulary.')
+      }
+      const kind = requireChoice(
+        payload,
+        'kind',
+        ['complaint', 'examination', 'diagnosis', 'instruction', 'advice'] as const,
+      )
+      const normalized = normalizedPhrase(value(payload, 'text'))
+
+      await transaction(async () => {
+        const existing = (await db.prepare(`select id,display_text from clinical_phrases
+          where kind=? and normalized_text=? and active=1 for update`).get(kind, normalized)) as {
+            id: string; display_text: string
+          } | undefined
+        if (!existing) throw new Error('That phrase is already withdrawn or is not in the clinic list.')
+        await db.prepare('update clinical_phrases set active=0,retired_at=now() where id=?')
+          .run(existing.id)
+        await audit(session.staffId, 'clinical_phrase.retired', 'clinical_phrase', existing.id, `Withdrew ${kind} phrase ${existing.display_text}`)
+      })
+
+      return { message: 'Withdrawn from the clinic list. Visits that used it are unchanged.' }
+    }
+
+    case 'save_clinical_template': {
+      requireRole(session, 'doctor')
+      const scope = requireChoice(payload, 'scope', ['personal', 'clinic'] as const, 'personal')
+      if (scope === 'clinic' && !session.canPublishClinicalTemplates) {
+        throw new Error('You are not authorized to publish clinic-wide clinical templates.')
+      }
+      const title = value(payload, 'title')
+      const fields = clinicalFields(payload, false)
+      const items = await structuredPrescriptionItems(payload)
+      const previousId = optional(payload, 'templateId')
+      const followUpRaw = optional(payload, 'followUpAfterDays')
+      const followUpAfterDays = followUpRaw === '' ? undefined : Number(followUpRaw)
+      if (followUpAfterDays !== undefined && (!Number.isInteger(followUpAfterDays) || followUpAfterDays < 0)) {
+        throw new Error('followUpAfterDays must be a whole number of days.')
+      }
+      let templateId = randomUUID()
+
+      await transaction(async () => {
+        let seriesId: string = randomUUID()
+        let version = 1
+        let previous: { id: string; series_id: string; version: number; scope: string; owner_doctor_id: string } | undefined
+        if (previousId) {
+          previous = (await db.prepare(`select id,series_id,version,scope,owner_doctor_id
+            from consultation_templates where id=? and retired_at is null for update`).get(previousId)) as typeof previous
+          if (!previous) throw new Error('That template version is no longer current.')
+          const mayEdit = previous.owner_doctor_id === session.staffId ||
+            (previous.scope === 'clinic' && session.canPublishClinicalTemplates)
+          if (!mayEdit) throw new Error('Only the owning doctor may edit this personal template.')
+          seriesId = previous.series_id
+          version = Number(previous.version) + 1
+          await db.prepare('update consultation_templates set retired_at=now() where id=?').run(previous.id)
+        }
+
+        templateId = randomUUID()
+        await db.prepare(`insert into consultation_templates
+          (id,series_id,version,scope,owner_doctor_id,title,complaint,
+           complaint_duration_value,complaint_duration_unit,examination,diagnosis,
+           diagnosis_status,aetiology,aetiology_certainty,notes,advice,
+           follow_up_after_days,created_by,approved_by,created_at,supersedes_id)
+          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,now(),?)`).run(
+            templateId, seriesId, version, scope, session.staffId, title, fields.complaint,
+            fields.complaintDurationValue ?? null, fields.complaintDurationUnit ?? null,
+            fields.examination, fields.diagnosis, fields.diagnosisStatus, fields.aetiology,
+            fields.aetiologyCertainty, fields.notes, fields.advice,
+            followUpAfterDays ?? null, session.staffId,
+            scope === 'clinic' ? session.staffId : null, previous?.id ?? null,
+          )
+        await insertTemplateLines(templateId, items)
+        await audit(session.staffId, 'clinical_template.saved', 'consultation_template', templateId, `${scope === 'clinic' ? 'Published clinic' : 'Saved personal'} template ${title} v${version}`)
+      })
+      return { message: scope === 'clinic' ? 'Clinic template published.' : 'Personal template saved.', data: { templateId } }
+    }
+
+    case 'retire_clinical_template': {
+      requireRole(session, 'doctor')
+      const templateId = value(payload, 'templateId')
+      await transaction(async () => {
+        const template = (await db.prepare(`select id,scope,owner_doctor_id,title
+          from consultation_templates where id=? and retired_at is null for update`).get(templateId)) as {
+            id: string; scope: string; owner_doctor_id: string; title: string
+          } | undefined
+        if (!template) throw new Error('That template is already retired or does not exist.')
+        const mayRetire = template.owner_doctor_id === session.staffId ||
+          (template.scope === 'clinic' && session.canPublishClinicalTemplates)
+        if (!mayRetire) throw new Error('Only the owning doctor may retire this personal template.')
+        await db.prepare('update consultation_templates set retired_at=now() where id=?').run(templateId)
+        await audit(session.staffId, 'clinical_template.retired', 'consultation_template', templateId, `Retired template ${template.title}`)
+      })
+      return { message: 'Template retired. Its history is kept.' }
+    }
+
+    case 'save_patient_clinical_profile': {
+      requireRole(session, 'doctor')
+      const patientId = value(payload, 'patientId')
+      const allergyStatus = requireChoice(
+        payload,
+        'allergyStatus',
+        ['not_recorded', 'no_known', 'known'] as const,
+        'not_recorded',
+      )
+      const allergyNotes = optional(payload, 'allergyNotes')
+      if (allergyStatus === 'known' && !allergyNotes) {
+        throw new Error('Record the known allergy before saving.')
+      }
+      await transaction(async () => {
+        await db.prepare(`insert into patient_clinical_profiles
+          (patient_id,allergy_status,allergy_notes,clinical_flags,updated_by,updated_at)
+          values (?,?,?,?,?,now())
+          on conflict (patient_id) do update
+          set allergy_status=excluded.allergy_status,
+              allergy_notes=excluded.allergy_notes,
+              clinical_flags=excluded.clinical_flags,
+              updated_by=excluded.updated_by,
+              updated_at=excluded.updated_at`).run(
+            patientId, allergyStatus, allergyNotes, optional(payload, 'clinicalFlags'), session.staffId,
+          )
+        await audit(session.staffId, 'patient.clinical_profile', 'patient', patientId, 'Updated allergy and clinical flags')
+      })
+      return { message: 'Patient alerts updated.' }
+    }
+
+    case 'sign_consultation':
+    case 'save_consultation': {
+      requireRole(session, 'doctor')
+      return completeConsultation(session, payload)
+    }
+
+    case 'record_prescription_print': {
+      requireRole(session, 'doctor')
+      const prescriptionId = value(payload, 'prescriptionId')
+      let copyNumber = 0
+      await transaction(async () => {
+        const rx = await db.prepare('select id,prescription_number from prescriptions where id=? for update')
+          .get(prescriptionId) as { id: string; prescription_number: string } | undefined
+        if (!rx) throw new Error('That signed prescription was not found.')
+        const count = await db.prepare('select count(*)::int as count from prescription_prints where prescription_id=?')
+          .get(prescriptionId) as { count: number } | undefined
+        copyNumber = Number(count?.count ?? 0) + 1
+        await db.prepare(`insert into prescription_prints
+          (id,prescription_id,printed_by,printed_at,copy_number) values (?,?,?,now(),?)`).run(
+            randomUUID(), prescriptionId, session.staffId, copyNumber,
+          )
+        await audit(session.staffId, 'prescription.printed', 'prescription', prescriptionId, `${copyNumber === 1 ? 'Printed' : 'Reprinted'} ${rx.prescription_number}, copy ${copyNumber}`)
+      })
+      return { message: copyNumber === 1 ? 'Prescription ready to print.' : `Reprint copy ${copyNumber} recorded.`, data: { copyNumber } }
+    }
+
+    case 'complete_follow_up': {
+      requireRole(session, 'doctor')
+      const followUpId = value(payload, 'followUpId')
+      const status = requireChoice(payload, 'status', ['completed', 'cancelled'] as const)
+      await transaction(async () => {
+        const result = status === 'completed'
+          ? await db.prepare(`update follow_ups set status='completed',completed_at=now(),completed_by=?
+              where id=? and doctor_id=? and status='open'`).run(session.staffId, followUpId, session.staffId)
+          : await db.prepare(`update follow_ups set status='cancelled',cancelled_at=now(),cancelled_by=?
+              where id=? and doctor_id=? and status='open'`).run(session.staffId, followUpId, session.staffId)
+        if (result.changes !== 1) throw new Error('That follow-up is already closed or belongs to another doctor.')
+        await audit(session.staffId, `follow_up.${status}`, 'follow_up', followUpId, `${status} follow-up`)
+      })
+      return { message: status === 'completed' ? 'Follow-up completed.' : 'Follow-up cancelled.' }
     }
 
     case 'pay_bill': {
@@ -565,13 +1130,152 @@ export async function runCommand(session: SessionView, action: string, payload: 
       const bedId = value(payload, 'bedId')
       const status = requireChoice(payload, 'status', ['available', 'occupied', 'cleaning', 'out_of_service'] as const)
       const patientId = status === 'occupied' ? value(payload, 'patientId') : null
+      const nextCheckAt = optional(payload, 'nextCheckAt')
+        ? await clinicInstant(value(payload, 'nextCheckAt'))
+        : null
       await transaction(async () => {
-        await db.prepare(`update beds set status=?,patient_id=?,admitted_at=?,notes=? where id=?`).run(
-          status, patientId, status === 'occupied' ? isoNow() : null, optional(payload, 'notes'), bedId,
-        )
+        const before = await db.prepare(`select status,patient_id,admitted_at from beds where id=? for update`)
+          .get(bedId) as { status: string; patient_id: string | null; admitted_at: string | null } | undefined
+        if (!before) throw new Error('That observation bed was not found.')
+        const newAdmission = status === 'occupied' &&
+          (before.status !== 'occupied' || before.patient_id !== patientId)
+        if (before.status === 'occupied' && status !== 'occupied' && !booleanValue(payload, 'confirmed')) {
+          throw new Error('Confirm discharge or transfer before clearing an occupied bed.')
+        }
+        await db.prepare(`update beds set status=?,patient_id=?,admitted_at=?,notes=?,next_check_at=?,
+          doctor_instructions=case when ? then '' else doctor_instructions end,
+          handoff_requested_at=case when ? then null else handoff_requested_at end,
+          handoff_requested_by=case when ? then null else handoff_requested_by end,
+          handoff_resolved_at=case when ? then null else handoff_resolved_at end,
+          handoff_resolved_by=case when ? then null else handoff_resolved_by end
+          where id=?`).run(
+            status, patientId,
+            status === 'occupied' ? (newAdmission ? isoNow() : before.admitted_at) : null,
+            optional(payload, 'notes'), status === 'occupied' ? nextCheckAt : null,
+            newAdmission, newAdmission, newAdmission, newAdmission, newAdmission, bedId,
+          )
+        if (newAdmission) {
+          await db.prepare(`insert into observation_events
+            (id,bed_id,patient_id,event_type,note,next_check_at,actor_id,created_at)
+            values (?,?,?,'admitted',?,?,?,now())`).run(
+              randomUUID(), bedId, patientId, optional(payload, 'notes'), nextCheckAt,
+              session.staffId,
+            )
+        }
         await audit(session.staffId, 'bed.updated', 'bed', bedId, `Bed marked ${status}`)
       })
       return { message: 'Bed board updated.' }
+    }
+
+    case 'record_observation': {
+      requireRole(session, 'admin', 'nurse')
+      const bedId = value(payload, 'bedId')
+      const note = optional(payload, 'note')
+      const nextCheckAt = optional(payload, 'nextCheckAt')
+        ? await clinicInstant(value(payload, 'nextCheckAt'))
+        : null
+      if (!note && !nextCheckAt) throw new Error('Add an observation note or a next check time.')
+      await transaction(async () => {
+        const bed = await db.prepare(`select patient_id from beds
+          where id=? and status='occupied' for update`).get(bedId) as { patient_id: string } | undefined
+        if (!bed) throw new Error('That bed is not occupied.')
+        await db.prepare(`update beds set notes=case when ?='' then notes else ? end,
+          next_check_at=coalesce(?,next_check_at) where id=?`).run(note, note, nextCheckAt, bedId)
+        await db.prepare(`insert into observation_events
+          (id,bed_id,patient_id,event_type,note,next_check_at,actor_id,created_at)
+          values (?,?,?,?,?,?,?,now())`).run(
+            randomUUID(), bedId, bed.patient_id, nextCheckAt && !note ? 'check_due' : 'note',
+            note, nextCheckAt, session.staffId,
+          )
+        await audit(session.staffId, 'observation.recorded', 'bed', bedId, 'Recorded observation and next check')
+      })
+      return { message: 'Observation saved.' }
+    }
+
+    case 'set_observation_instructions': {
+      requireRole(session, 'doctor')
+      const bedId = value(payload, 'bedId')
+      const instructions = value(payload, 'instructions')
+      await transaction(async () => {
+        const bed = await db.prepare(`select patient_id from beds
+          where id=? and status='occupied' for update`).get(bedId) as { patient_id: string } | undefined
+        if (!bed) throw new Error('That bed is not occupied.')
+        await db.prepare('update beds set doctor_instructions=? where id=?').run(instructions, bedId)
+        await db.prepare(`insert into observation_events
+          (id,bed_id,patient_id,event_type,note,actor_id,created_at)
+          values (?,?,?,'doctor_instruction',?,?,now())`).run(
+            randomUUID(), bedId, bed.patient_id, instructions, session.staffId,
+          )
+        await audit(session.staffId, 'observation.instructions', 'bed', bedId, 'Updated doctor instructions')
+      })
+      return { message: 'Doctor instructions saved.' }
+    }
+
+    case 'request_observation_handoff': {
+      requireRole(session, 'admin', 'nurse')
+      const bedId = value(payload, 'bedId')
+      const note = optional(payload, 'note')
+      await transaction(async () => {
+        const bed = await db.prepare(`select patient_id from beds
+          where id=? and status='occupied' for update`).get(bedId) as { patient_id: string } | undefined
+        if (!bed) throw new Error('That bed is not occupied.')
+        const now = isoNow()
+        await db.prepare(`update beds set handoff_requested_at=?,handoff_requested_by=?,
+          handoff_resolved_at=null,handoff_resolved_by=null where id=?`).run(
+            now, session.staffId, bedId,
+          )
+        await db.prepare(`insert into observation_events
+          (id,bed_id,patient_id,event_type,note,actor_id,created_at)
+          values (?,?,?,'handoff_requested',?,?,now())`).run(
+            randomUUID(), bedId, bed.patient_id, note, session.staffId,
+          )
+        await audit(session.staffId, 'observation.handoff_requested', 'bed', bedId, 'Requested doctor handoff')
+      })
+      return { message: 'Doctor handoff requested.' }
+    }
+
+    case 'resolve_observation_handoff': {
+      requireRole(session, 'doctor')
+      const bedId = value(payload, 'bedId')
+      await transaction(async () => {
+        const bed = await db.prepare(`select patient_id from beds
+          where id=? and status='occupied' and handoff_requested_at is not null
+            and handoff_resolved_at is null for update`).get(bedId) as { patient_id: string } | undefined
+        if (!bed) throw new Error('There is no open handoff for that bed.')
+        await db.prepare(`update beds set handoff_resolved_at=now(),handoff_resolved_by=?
+          where id=?`).run(session.staffId, bedId)
+        await db.prepare(`insert into observation_events
+          (id,bed_id,patient_id,event_type,note,actor_id,created_at)
+          values (?,?,?,'handoff_resolved',?,?,now())`).run(
+            randomUUID(), bedId, bed.patient_id, optional(payload, 'note'), session.staffId,
+          )
+        await audit(session.staffId, 'observation.handoff_resolved', 'bed', bedId, 'Doctor accepted observation handoff')
+      })
+      return { message: 'Handoff acknowledged.' }
+    }
+
+    case 'close_observation': {
+      requireRole(session, 'admin', 'nurse')
+      if (!booleanValue(payload, 'confirmed')) throw new Error('Confirm before closing observation.')
+      const bedId = value(payload, 'bedId')
+      const outcome = requireChoice(payload, 'outcome', ['discharged', 'transferred'] as const)
+      const note = value(payload, 'note')
+      await transaction(async () => {
+        const bed = await db.prepare(`select patient_id from beds
+          where id=? and status='occupied' for update`).get(bedId) as { patient_id: string } | undefined
+        if (!bed) throw new Error('That bed is not occupied.')
+        await db.prepare(`insert into observation_events
+          (id,bed_id,patient_id,event_type,note,actor_id,created_at)
+          values (?,?,?,?,?,?,now())`).run(
+            randomUUID(), bedId, bed.patient_id, outcome, note, session.staffId,
+          )
+        await db.prepare(`update beds set status='cleaning',patient_id=null,admitted_at=null,
+          notes='',next_check_at=null,doctor_instructions='',handoff_requested_at=null,
+          handoff_requested_by=null,handoff_resolved_at=null,handoff_resolved_by=null
+          where id=?`).run(bedId)
+        await audit(session.staffId, `observation.${outcome}`, 'bed', bedId, `${outcome} patient after confirmation`)
+      })
+      return { message: outcome === 'discharged' ? 'Patient discharged; bed marked for cleaning.' : 'Transfer recorded; bed marked for cleaning.' }
     }
 
     case 'create_staff': {
@@ -581,6 +1285,8 @@ export async function runCommand(session: SessionView, action: string, payload: 
         ? payload.roles.filter((role): role is Role => ['admin', 'doctor', 'nurse', 'pharmacy'].includes(String(role)))
         : []
       if (roles.length === 0) throw new Error('Choose at least one role.')
+      const canPublishClinicalTemplates = roles.includes('doctor') &&
+        booleanValue(payload, 'canPublishClinicalTemplates')
       const secret = await hashPassword(requirePin(payload, 'pin'))
       await transaction(async () => {
         // pin_format is named rather than left to the column default. The
@@ -588,10 +1294,11 @@ export async function runCommand(session: SessionView, action: string, payload: 
         // statement and its length recorded by another is exactly the pair
         // that drifts — and drifting here means somebody cannot sign in.
         await db.prepare(`insert into staff
-          (id,name,username,phone,roles_json,pin_hash,pin_salt,pin_format,active,created_at)
-          values (?,?,?,?,?,?,?,'four',1,?)`).run(
+          (id,name,username,phone,roles_json,pin_hash,pin_salt,pin_format,
+           can_publish_clinical_templates,active,created_at)
+          values (?,?,?,?,?,?,?,'four',?,1,?)`).run(
             id, value(payload, 'name'), value(payload, 'username').toLowerCase(), optional(payload, 'phone'),
-            JSON.stringify(roles), secret.hash, secret.salt, isoNow(),
+            JSON.stringify(roles), secret.hash, secret.salt, canPublishClinicalTemplates ? 1 : 0, isoNow(),
           )
         await audit(session.staffId, 'staff.created', 'staff', id, `Added ${value(payload, 'name')} as ${roles.join(', ')}`)
       })
@@ -1222,6 +1929,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
           )
         : []
       if (roles.length === 0) throw new Error('Choose at least one role.')
+      let canPublishClinicalTemplates = false
 
       // The clinic must keep somebody who can add staff, reset a PIN and edit
       // the settings. Signing that away from your own account is a locked door
@@ -1236,9 +1944,17 @@ export async function runCommand(session: SessionView, action: string, payload: 
 
       await transaction(async () => {
         const current = (await db
-          .prepare('select roles_json from staff where id=?')
-          .get(staffId)) as { roles_json: string } | undefined
+          .prepare('select roles_json,can_publish_clinical_templates from staff where id=?')
+          .get(staffId)) as { roles_json: string; can_publish_clinical_templates: number } | undefined
         if (!current) throw new Error('That staff member was not found.')
+
+        // Older clients do not send this Slice 2 capability yet. Preserve an
+        // existing authorization unless the field was deliberately supplied;
+        // removing the doctor role still revokes it.
+        canPublishClinicalTemplates = roles.includes('doctor') &&
+          (payload.canPublishClinicalTemplates === undefined
+            ? Boolean(Number(current.can_publish_clinical_templates))
+            : booleanValue(payload, 'canPublishClinicalTemplates'))
 
         const clash = await db
           .prepare('select id from staff where username=? and id<>?')
@@ -1246,11 +1962,16 @@ export async function runCommand(session: SessionView, action: string, payload: 
         if (clash) throw new Error(`The username @${username} is already taken.`)
 
         const before = (JSON.parse(String(current.roles_json)) as string[]).slice().sort().join(',')
-        rolesChanged = before !== roles.slice().sort().join(',')
+        rolesChanged = before !== roles.slice().sort().join(',') ||
+          Boolean(Number(current.can_publish_clinical_templates)) !== canPublishClinicalTemplates
 
         await db
-          .prepare('update staff set name=?,username=?,phone=?,roles_json=? where id=?')
-          .run(name, username, optional(payload, 'phone'), JSON.stringify(roles), staffId)
+          .prepare(`update staff set name=?,username=?,phone=?,roles_json=?,
+            can_publish_clinical_templates=? where id=?`)
+          .run(
+            name, username, optional(payload, 'phone'), JSON.stringify(roles),
+            canPublishClinicalTemplates ? 1 : 0, staffId,
+          )
 
         // A session carries what the person may do. Correcting a phone number
         // should not sign anyone out, but a demotion that leaves them holding
@@ -1330,10 +2051,12 @@ export async function runCommand(session: SessionView, action: string, payload: 
       if (targetStock < reorderLevel) throw new Error('Target stock must be at least the reorder level.')
       await transaction(async () => {
         await db.prepare(`insert into medicines
-          (id,code,name,strength,dosage_form,unit,barcode,sale_class,schedule,reorder_level,target_stock,preferred_supplier_id,active,created_at)
-          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-            id, value(payload, 'code').toUpperCase(), value(payload, 'name'), optional(payload, 'strength'),
-            optional(payload, 'dosageForm'), value(payload, 'unit'), optional(payload, 'barcode'),
+          (id,code,name,generic_name,strength,dosage_form,route,unit,barcode,sale_class,schedule,
+           reorder_level,target_stock,preferred_supplier_id,active,created_at)
+          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+            id, value(payload, 'code').toUpperCase(), value(payload, 'name'), optional(payload, 'genericName'),
+            optional(payload, 'strength'), optional(payload, 'dosageForm'), optional(payload, 'route'),
+            value(payload, 'unit'), optional(payload, 'barcode'),
             requireChoice(payload, 'saleClass', ['otc', 'prescription', 'restricted', 'unknown'] as const),
             // Defaults to 'unset' rather than guessing from saleClass. The
             // register would rather report a gap than invent a classification.

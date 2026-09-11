@@ -1,5 +1,6 @@
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
-import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
+import { QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
+import { ConsultationPanel } from './consultation-workspace'
 import type { ActionRunner } from './clinic-context'
 import { DayBookPanel } from './day-book-panel'
 import { ExpiringPanel } from './expiring-panel'
@@ -87,6 +88,6 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
     case 'audit':
       return <AuditPanel data={data} />
     default:
-      return <OverviewPanel data={data} />
+      return <OverviewPanel data={data} run={run} />
   }
 }
