@@ -9,6 +9,7 @@ import type {
   PackageVersionView,
   PrescriptionItemView,
   PrescriptionView,
+  Role,
 } from '@/lib/types'
 import { useBusy, type ActionRunner } from './clinic-context'
 import { plural } from './formulary-workspace'
@@ -135,14 +136,31 @@ function knownPatients(data: ClinicSnapshot): Array<{ id: string; name: string }
 
 type Station = 'prescriptions' | 'sale' | 'checkout'
 
-const STATIONS: Array<{ id: Station; label: string }> = [
-  { id: 'prescriptions', label: 'Hand over a prescription' },
-  { id: 'sale', label: 'Counter sale' },
-  { id: 'checkout', label: 'Take payment' },
+/**
+ * The three stations, and who may work each one.
+ *
+ * These mirror the command gates in `_shared/counter.ts` exactly, and that is
+ * the only correct relationship between them. A station offered to somebody
+ * the server will refuse teaches that person to press a button that cannot
+ * work; a station withheld from somebody the server would allow is a feature
+ * nobody can find. Neither is security — the refusal at the command is — but
+ * both are lies about what the clinic permits.
+ *
+ * Policy register item 17: medicine over the counter is a pharmacist's,
+ * prescription or not. Money is admin's and pharmacy's.
+ */
+const STATIONS: Array<{ id: Station; label: string; roles: Role[] }> = [
+  { id: 'prescriptions', label: 'Hand over a prescription', roles: ['pharmacy'] },
+  { id: 'sale', label: 'Counter sale', roles: ['pharmacy'] },
+  { id: 'checkout', label: 'Take payment', roles: ['admin', 'pharmacy'] },
 ]
 
+const may = (roles: Role[], allowed: Role[]) => roles.some((role) => allowed.includes(role))
+
 export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
-  const [station, setStation] = useState<Station>('prescriptions')
+  const roles = data.session.roles
+  const stations = useMemo(() => STATIONS.filter((entry) => may(roles, entry.roles)), [roles])
+  const [station, setStation] = useState<Station>(() => stations[0]?.id ?? 'checkout')
   const [invoiceId, setInvoiceId] = useState('')
 
   const queue = useMemo(
@@ -181,7 +199,7 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
         className="flex flex-wrap gap-2"
         data-print="hide"
       >
-        {STATIONS.map((entry) => {
+        {stations.map((entry) => {
           const open = station === entry.id
           return (
             <button
@@ -272,7 +290,9 @@ function PrescriptionStation({
   const [note, setNote] = useState('')
   const [done, setDone] = useState<HandOver | null>(null)
 
-  const maySupply = data.session.roles.some((role) => role === 'admin' || role === 'pharmacy')
+  // The same list `dispense_rx` enforces. An administrator reaching this
+  // surface some other way sees the refusal rather than a live button.
+  const maySupply = may(data.session.roles, ['pharmacy'])
   const selected = queue.find((rx) => rx.id === openId) ?? queue[0]
   const today = clinicToday()
   const finishedToday = data.prescriptions.filter(
@@ -347,7 +367,7 @@ function PrescriptionStation({
     : blocking.length > 0
       ? `${blocking[0].medicineName} must be resolved by a doctor before anything on this prescription is handed over.`
       : !maySupply
-        ? 'Only the pharmacy counter or an admin may hand medicine over.'
+        ? 'Medicine is handed over by the pharmacy. An administrator can review a hand-over, and void, refund or reverse it, but cannot make one.'
         : moving.length === 0
           ? 'Enter a quantity against at least one line.'
           : partial
@@ -934,8 +954,14 @@ function SaleStation({
   // somebody for the balance to belong to. An anonymous sale is paid in full.
   const payingNothing = partsPayload(parts).length === 0
 
-  const problem =
-    lines.length === 0
+  // `otc_sale` is gated to pharmacy. This station is not offered to anybody
+  // else, so reaching here means arriving some other way; say so rather than
+  // let the basket fill up against a command that will refuse it.
+  const maySell = may(data.session.roles, ['pharmacy'])
+
+  const problem = !maySell
+    ? 'A counter sale is made by the pharmacy. An administrator can review a sale, and refund or reverse it, but cannot make one.'
+    : lines.length === 0
       ? 'Add at least one medicine to the sale.'
       : priced.some((row) => row.quantity <= 0)
         ? 'Every line needs a quantity above zero.'

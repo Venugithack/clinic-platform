@@ -86,14 +86,25 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count' },
     { id: 'reports', label: 'Reports', eyebrow: 'Ask the record' },
   ],
+  /*
+   * No Billing and no Day book.
+   *
+   * The nurse held both because the retired application let a nurse take
+   * payment. Policy register item 17 settled that on 12 September 2026: the
+   * payment counter is admin and pharmacy. `take_payment` refuses a nurse and
+   * the snapshot sends a nurse no invoices, no patient balances and no till,
+   * so these two stations would have drawn empty screens over controls that
+   * could only fail. Reports stays — a nurse still reads follow-ups.
+   *
+   * A nurse who also covers the counter holds the pharmacy role too, and the
+   * rail is the union of both, so nothing is taken from that person.
+   */
   nurse: [
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
     { id: 'queue', label: 'Queue', eyebrow: "Today's flow" },
     { id: 'vitals', label: 'Vitals', eyebrow: 'Nursing station' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
-    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
-    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
     { id: 'reports', label: 'Reports', eyebrow: 'Ask the record' },
   ],
   pharmacy: [

@@ -1979,17 +1979,18 @@ cases in `command`. Three reasons, in order of how much they matter:
    | `dispensing` | ● | | | ● |
    | `consultation_fees` | ● | | | |
    | `sales` | ● | | | ● |
-   | `payments` | ● | | ● | ● |
-   | `patient_dues` | ● | | ● | ● |
+   | `payments` | ● | | | ● |
+   | `patient_dues` | ● | | | ● |
    | `reversals` | ● | | | |
    | `follow_ups` | ● | ● | ● | |
    | `image_access` | ● | | | |
 
-   `payments` and `patient_dues` name the nurse because `take_payment` does:
-   the counter's role gate is `admin, nurse, pharmacy` and has been since
-   before this programme. A report that showed less than the command allows
-   would be theatre; one that showed more would be a leak. They match
-   deliberately, and §11.5 records the question that leaves open.
+   `payments` and `patient_dues` name exactly the roles `take_payment` names,
+   and that is the rule the whole column follows: a report that shows less than
+   the command allows is theatre, and one that shows more is a leak. Both
+   originally named the nurse, because the counter's gate did. The owner
+   settled that on 12 September 2026 — see §11.5 — and both ends moved
+   together.
 
    `GET /reports?report=index` returns only the reports the caller may run, so
    the UI builds its menu from the server's answer rather than from a list in
@@ -2071,14 +2072,102 @@ held. What it did produce:
   automating: it found none missing, but it is the check that stops a later
   slice adding a column that makes a delete scan a ledger.
 
-### 11.5 What Slice 6 leaves open
+### 11.5 What Slice 6 left open, and how it closed
 
-- **The nurse at the counter.** Policy item 17 says the fee is collected "at
-  the pharmacy/payment counter" and does not name a role. The code lets a nurse
-  do it, inherited rather than decided, and this slice preserved that rather
-  than narrowing a capability the clinic may be using. It is a one-line change
-  in either direction once the owner says which.
+- **The nurse at the counter — answered.** Slice 6 shipped with one question
+  outstanding: policy item 17 said the fee was collected "at the
+  pharmacy/payment counter" and named no role, while the code let a nurse do
+  it, inherited from the retired application rather than decided. The owner
+  settled it on 12 September 2026, and §12 is what changed.
 - **Everything in `ROLLOUT.md` §7**, which is the honest list: no real
   supplier document, no real package, no classified formulary, no printer, no
   tablet on clinic Wi-Fi, no Storage bucket, no CI run, and a production
   database role nobody here has read.
+
+---
+
+## 12. The counter authorization correction
+
+Policy register item 17, extended by the owner on 12 September 2026 and now
+holding the full matrix rather than one sentence about the doctor. No schema
+changed; this is a correction to who may call what.
+
+### 12.1 What moved
+
+| Command | Was | Is |
+|---|---|---|
+| `take_payment` | admin, nurse, pharmacy | **admin, pharmacy** |
+| `dispense_rx` | admin, pharmacy | **pharmacy** |
+| `otc_sale` | admin, pharmacy | **pharmacy** |
+| `record_unknown_barcode` | admin, pharmacy, nurse | **admin, pharmacy** |
+| `payments` report | admin, nurse, pharmacy | **admin, pharmacy** |
+| `patient_dues` report | admin, nurse, pharmacy | **admin, pharmacy** |
+| snapshot `cashDrawer` | admin, nurse, pharmacy | **admin, pharmacy** |
+
+Unchanged, and worth saying so: `otc_return` stays admin and pharmacy, and
+`void_invoice`, `refund_payment`, `reverse_payment` and `reverse_dispense` stay
+admin alone. Every one of those is a correction to something a pharmacist did,
+which is exactly the division the owner drew.
+
+### 12.2 The two halves of the rule
+
+**Medicine handover always requires a pharmacist.** An administrator — even
+the owner, when signed in without the pharmacy role — cannot dispense a
+prescription and cannot start a counter sale. What an administrator does is
+review and correct: void, refund, reverse, authorise a return. The asymmetry is
+deliberate and it is the interesting part of this decision. Making a hand-over
+needs a pharmacist's judgement about a physical pack; undoing one needs
+authority over the record, which is the administrator's.
+
+**A nurse does not touch money.** The capability was never decided, only
+inherited. It is gone from the command, from the snapshot, from both money
+reports, and from the rail — the nurse's Billing and Day book stations are
+withdrawn, because with no invoices, no balances and no till in the snapshot
+they would have drawn empty screens over controls that could only fail.
+
+A person holding two roles holds the union, so the pharmacist who administers
+the clinic, or the nurse who covers the counter on a day off, loses nothing.
+The fixtures carry both of those people for exactly this reason.
+
+### 12.3 Pending is an outcome, not a failure
+
+If no authorised counter staff member is available, the balance stays pending.
+Nothing routes around that: there is no break-glass, no "only person in the
+building" path, and no role that acquires the capability by circumstance. The
+charge is still owed and still collectable tomorrow, which is what
+`invoice_balances` already models. A test asserts precisely this — a clinic
+staffed only by a doctor and a nurse ends the day with an open balance that
+neither of them can close.
+
+### 12.4 The screen and the server, checked against each other
+
+`components/navigation.ts` and `components/checkout-workspace.tsx` mirror the
+command gates: the counter's station list is filtered by role, so a pharmacist
+is offered all three stations and an administrator is offered Take payment
+alone. That is mirroring, not enforcement — the refusal is at the command, and
+`requireRole` runs before the command reads a parameter.
+
+Both ends are tested, and separately, because a capability matrix checked only
+against itself proves nothing:
+
+- `tests/characterization/counter-authorization.test.mjs` calls each command
+  with a session of each role and asserts what happens, including that a
+  refused hand-over moved no stock and left no empty header behind.
+- `tests/browser/slice4-counter.test.mjs` opens the counter in a real browser
+  as a pharmacist and as an admin-only manager, and asserts the stations
+  offered are exactly the ones that role's session may use.
+
+### 12.5 One defect found and deliberately not fixed
+
+Writing the administrator-corrections test surfaced an edge in `void_invoice`.
+It refuses a bill that has been paid against — correctly, since voiding it
+would lose the money — and it makes that check by parsing `paid` as an amount
+in rupees. A bill whose payment was reversed after a partial refund has a
+*negative* `paid`, which the ledger models on purpose and which `parseMoney`
+rejects. Voiding such a bill therefore fails with "amount paid cannot be
+negative": true, and not the sentence anybody needs.
+
+It is left alone. What *should* happen when somebody voids a bill the clinic
+owes money against is an accounting decision rather than a coding one, and this
+commit is a role-policy correction. The test documents the state it avoids and
+why.

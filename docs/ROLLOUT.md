@@ -237,6 +237,7 @@ select count(*) from information_schema.role_table_grants
 | A4 and 80 mm printing: margins, long medicine names, page breaks, reprint marking | No printer here. Print layout is checked only in a browser. | Clinic — H.5 |
 | Supabase Storage bucket policy: private, anonymous reads refused, service key not exposed | Staging writes to a directory; it exercises this application's rules, not Supabase's. | Deployment |
 | The deployed database role's attributes | §7.4 of `SCHEMA_AND_TYPES.md`. The application is tested against the pessimistic case — `NOSUPERUSER NOBYPASSRLS` — so it works either way, but what the role actually is has never been read. | Deployment |
+| **That a stored R2 backup can actually be recovered** | Neither the staging drill nor the nightly CI job downloads the encrypted object, decrypts it with the age identity, and restores it — both take a *fresh* dump and restore that. The dump-and-restore path is proven; the archive is not. **Production must not go live before this is done once, by hand.** | Deployment |
 | The browser CI job | Has never run; nothing has been pushed. | First green run |
 | Tablets on clinic Wi-Fi | Not simulated. | Clinic |
 

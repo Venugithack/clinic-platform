@@ -301,7 +301,7 @@ const REPORTS: Record<string, Report> = {
 
   /** Cash, UPI and card, reconciled — the day-close question. */
   payments: {
-    roles: ['admin', 'nurse', 'pharmacy'],
+    roles: ['admin', 'pharmacy'],
     run: async (since) => ({
       byMethod: await all(`
         select y.method, y.kind, count(*)::int as receipts,
@@ -340,7 +340,7 @@ const REPORTS: Record<string, Report> = {
 
   /** Who owes the clinic what, and what they have paid so far. */
   patient_dues: {
-    roles: ['admin', 'nurse', 'pharmacy'],
+    roles: ['admin', 'pharmacy'],
     run: async () => ({
       rows: await all(`
         select b.patient_id, b.name as patient, pt.phone, b.billed, b.paid, b.outstanding,

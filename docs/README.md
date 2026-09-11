@@ -233,8 +233,8 @@ It is rewritten here against what `npm run` actually does today.
 | `npm test` | Four unit tests, no database, no network. |
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
-| `npm run test:db` | **273 tests** over sixteen files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, and the Slice 6 security sweep — plus concurrency tests that open separate connections and race them. |
-| `npm run test:browser` | **35 journeys** through a real Chrome against the built export. `docs/STAGING.md` §5 lists them. |
+| `npm run test:db` | **288 tests** over seventeen files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, and the counter authorization matrix — plus concurrency tests that open separate connections and race them. |
+| `npm run test:browser` | **37 journeys** through a real Chrome against the built export. `docs/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Applies the migrations to a database that already has history, then re-applies the backfills to prove they are idempotent. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
 

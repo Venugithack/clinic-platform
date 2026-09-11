@@ -210,13 +210,23 @@ describe('the reports say what actually happened', () => {
 })
 
 describe('who may read which report', () => {
-  test('money reports are for the desks that handle money', async () => {
-    const refused = await read(clinic.doctor, 'payments', 7)
-    assert.equal(refused.status, 403)
-    assert.match(refused.body.message, /cannot read that report/)
+  test('money reports are for the desks that handle money, which is two of them', async () => {
+    // Policy register item 17. The doctor never collected; the nurse did, and
+    // stopped on 12 September 2026. A report that showed more than
+    // `take_payment` allows would be a way to read the day's takings from a
+    // desk that cannot touch them.
+    for (const staff of [clinic.doctor, clinic.nurse]) {
+      for (const report of ['payments', 'patient_dues']) {
+        const refused = await read(staff, report, 7)
+        assert.equal(refused.status, 403, `${report} must be refused`)
+        assert.match(refused.body.message, /cannot read that report/)
+      }
+    }
 
-    for (const staff of [clinic.admin, clinic.nurse, clinic.pharmacy]) {
-      assert.equal((await read(staff, 'payments', 7)).status, 200)
+    for (const staff of [clinic.admin, clinic.pharmacy]) {
+      for (const report of ['payments', 'patient_dues']) {
+        assert.equal((await read(staff, report, 7)).status, 200)
+      }
     }
   })
 
@@ -236,10 +246,17 @@ describe('who may read which report', () => {
     const pharmacy = await read(clinic.pharmacy, 'index')
     const doctor = await read(clinic.doctor, 'index')
 
+    const nurse = await read(clinic.nurse, 'index')
+
     assert.ok(admin.body.reports.includes('image_access'))
     assert.ok(!pharmacy.body.reports.includes('image_access'))
     assert.ok(!doctor.body.reports.includes('payments'))
     assert.ok(doctor.body.reports.includes('follow_ups'))
+
+    // The nurse keeps a reason to open the screen and loses the money.
+    assert.ok(!nurse.body.reports.includes('payments'))
+    assert.ok(!nurse.body.reports.includes('patient_dues'))
+    assert.ok(nurse.body.reports.includes('follow_ups'))
 
     // And an unsigned request gets nothing at all.
     assert.equal((await edgeGet('reports', '?report=index')).status, 401)

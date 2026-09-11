@@ -147,6 +147,19 @@ describe('what each role is given to work with', () => {
     // Signing a consultation is the doctor's, and the rail says so.
     assert.equal(rail.includes('CONSULT'), false)
     assert.equal(rail.includes('STAFF'), false)
+
+    // Policy register item 17, settled 12 September 2026: a nurse does not
+    // take payment. These two stations were on this rail until then, inherited
+    // from the retired application rather than decided. `take_payment` refuses
+    // a nurse and the snapshot sends a nurse no invoices and no till, so both
+    // would have drawn an empty screen over controls that could only fail.
+    for (const money of ['BILLING', 'DAY BOOK']) {
+      assert.equal(
+        rail.includes(money),
+        false,
+        `${money} is not a nurse's station any more; rail is ${rail.join(', ')}`,
+      )
+    }
   })
 
   test('holding two roles gets both rails, not the smaller one', async () => {

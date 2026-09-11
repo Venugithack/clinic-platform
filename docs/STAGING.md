@@ -187,7 +187,7 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives thirty-five journeys through Chrome.
+starts the functions and the page, and drives thirty-seven journeys through Chrome.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -206,8 +206,8 @@ under 44px at 1024x768 and 768x1024; a real Tab press landing somewhere named
 and visibly marked; every control having an accessible name; a busy state
 while a command is in flight; and a dropped connection reported as words.
 
-Slices 3 to 6 added twenty more, each of them a thing no database test can
-see:
+Slices 3 to 6 added twenty-two more, each of them a thing no database test
+can see:
 
 - **Formulary and receiving** — building a package ladder and verifying it
   against the pack; receiving boxes and strips and reading the base-unit
@@ -222,6 +222,11 @@ see:
   recorded consent; the pharmacy rail carrying no image control at all; and
   an assertion that no durable image URL exists anywhere in the page's markup
   after a photograph has been viewed.
+- **Who may work the counter** — a pharmacist offered all three counter
+  stations, and an administrator who is not a pharmacist offered Take payment
+  and neither of the two that move medicine. The other end of that claim is a
+  database test that calls the commands directly; the two have to agree or one
+  of them is decoration.
 - **Admin and reports** — the administrator's twenty stations divided into the
   five sections with nothing lost; a report about now offering no date range
   and a dated one offering one; a pharmacist's report list with Consultation

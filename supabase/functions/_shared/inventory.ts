@@ -753,7 +753,13 @@ export async function runInventoryCommand(session: SessionView, action: string, 
      * it needs to know it happened and how often.
      */
     case 'record_unknown_barcode': {
-      requireRole(session, 'admin', 'pharmacy', 'nurse')
+      /*
+       * The nurse was here because a scanner is a scanner and it seemed
+       * harmless. It is not nursing work: a nurse has no screen that scans a
+       * pack, and a command nobody's role needs is a command that only widens
+       * what a stolen session can reach. Owner decision, 12 September 2026.
+       */
+      requireRole(session, 'admin', 'pharmacy')
       const code = value(payload, 'code')
       await transaction(async () => {
         await db.prepare(`insert into unmapped_barcodes (code,symbology,first_seen_by)

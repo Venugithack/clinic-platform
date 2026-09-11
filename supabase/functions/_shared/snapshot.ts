@@ -733,7 +733,11 @@ export async function readSnapshot(
   const pharmacyCounter = hasRole(session, 'admin', 'pharmacy') // Counter
   const shelf = hasRole(session, 'admin', 'doctor', 'pharmacy') // Inventory, Expiring, Stock-take
   const supplyNetwork = hasRole(session, 'admin', 'pharmacy') // Suppliers, Orders, Expiring
-  const cashDrawer = hasRole(session, 'admin', 'nurse', 'pharmacy') // Day book, Counter
+  // Day book, Counter. Admin and pharmacy alone: these carry invoices,
+  // patient balances, counter sales and the till, and `take_payment` is
+  // gated to exactly these two. A screen that shows what the command
+  // refuses is a screen that teaches somebody to try.
+  const cashDrawer = hasRole(session, 'admin', 'pharmacy')
 
   // Only the Staff station reads this list, and only an admin has one. The
   // mobile number and the last sign-in are the two columns that made this worth

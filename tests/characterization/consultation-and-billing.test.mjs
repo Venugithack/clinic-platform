@@ -498,16 +498,23 @@ describe('paying a bill', () => {
     )
   })
 
-  test('a doctor cannot collect payment; admin, nurse and pharmacy can', async () => {
-    const first = await unpaidBill()
-    await assert.rejects(
-      as(first.doctor, 'take_payment', {
-        invoiceId: first.invoiceId, parts: [{ method: 'cash', amount: 300 }],
-      }),
-      /role cannot perform/,
-    )
+  test('the payment counter is admin and pharmacy; a doctor and a nurse are refused', async () => {
+    // Policy register item 17, settled 12 September 2026. The nurse was here
+    // until then, inherited from the retired application rather than decided.
+    for (const role of ['doctor', 'nurse']) {
+      const refused = await unpaidBill()
+      await assert.rejects(
+        as(refused[role], 'take_payment', {
+          invoiceId: refused.invoiceId, parts: [{ method: 'cash', amount: 300 }],
+        }),
+        /role cannot perform/,
+        `${role} must not be able to collect`,
+      )
+      // And the refusal left the bill exactly as it was.
+      assert.equal(String(await scalar('select payment_state from jmc.invoice_balances')), 'unpaid')
+    }
 
-    for (const role of ['admin', 'nurse', 'pharmacy']) {
+    for (const role of ['admin', 'pharmacy']) {
       const next = await unpaidBill()
       await as(next[role], 'take_payment', {
         invoiceId: next.invoiceId, parts: [{ method: 'cash', amount: 300 }],

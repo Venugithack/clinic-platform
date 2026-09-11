@@ -408,7 +408,19 @@ export async function runCounterCommand(session: SessionView, action: string, pa
      * re-reads under READ COMMITTED and sees what the first actually left.
      */
     case 'dispense_rx': {
-      requireRole(session, 'admin', 'pharmacy')
+      /*
+       * Pharmacy alone, and not the administrator.
+       *
+       * Owner decision, 12 September 2026, recorded at policy register item
+       * 17: medicine leaving the shelf always requires a pharmacist. An
+       * administrator reviews what happened and can void, refund, reverse and
+       * take part in an authorised return — all of which are corrections to a
+       * hand-over a pharmacist made — but cannot make the hand-over.
+       *
+       * The owner also holds the pharmacy role, so this does not stop the
+       * owner working the counter; it stops the office doing it.
+       */
+      requireRole(session, 'pharmacy')
       const prescriptionId = value(payload, 'prescriptionId')
       const idempotencyKey = optional(payload, 'idempotencyKey') || `dispense:${randomUUID()}`
 
@@ -755,7 +767,14 @@ export async function runCounterCommand(session: SessionView, action: string, pa
      * a verification column rather than only a value.
      */
     case 'otc_sale': {
-      requireRole(session, 'admin', 'pharmacy')
+      /*
+       * Pharmacy alone. Same rule as `dispense_rx` and for the same reason:
+       * this is medicine crossing the counter, and an over-the-counter sale is
+       * the path with no prescription behind it, so the pharmacist's judgement
+       * is the only check there is. `otc_return` keeps the administrator,
+       * because a return is a correction.
+       */
+      requireRole(session, 'pharmacy')
       const idempotencyKey = optional(payload, 'idempotencyKey') || `otc:${randomUUID()}`
       const patientId = optional(payload, 'patientId') || null
 
@@ -1072,7 +1091,16 @@ export async function runCounterCommand(session: SessionView, action: string, pa
      * is refused for an anonymous bill because there is nobody to owe it.
      */
     case 'take_payment': {
-      requireRole(session, 'admin', 'nurse', 'pharmacy')
+      /*
+       * The payment counter: admin and pharmacy, and nobody else.
+       *
+       * The nurse used to be here, inherited from the retired application
+       * rather than decided. Policy register item 17 now names the roles: a
+       * doctor does not collect, and neither does a nurse. If no authorised
+       * counter staff member is on, the balance stays pending — which is a
+       * real outcome the system already models, not an error state.
+       */
+      requireRole(session, 'admin', 'pharmacy')
       const invoiceId = value(payload, 'invoiceId')
       const idempotencyKey = optional(payload, 'idempotencyKey') || `pay:${randomUUID()}`
       const parts = paymentParts(payload)

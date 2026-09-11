@@ -25,8 +25,23 @@ import {
   workText,
 } from './support/clinic-ui.mjs'
 
-/** The owner: doctor and admin, so one account can sign and then collect. */
-const OWNER = { name: 'Dr. Anbarasan Kaliyaperumal', pin: '4819' }
+/*
+ * The pharmacist, and it has to be the pharmacist.
+ *
+ * These journeys used to run as the owner — doctor and admin — because one
+ * account could then sign a prescription and collect against it. Policy
+ * register item 17, settled 12 September 2026, ended that: `dispense_rx` and
+ * `otc_sale` are pharmacy alone, and an administrator who is not also a
+ * pharmacist is no longer offered either station. The fixtures leave a
+ * prescription signed and waiting, so nothing here needs to sign one.
+ *
+ * Six digits: this fixture has not been through a PIN reset yet, which is
+ * itself the compatibility path Slice 1 built.
+ */
+const PHARMACIST = { name: 'Sathyaraj Vadivelan', pin: '268137' }
+
+/** Front desk and the books. Admin alone, with no clinical or pharmacy role. */
+const MANAGER = { name: 'Hemalatha Manoharan', pin: '905283' }
 
 before(() => { launchBrowser() })
 after(() => { closeBrowser() })
@@ -94,11 +109,91 @@ function setField(startsWith, value) {
   if (!done.includes('ok')) throw new Error(`no field starting "${startsWith}" on this screen`)
 }
 
+/** The counter stations this session is actually offered, by their labels. */
+function stationsOffered() {
+  const raw = evaluate(`(() => {
+    const group = document.querySelector('main [role=group]')
+    return JSON.stringify([...(group?.querySelectorAll('button') ?? [])]
+      .map(b => (b.innerText || '').split('\\n')[0].trim().toLowerCase())
+      .filter(Boolean))
+  })()`)
+  try {
+    return JSON.parse(raw.startsWith('"') ? JSON.parse(raw) : raw)
+  } catch {
+    return []
+  }
+}
+
+/*
+ * The screen and the server, asked the same question.
+ *
+ * `tests/characterization/counter-authorization.test.mjs` proves what each
+ * role's session may actually DO, by calling the commands. This proves the
+ * counter offers exactly that and no more. Neither test is security — the
+ * refusal at the command is — but a screen that offers a station the server
+ * will refuse teaches somebody to press a button that cannot work, and one
+ * that withholds a station the server allows hides a feature nobody can find.
+ * Both are lies about what the clinic permits, and they are only catchable by
+ * checking the two ends against each other.
+ */
+describe('the counter offers exactly what the role may do', () => {
+  test('a pharmacist is offered all three stations', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(PHARMACIST.name, PHARMACIST.pin)
+    await goToStation('Counter')
+    await waitFor(mainSays('hand over a prescription'), { what: 'the counter' })
+
+    const offered = stationsOffered()
+    for (const station of ['hand over a prescription', 'counter sale', 'take payment']) {
+      assert.ok(
+        offered.includes(station),
+        `a pharmacist works all three stations — offered ${offered.join(' | ')}`,
+      )
+    }
+  })
+
+  test('an administrator who is not a pharmacist is offered payment and nothing else', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(MANAGER.name, MANAGER.pin)
+    await goToStation('Counter')
+    await waitFor(mainSays('take payment'), { what: 'the counter' })
+
+    const offered = stationsOffered()
+
+    // Money, yes. `take_payment` is gated to admin and pharmacy.
+    assert.ok(
+      offered.includes('take payment'),
+      `an administrator collects payment — offered ${offered.join(' | ')}`,
+    )
+
+    // Medicine, no. Not hidden by CSS and not disabled: absent, because
+    // `dispense_rx` and `otc_sale` are the pharmacist's alone and a control
+    // that can only be refused should not be drawn.
+    for (const refused of ['hand over a prescription', 'counter sale']) {
+      assert.equal(
+        offered.includes(refused),
+        false,
+        `"${refused}" requires a pharmacist — offered ${offered.join(' | ')}`,
+      )
+    }
+
+    // And nowhere on the screen is there a control that would try anyway.
+    assert.equal(
+      evaluate(`[...document.querySelectorAll('main button')].some(b =>
+        /confirm and hand over|complete the sale/i.test(b.innerText || ''))`).includes('true'),
+      false,
+      'no hand-over control may be drawn for somebody who cannot hand anything over',
+    )
+  })
+})
+
 describe('the pharmacy counter', () => {
   test('a waiting prescription shows all five figures a hand-over needs', async () => {
     setViewport(LANDSCAPE)
     await freshPage()
-    await signIn(OWNER.name, OWNER.pin)
+    await signIn(PHARMACIST.name, PHARMACIST.pin)
     await goToStation('Counter')
     await waitFor(mainSays('hand over a prescription'), { what: 'the counter' })
 

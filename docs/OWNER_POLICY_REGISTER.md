@@ -61,7 +61,7 @@ physical entry but the stock ledger moves an exact base-unit quantity.
 |---:|---|---|---|
 | 15 | Who sets the consultation fee? | Initial default is ₹300. Admin may change the clinic default. The doctor may override the amount for one consultation only. Store the default snapshot, override amount, doctor, time, and reason in the audit trail. A later admin default change never rewrites old visits. | Approved |
 | 16 | Are follow-ups automatically free? Who decides discount/waiver/refund/reversal? | No universal free-follow-up period. The doctor decides per consultation whether it is charged, discounted, or waived. A waived visit remains visible as ₹0/waived with reason and actor. For a completed non-OTC payment, staff may request correction/refund but an admin must authorize the append-only refund/reversal with a reason. | Approved by delegated recommendation |
-| 17 | May the doctor collect the fee? | No. Payment is collected at pharmacy/payment counter. If that counter is unavailable, the charge remains pending. | Approved |
+| 17 | May the doctor collect the fee? Which roles may collect payment, dispense, and sell over the counter? | **Payment** — admin and pharmacy only. A doctor may not collect, and neither may a nurse. **Dispensing a prescription** — pharmacy only. **Over-the-counter sale** — pharmacy only. Medicine handover always requires pharmacist authorization. An admin may review transactions and carry out authorized void, refund, reversal and return workflows, but may not independently dispense or initiate an OTC sale. If no authorized payment-counter staff member is available, the balance remains pending. | Approved; role list extended 12 September 2026 |
 | 18 | What happens when a prescribed product is unavailable or partially supplied? | Doctor sees live stock but may prescribe unavailable medicine. The signed prescription has an explicit `valid until` and `may be supplied in parts` direction. Initial clinic default is 7 calendar days from signing; the doctor may shorten or extend it for that prescription. Later supply is a completion, not a refill. After expiry, pharmacy cannot supply the remainder without a new/amended order. Schedule H/H1/X and other restricted medicines use any stricter applicable rule and do not allow later supply unless the prescription and pharmacy policy expressly permit it. | Approved by delegated recommendation |
 | 19 | Is stock reserved when a prescription is written? | No automatic reservation. Prescribing never changes stock. Stock moves only when pharmacy completes an actual dispense/sale through POS. | Approved |
 | 20 | How do Patient Declined and Doctor Cancelled differ? | Separate statuses. Patient Declined records the patient's choice. Doctor Cancelled records withdrawal by the doctor. Both store actor, time, and reason. | Approved |
@@ -73,6 +73,53 @@ physical entry but the stock ledger moves an exact base-unit quantity.
 The exact consultation-fee value is setup data, not a hard-coded browser
 default. Every bill derives status from its line items, payments, allocations,
 and reversals rather than one mutable paid/unpaid flag.
+
+### Item 17 in full: who may do what at the counter
+
+Recorded 12 September 2026. This table is the authority; the code below it is
+where each line is enforced, and a change here is a change to those gates.
+
+| Action | admin | doctor | nurse | pharmacy |
+|---|:-:|:-:|:-:|:-:|
+| Take payment (`take_payment`) | ● | | | ● |
+| Dispense a prescription (`dispense_rx`) | | | | ● |
+| Over-the-counter sale (`otc_sale`) | | | | ● |
+| Open and close the till | ● | | | ● |
+| Void an invoice (`void_invoice`) | ● | | | |
+| Refund a payment (`refund_payment`) | ● | | | |
+| Reverse a payment (`reverse_payment`) | ● | | | |
+| Reverse a dispense (`reverse_dispense`) | ● | | | |
+| Authorise a counter return (`otc_return`) | ● | | | ● |
+| Payment reconciliation report | ● | | | ● |
+| Patient dues and payment history report | ● | | | ● |
+
+Three things this says that are easy to miss:
+
+1. **An administrator cannot hand medicine over.** Not a prescription, not a
+   counter sale. Medicine leaving the shelf always requires a pharmacist. What
+   an administrator can do is correct a hand-over after the fact — void,
+   refund, reverse, and authorise a return — because every one of those is a
+   correction to something a pharmacist did, and corrections are exactly what
+   the administrator is for.
+2. **A nurse does not touch money.** The retired application allowed it; that
+   was inherited, not decided. A nurse's rail no longer carries Billing or the
+   Day book, the snapshot sends a nurse no invoices, no patient balances and no
+   till, and the two money reports refuse a nurse.
+3. **Pending is a correct outcome.** If no authorised counter staff member is
+   on, the balance stays pending. Nothing routes around that, and nobody
+   acquires the capability by being the only person in the building.
+
+A person holding two roles holds the union of them, so the pharmacist who also
+administers the clinic, or the nurse who covers the counter on a day off,
+loses nothing — they simply have to hold the role that the action requires.
+
+Enforced in `supabase/functions/_shared/counter.ts` (`take_payment`,
+`dispense_rx`, `otc_sale`, `otc_return`, the four reversal commands),
+`_shared/commands.ts` (`open_till`, `close_till`), `_shared/snapshot.ts`
+(`cashDrawer`), and `functions/reports/index.ts` (the report role matrix).
+`components/navigation.ts` and `components/checkout-workspace.tsx` mirror those
+gates so the screen offers exactly what the server will accept — mirroring, not
+enforcing; the refusal is at the command.
 
 ---
 
