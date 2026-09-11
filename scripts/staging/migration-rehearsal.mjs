@@ -21,6 +21,11 @@
  * medicine row somebody later removed, a prescription with no items at all,
  * and items written before quantity was captured as a number.
  *
+ * The first version of this script recorded what Slice 2 did with those: it
+ * dropped the first and turned the third into quantity 1. Slice 2.1 replaced
+ * both with an explicit unknown that a doctor must resolve, and the assertions
+ * below now hold it to that.
+ *
  * ── WHAT IT COSTS ──────────────────────────────────────────────────────────
  *
  * It rebuilds the staging schema from scratch, so it destroys the fixtures the
@@ -41,6 +46,7 @@ const STUBS = join(process.cwd(), 'scripts', 'staging', 'legacy-stubs.sql')
 const SLICE2 = [
   '20260911045325_slice2_doctor_nurse_workspaces.sql',
   '20260911120000_slice2_clinical_vocabulary.sql',
+  '20260911190000_slice2_1_unresolved_prescription_history.sql',
 ]
 
 const ok = (label) => console.log(`  ok   ${label}`)
@@ -137,13 +143,49 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     ok('the next prescription signed after the migration continues the run')
 
     // ── normalized lines ───────────────────────────────────────────────────
-    const lines = await sql`select prescription_id,line_number,medicine_id,prescribed_quantity
+    // Every item gets a line now, including the one whose medicine row is gone
+    // and the two the clinic never gave a quantity. Nothing is dropped and
+    // nothing is defaulted.
+    const lines = await sql`select prescription_id,line_number,medicine_id,prescribed_quantity,
+      medicine_state,quantity_state,medicine_name_snapshot
       from jmc.prescription_lines order by prescription_id,line_number`
     assert.deepEqual(
-      lines.map((row) => `${row.prescription_id}#${row.line_number} ${row.medicine_id} q=${row.prescribed_quantity}`),
-      ['rx-1#1 m-1 q=10', 'rx-1#2 m-2 q=3', 'rx-4#1 m-1 q=1', 'rx-4#2 m-2 q=1'],
+      lines.map((row) => `${row.prescription_id}#${row.line_number} ${row.medicine_id ?? 'UNRESOLVED'}`
+        + ` q=${row.prescribed_quantity ?? 'UNKNOWN'}`),
+      [
+        'rx-1#1 m-1 q=10',
+        'rx-1#2 m-2 q=3',
+        'rx-2#1 UNRESOLVED q=6',
+        'rx-4#1 m-1 q=UNKNOWN',
+        'rx-4#2 m-2 q=UNKNOWN',
+      ],
     )
-    ok('a line was built for every item whose medicine still exists')
+    ok('every legacy item produced a line — none was dropped')
+
+    const [gone] = await sql`select * from jmc.prescription_lines where prescription_id='rx-2'`
+    assert.equal(gone.medicine_state, 'unresolved_legacy')
+    assert.equal(gone.medicine_id, null)
+    // The name the prescription carried is kept, and so is its quantity: only
+    // the identity is unknown.
+    assert.equal(gone.medicine_name_snapshot, 'Withdrawn brand')
+    assert.equal(Number(gone.prescribed_quantity), 6)
+    assert.equal(gone.dosage_text, '1-0-1')
+    ok('the item whose medicine is gone kept its name, directions and quantity')
+
+    const unknowns = await sql`select quantity_state,prescribed_quantity from jmc.prescription_lines
+      where prescription_id='rx-4' order by line_number`
+    assert.deepEqual(unknowns.map((row) => row.quantity_state), ['unknown_legacy', 'unknown_legacy'])
+    assert.deepEqual(unknowns.map((row) => row.prescribed_quantity), [null, null])
+    ok('a missing quantity and a zero quantity are both Unknown, not 1')
+
+    // The whole point: none of these may be handed over until a doctor says
+    // what they were.
+    const blocked = await sql`select line_number,dispensable,needs_review
+      from jmc.prescription_lines_effective
+      where prescription_id in ('rx-2','rx-4') order by prescription_id,line_number`
+    assert.equal(blocked.every((row) => row.dispensable === false), true)
+    assert.equal(blocked.every((row) => row.needs_review === true), true)
+    ok('and every unresolved line is blocked from dispensing until a doctor resolves it')
 
     const [{ strength_snapshot: strength }] = await sql`
       select strength_snapshot from jmc.prescription_lines
@@ -179,21 +221,28 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     const [{ count: stillPhrases }] = await sql`select count(*)::int from jmc.clinical_phrases`
     const [{ count: stillLines }] = await sql`select count(*)::int from jmc.prescription_lines`
     assert.equal(stillPhrases, 80)
-    assert.equal(stillLines, 4)
+    assert.equal(stillLines, 5)
     ok('applying both migrations a second time changes nothing and raises nothing')
 
     // ── what an operator has to look at before running this for real ───────
+    //
+    // These are no longer defects to warn about — Slice 2.1 records both cases
+    // honestly — but they are still work the clinic has to do, and it is work
+    // only a doctor can do. Counting it before deploying is how the clinic
+    // learns whether that is an afternoon or a fortnight.
+    const [{ count: unresolvedMedicines }] = await sql`
+      select count(*)::int from jmc.prescription_lines where medicine_state = 'unresolved_legacy'`
+    const [{ count: unknownQuantities }] = await sql`
+      select count(*)::int from jmc.prescription_lines where quantity_state = 'unknown_legacy'`
+
     console.log('')
-    console.log('  Reconciliation notes — check these against the clinic before deploying:')
-    note('rx-2 pointed at a medicine row that no longer exists, so it got NO')
-    note('     normalized line. Its items_json still holds the item. Count these')
-    note('     first: select count(*) from jmc.prescriptions p, jsonb_array_elements(')
-    note("     p.items_json::jsonb) i where not exists (select 1 from jmc.medicines m")
-    note("     where m.id = i.value->>'medicineId');")
-    note('rx-4 carried a missing quantity and a zero quantity. Both became 1,')
-    note('     because prescribed_quantity is check (> 0). On a real prescription')
-    note('     that is a clinical quantity the clinic did not write, and Slice 4')
-    note('     will treat it as the cap on what pharmacy may hand over.')
+    console.log('  Doctor review queue this migration would create:')
+    note(`${unresolvedMedicines} line(s) name a medicine that is not in the formulary.`)
+    note(`${unknownQuantities} line(s) have no recorded quantity.`)
+    note('Both are blocked from dispensing until a doctor records a resolution.')
+    note('Count them against the real clinic rows before deploying:')
+    note('  select medicine_state, quantity_state, count(*) from jmc.prescription_lines')
+    note('   group by 1,2;')
     console.log('')
     console.log('rehearsal complete — run "npm run staging:up" to restore the fixtures')
   } finally {

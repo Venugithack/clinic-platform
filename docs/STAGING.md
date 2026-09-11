@@ -231,15 +231,55 @@ the next patient a number already printed on a slip, that identity snapshots
 come from the formulary rather than from parsing a name, and that a later
 rename does not reach back into signed history.
 
-It also prints two reconciliation notes, which are the point of running it:
-an item whose medicine row is gone produces **no** normalized line, and an item
-with a missing or zero quantity becomes quantity **1**, because the new column
-is `check (> 0)`. Both are silent data decisions about real prescriptions, and
-both need counting against the clinic's own rows — with the query the script
-prints — before anybody runs this for real.
+Running it is what found the two defects Slice 2.1 fixes. The Slice 2 backfill
+dropped any item whose medicine row was gone, and turned a missing or zero
+quantity into quantity **1** — both silently, on real prescriptions. Neither is
+acceptable behaviour and neither is described here as though it were: the
+script now asserts the corrected behaviour instead, that every legacy item
+produces a line, that an unreadable one keeps its name and directions while
+naming no medicine, that an unrecorded quantity stays unknown, and that both
+are blocked from dispensing until a doctor resolves them.
+
+What it still prints is the size of the queue that creates:
+
+```text
+Doctor review queue this migration would create:
+  1 line(s) name a medicine that is not in the formulary.
+  2 line(s) have no recorded quantity.
+```
+
+That is work only a doctor can do, and counting it against the clinic's own
+rows — with the query the script prints — is how the clinic finds out before
+deploying whether it is an afternoon or a fortnight.
 
 Like `test:db`, it rebuilds the schema and so destroys the fixtures; run
 `npm run staging:up` afterwards.
+
+## 5b. The database runtime role
+
+`npm run test:db` includes `tests/characterization/runtime-role.test.mjs`,
+which is the only thing here that does not connect as a superuser.
+
+Everything else in the suite connects as `postgres`, which in the staging
+container bypasses row security, ignores grants and never meets a permission
+error — so a green suite says nothing about whether the application can reach
+its own tables once deployed as something less privileged. That gap hid a real
+defect: Slice 2's `force row level security`, on tables with no policies, makes
+every one of them return zero rows to an owner without `BYPASSRLS`, silently.
+
+So that file creates `jmc_runtime` — `LOGIN NOSUPERUSER NOBYPASSRLS
+NOCREATEDB NOCREATEROLE` — hands it ownership of the `jmc` schema the way a
+deployed project's migration role owns it, and runs a nurse arrival, vitals, a
+draft, a template, a signature, a print and a pharmacy queue read through the
+real command layer as that role. The application runs in a child process
+because `db.ts` fixes its connection at import and cannot be repointed inside a
+running one.
+
+Ownership is handed back in `finally`. If the file is killed mid-run, staging
+is left owned by `jmc_runtime`, which is harmless — `postgres` is still a
+superuser — and `npm run staging:up` rebuilds it regardless.
+
+See `docs/SCHEMA_AND_TYPES.md` §7 for what each layer is actually enforcing.
 
 ### The third guard
 

@@ -1221,12 +1221,22 @@ export function RecordsPanel({ data }: { data: ClinicSnapshot }) {
                                   : 'not dispensed'}
                               </p>
                               <ul className="mt-1 space-y-1">
-                                {prescription.items.map((item) => (
-                                  <li key={`${prescription.id}-${item.medicineId}`} className="text-[14px]">
+                                {prescription.items.map((item, index) => (
+                                  <li key={`${prescription.id}-${item.medicineId ?? 'unresolved'}-${index}`} className="text-[14px]">
                                     <span className="font-semibold">{item.medicineName}</span>
                                     <span className="ml-2 font-mono text-[12px] text-ink-2">
-                                      {item.dosage} · {item.instructions} · qty {item.quantity}
+                                      {item.dosage} · {item.instructions} ·{' '}
+                                      {item.quantityState === 'unknown_legacy'
+                                        ? 'quantity not recorded'
+                                        : `qty ${item.quantity}`}
                                     </span>
+                                    {/* A line from before this system that pharmacy cannot supply
+                                        until this doctor says what it was. */}
+                                    {item.needsReview ? (
+                                      <span className="ml-2 text-[12px] font-semibold text-stop">
+                                        needs review
+                                      </span>
+                                    ) : null}
                                   </li>
                                 ))}
                               </ul>

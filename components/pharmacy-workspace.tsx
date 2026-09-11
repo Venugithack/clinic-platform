@@ -335,15 +335,45 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                       </p>
                     </div>
                     <ul className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                      {rx.items.map((item) => (
+                      {rx.items.map((item, index) => (
                         <li
-                          key={`${rx.id}-${item.medicineId}`}
-                          className="border border-rule bg-sheet px-2.5 py-2 text-[13px]"
+                          key={`${rx.id}-${item.medicineId ?? 'unresolved'}-${index}`}
+                          className={`border px-2.5 py-2 text-[13px] ${
+                            item.needsReview
+                              ? 'border-stop bg-stop/5'
+                              : item.cancelled
+                                ? 'border-rule bg-sheet opacity-60'
+                                : 'border-rule bg-sheet'
+                          }`}
                         >
                           <span className="block font-semibold">{item.medicineName}</span>
                           <span className="mt-0.5 block font-mono text-[12px] text-ink-2">
-                            {item.dosage} · {item.instructions} · qty {item.quantity}
+                            {item.dosage} · {item.instructions} ·{' '}
+                            {item.quantityState === 'unknown_legacy'
+                              ? 'quantity not recorded'
+                              : `qty ${item.quantity}`}
                           </span>
+                          {/*
+                            Written before this system existed, and missing
+                            something a pharmacist may not supply without. Say
+                            so here rather than letting them reach for the
+                            shelf and meet a refusal.
+                          */}
+                          {item.medicineState === 'unresolved_legacy' ? (
+                            <span className="mt-1 block text-[12px] font-semibold text-stop">
+                              Medicine not identified — needs the doctor
+                            </span>
+                          ) : null}
+                          {item.quantityState === 'unknown_legacy' ? (
+                            <span className="mt-1 block text-[12px] font-semibold text-stop">
+                              Quantity not recorded — needs the doctor
+                            </span>
+                          ) : null}
+                          {item.cancelled ? (
+                            <span className="mt-1 block text-[12px] font-semibold text-ink-2">
+                              Cancelled by the doctor — do not supply
+                            </span>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -362,6 +392,8 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                           </>
                         }
                         confirmLabel="Dispense"
+                        disabled={rx.items.some((item) => item.needsReview)}
+                        disabledReason="A line is from before this system and the doctor must resolve it first."
                         onConfirm={() => run('dispense_rx', { prescriptionId: rx.id })}
                       >
                         Dispense Rx

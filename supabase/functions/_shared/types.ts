@@ -142,8 +142,21 @@ export interface PrescriptionItemView {
   durationUnit?: 'day' | 'week' | 'month'
   dosage: string
   instructions: string
-  quantity: number
+  /**
+   * Absent when this line came from before the current system and the clinic's
+   * record does not say what quantity was authorized. It is never defaulted to
+   * a number: see the Slice 2.1 migration.
+   */
+  quantity?: number
   quantityUnit?: string
+  /** `unresolved_legacy` when the medicine this line names is not in the formulary. */
+  medicineState?: 'resolved' | 'unresolved_legacy'
+  /** `unknown_legacy` when no usable quantity was ever recorded. */
+  quantityState?: 'recorded' | 'unknown_legacy'
+  /** A doctor withdrew this line after signing. */
+  cancelled?: boolean
+  /** True when a doctor must resolve the line before pharmacy may supply it. */
+  needsReview?: boolean
 }
 
 export interface PrescriptionView {

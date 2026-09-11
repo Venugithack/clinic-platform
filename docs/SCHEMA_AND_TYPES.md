@@ -1343,3 +1343,157 @@ do it at all.
 removes it. `tests/support/clinic.mjs` therefore carries it across the truncate
 between tests, and refuses to run if it is absent rather than testing an
 autocomplete with nothing in it.
+
+---
+
+## 6. Slice 2.1 delta: history that says "unknown"
+
+Running the Slice 2 backfill against a clinic that already had prescriptions —
+which `npm run staging:rehearse` does, and which nothing had done before —
+showed it making two decisions nobody approved.
+
+| Legacy item | Slice 2 did | Slice 2.1 does |
+|---|---|---|
+| medicine row no longer exists | produced **no line at all** | a line with `medicine_state = 'unresolved_legacy'` and `medicine_id` null |
+| `quantity` missing, `0`, or not a number | became **quantity 1** | `prescribed_quantity` null, `quantity_state = 'unknown_legacy'` |
+
+Both mattered. A signed prescription that quietly loses a line is worse than
+one that says it cannot read it; and quantity 1 is not a cautious default but a
+different prescription, which from Slice 4 becomes the cap on what the pharmacy
+may hand over.
+
+### 6.1 The columns
+
+`prescription_lines.medicine_id` and `prescription_lines.prescribed_quantity`
+became nullable, paired with two state columns and four checks:
+
+```sql
+check (medicine_state in ('resolved', 'unresolved_legacy'))
+check ((medicine_state = 'resolved') = (medicine_id is not null))
+check (quantity_state in ('recorded', 'unknown_legacy'))
+check ((quantity_state = 'recorded') = (prescribed_quantity is not null))
+```
+
+The agreement checks are the load-bearing pair: a line cannot claim to be
+unresolved while carrying a medicine id, which is exactly the automatic
+reconnection the migration refuses to make. The original column check
+`prescribed_quantity > 0` is kept and still applies, so a **newly signed** line
+is unchanged — the command layer always supplies both, and nothing but history
+may be unknown.
+
+### 6.2 Resolution is a separate append-only record
+
+`prescription_line_resolutions` holds one row per determination: `amend` with a
+medicine, a quantity, or both, or `cancel`. It is written only by
+`resolve_prescription_line`, which requires the **doctor** role, requires a
+reason, verifies any medicine against the active formulary, and writes an audit
+event. Its own trigger refuses updates and deletes.
+
+Nothing is ever written back into the line. `prescription_lines` keeps its
+immutability trigger, and `prescriptions.items_json` — the signed record — is
+not touched at all, so the prescription always shows both what was signed and
+what a doctor later determined. A wrong resolution is corrected by recording
+another one.
+
+`jmc.prescription_lines_effective` (a `security_invoker` view) folds the latest
+non-null determination of each part over the line and derives `dispensable`,
+`needs_review` and `cancelled`. Medicine and quantity resolve independently, so
+identifying the medicine on Tuesday does not erase Thursday's quantity.
+
+### 6.3 Dispensing reads the lines, not the JSON
+
+`dispense_rx` previously allocated from `prescriptions.items_json`. It now
+reads `prescription_lines_effective`, refuses with the line number and what is
+missing if any line needs review, and skips cancelled lines. Reading the JSON
+would have meant handing over against precisely the values that were found
+untrustworthy.
+
+### 6.4 What the migration corrects, and why that is allowed
+
+The migration nulls the quantities its predecessor invented, which requires
+disabling the line immutability trigger inside the transaction. That is a
+migration correcting its own predecessor's derivation, on rows that have never
+reached a clinic, in a release not yet deployed. The signed record is
+`items_json`; `prescription_lines` is derived from it. No runtime path can do
+this — nothing in the application can disable that trigger.
+
+One SQL detail worth keeping: the correction matches with `is not true`, not
+`not (...)`. An item with no `quantity` key yields NULL, `not NULL` is NULL, and
+a WHERE clause that is NULL matches nothing — so the row that most needed
+correcting would have kept its invented 1. The rehearsal caught it. The casts
+are wrapped in nested `CASE` for the same class of reason: `AND` is not
+required to short-circuit, so a planner free to evaluate `('SOS')::bigint`
+first would fail the whole migration.
+
+---
+
+## 7. Who actually enforces authorization
+
+This is the question `FORCE ROW LEVEL SECURITY` made urgent, so it is written
+down rather than implied.
+
+### 7.1 The defect Slice 2 shipped
+
+Slice 2 put `force row level security` on its thirteen new tables. Those tables
+have no policies. `FORCE` removes the table owner's normal exemption from row
+security, so an owner that does not additionally hold the `BYPASSRLS` attribute
+reads nothing and writes nothing — with no error at either end.
+
+Measured on this schema, as a `NOSUPERUSER NOBYPASSRLS` owner, with a draft row
+present:
+
+```text
+select count(*) from jmc.consultation_drafts;   -- 1 as superuser, 0 as owner
+insert into jmc.consultation_drafts ...          -- INSERT 0 0
+```
+
+`jmc.patients`, which has RLS enabled and not forced, returned its row to the
+same role. The difference is FORCE, not the grants and not the schema.
+
+The clinic has not met this only because the deployed functions connect as a
+role holding `BYPASSRLS` — a property of the deployment nobody chose and
+nothing checked. Slice 2 has never been deployed, so the first release would
+have shown the doctor an empty Consult screen: no drafts, no templates, no
+follow-ups, no print history, no approved vocabulary.
+
+### 7.2 Why the repair is not a policy
+
+The application reaches this database as a single identity. The database is
+never told which staff member is acting. The only policy that restores access
+for one shared identity is `using (true)`, which enforces nothing and makes the
+schema look as though row security is doing work it is not.
+
+Real per-row policies would need the end-user identity carried into the session
+on every request — a change to how every transaction opens, and a decision to
+take with the owner, not something to bolt on beneath a data-loss fix.
+
+So the thirteen tables return to the posture of the other twenty-nine: row
+security **enabled**, never forced.
+
+### 7.3 The honest answer
+
+| Layer | What it actually enforces |
+|---|---|
+| Authenticated Edge Function boundary | **All staff authorization.** Session, role, and every per-record rule — that a draft belongs to one doctor, that only a publishing doctor changes the clinic vocabulary, that only a doctor resolves a legacy line. It is the only layer that knows who is asking. |
+| Grants | `jmc` is owned by the application role and granted to nobody. `anon`, `authenticated`, `service_role` and `PUBLIC` hold no privilege on any table and no `USAGE` on the schema. |
+| RLS (enabled, unforced) | The second line under the grants: any role that is not the owner is refused rows even if a grant is ever added by accident. It is not what separates one staff member from another. |
+| Database constraints and triggers | Append-only history, immutable signed records, state agreement, and idempotency keys — enforced regardless of which layer above got it wrong. |
+
+`tests/characterization/runtime-role.test.mjs` holds this to it. It creates
+`jmc_runtime` — `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE` — makes
+it own the `jmc` schema and everything in it, and runs a nurse arrival, vitals,
+a consultation draft, a template, a signature, a print and a pharmacy queue
+read through the real command layer as that role, in a child process, because
+the backend fixes its connection at import. It then asserts no table is forced
+and that the four Data API roles hold nothing.
+
+Re-introducing `force` on one table was verified to fail it, with
+`new row violates row-level security policy for table "consultation_drafts"`.
+
+### 7.4 What is still unverified
+
+The production role's attributes have not been read, because nothing in this
+programme queries production. The test asserts the pessimistic case — a role
+with neither `SUPERUSER` nor `BYPASSRLS` — so the application is now known to
+work whether or not the deployed role holds them. Confirming what the deployed
+role actually is remains a deployment-time check, not a staging one.

@@ -1076,6 +1076,70 @@ export async function runCommand(session: SessionView, action: string, payload: 
       return completeConsultation(session, payload)
     }
 
+    /*
+     * Resolving a line the Slice 2.1 migration marked unreadable.
+     *
+     * The line itself is never touched — it is a signed record and its trigger
+     * refuses updates. What this writes is a separate event beside it, so the
+     * prescription always shows both what was signed and what the doctor later
+     * determined. Only a doctor may do it: identifying which medicine an old
+     * order meant, or what quantity it authorized, is a clinical judgement, and
+     * OWNER_POLICY_REGISTER.md 21 is explicit that changing a prescribed
+     * clinical drug or quantity needs doctor authorization.
+     */
+    case 'resolve_prescription_line': {
+      requireRole(session, 'doctor')
+      const lineId = value(payload, 'prescriptionLineId')
+      const action = requireChoice(payload, 'action', ['amend', 'cancel'] as const, 'amend')
+      const reason = value(payload, 'reason')
+      const medicineId = optional(payload, 'medicineId')
+      const quantity = optionalPositiveInteger(payload, 'quantity')
+
+      if (action === 'cancel' && (medicineId || quantity !== undefined)) {
+        throw new Error('A cancelled line carries no replacement medicine or quantity.')
+      }
+      if (action === 'amend' && !medicineId && quantity === undefined) {
+        throw new Error('Say which medicine or what quantity this line authorized.')
+      }
+
+      const resolutionId = randomUUID()
+      await transaction(async () => {
+        const line = await db.prepare(`select id,medicine_state,quantity_state,medicine_name_snapshot
+          from prescription_lines where id=? for update`).get(lineId) as {
+            id: string
+            medicine_state: string
+            quantity_state: string
+            medicine_name_snapshot: string
+          } | undefined
+        if (!line) throw new Error('That prescription line was not found.')
+
+        if (medicineId) {
+          const medicine = await db.prepare('select id from medicines where id=? and active=1').get(medicineId)
+          if (!medicine) throw new Error('That medicine is not in the active formulary.')
+        }
+
+        await db.prepare(`insert into prescription_line_resolutions
+          (id,prescription_line_id,action,medicine_id,prescribed_quantity,reason,resolved_by,resolved_at)
+          values (?,?,?,?,?,?,?,now())`).run(
+            resolutionId, lineId, action, medicineId || null, quantity ?? null,
+            reason, session.staffId,
+          )
+        await audit(
+          session.staffId,
+          action === 'cancel' ? 'prescription_line.cancelled' : 'prescription_line.resolved',
+          'prescription_line',
+          lineId,
+          `${action === 'cancel' ? 'Cancelled' : 'Resolved'} legacy line ${line.medicine_name_snapshot}: ${reason}`,
+        )
+      })
+      return {
+        message: action === 'cancel'
+          ? 'Line cancelled. The signed prescription is unchanged.'
+          : 'Line resolved. The signed prescription is unchanged.',
+        data: { resolutionId },
+      }
+    }
+
     case 'record_prescription_print': {
       requireRole(session, 'doctor')
       const prescriptionId = value(payload, 'prescriptionId')
@@ -2154,10 +2218,58 @@ export async function runCommand(session: SessionView, action: string, payload: 
           .get(prescriptionId) as { items_json: string; dispensed_at: string | null } | undefined
         if (!prescription) throw new Error('Prescription was not found.')
         if (prescription.dispensed_at) throw new Error('This prescription is already dispensed.')
-        const items = JSON.parse(prescription.items_json) as PrescriptionItemView[]
-        for (const item of items) {
-          await allocateStock(item.medicineId, item.quantity, session.staffId, 'prescription', prescriptionId)
+
+        /**
+         * The normalized lines, not `items_json`.
+         *
+         * Slice 2 built the lines and left dispensing reading the legacy JSON,
+         * which was harmless while the two always agreed. Slice 2.1 makes them
+         * disagree on purpose: a line whose medicine row is gone, or whose
+         * quantity the clinic never wrote, is marked unknown instead of being
+         * dropped or defaulted to 1. Reading the JSON here would hand over
+         * against exactly the values that were found to be untrustworthy.
+         *
+         * `prescription_lines_effective` folds in the doctor's resolutions, so
+         * a line an unrelated doctor amended this morning dispenses with what
+         * they determined, and a cancelled line is not supplied at all.
+         */
+        const lines = await db.prepare(`select id,line_number,medicine_name_snapshot,
+            effective_medicine_id,effective_quantity,cancelled,dispensable,needs_review
+          from prescription_lines_effective
+          where prescription_id=? order by line_number`).all(prescriptionId) as Array<{
+            id: string
+            line_number: number
+            medicine_name_snapshot: string
+            effective_medicine_id: string | null
+            effective_quantity: number | null
+            cancelled: boolean
+            dispensable: boolean
+            needs_review: boolean
+          }>
+
+        const unreadable = lines.filter((line) => line.needs_review)
+        if (unreadable.length > 0) {
+          // Named, because "this prescription cannot be dispensed" sends the
+          // pharmacist back to the doctor without saying what to ask about.
+          const first = unreadable[0]
+          const missing = first.effective_medicine_id === null
+            ? 'which medicine it was'
+            : 'what quantity it authorized'
+          throw new Error(
+            `Line ${first.line_number} (${first.medicine_name_snapshot}) is from before this ` +
+            `system and does not record ${missing}. A doctor must resolve it before anything ` +
+            `is handed over.`,
+          )
         }
+
+        for (const line of lines) {
+          if (!line.dispensable) continue // cancelled by a doctor; nothing to supply
+          await allocateStock(
+            String(line.effective_medicine_id), Number(line.effective_quantity),
+            session.staffId, 'prescription', prescriptionId,
+          )
+        }
+        const items = lines.filter((line) => line.dispensable)
         // Belt and braces, and cheap. The lock above should make this
         // unreachable; a guarded UPDATE whose row count nobody reads is
         // exactly how the original defect stayed invisible, so this one is

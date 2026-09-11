@@ -102,8 +102,11 @@ function prescriptionItems(value: unknown, legacy: unknown): PrescriptionItemVie
   return (normalized.length > 0 ? normalized : jsonArray(legacy)) as PrescriptionItemView[]
 }
 
+// Reads the effective view, not the bare table: a line the Slice 2.1 migration
+// marked unreadable must reach the tablet saying so, and a line a doctor has
+// since resolved must reach it resolved.
 const LINE_JSON = `jsonb_build_object(
-  'medicineId', l.medicine_id,
+  'medicineId', l.effective_medicine_id,
   'medicineName', l.medicine_name_snapshot,
   'genericName', l.generic_name_snapshot,
   'strength', l.strength_snapshot,
@@ -118,8 +121,12 @@ const LINE_JSON = `jsonb_build_object(
   'durationUnit', l.duration_unit,
   'dosage', l.dosage_text,
   'instructions', l.instructions,
-  'quantity', l.prescribed_quantity,
-  'quantityUnit', l.quantity_unit
+  'quantity', l.effective_quantity,
+  'quantityUnit', l.quantity_unit,
+  'medicineState', l.medicine_state,
+  'quantityState', l.quantity_state,
+  'cancelled', l.cancelled,
+  'needsReview', l.needs_review
 )`
 
 const DRAFT_LINE_JSON = `jsonb_build_object(
@@ -506,7 +513,7 @@ export async function readSnapshot(
   const prescriptions: PrescriptionView[] = pharmacyCounter
     ? (await all(`select rx.*,p.name patient_name,s.name doctor_name,
           coalesce((select jsonb_agg(${LINE_JSON} order by l.line_number)
-                      from prescription_lines l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
+                      from prescription_lines_effective l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
           (select count(*)::int from prescription_prints pp where pp.prescription_id=rx.id) print_count
         from prescriptions rx
         join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
@@ -771,7 +778,7 @@ export async function readPatientRecord(
     all(
       `select rx.*,p.name patient_name,s.name doctor_name,
           coalesce((select jsonb_agg(${LINE_JSON} order by l.line_number)
-                      from prescription_lines l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
+                      from prescription_lines_effective l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
           (select count(*)::int from prescription_prints pp where pp.prescription_id=rx.id) print_count
          from prescriptions rx
          join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
