@@ -4,6 +4,7 @@ import { ConsultationPanel } from './consultation-workspace'
 import type { ActionRunner } from './clinic-context'
 import { DayBookPanel } from './day-book-panel'
 import { ExpiringPanel } from './expiring-panel'
+import { FormularyPanel, OpeningCountPanel, ReceivingPanel } from './formulary-workspace'
 import type { View } from './navigation'
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
 import {
@@ -79,6 +80,12 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
       return <CounterPanel data={data} run={run} />
     case 'inventory':
       return <InventoryPanel data={data} run={run} uploadCsv={uploadCsv} />
+    case 'formulary':
+      return <FormularyPanel data={data} run={run} />
+    case 'receiving':
+      return <ReceivingPanel data={data} run={run} />
+    case 'opening':
+      return <OpeningCountPanel data={data} run={run} />
     case 'suppliers':
       return <SuppliersPanel data={data} run={run} />
     case 'orders':

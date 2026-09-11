@@ -696,6 +696,186 @@ export const FIXTURE_BEDS = {
 }
 
 // ---------------------------------------------------------------------------
+// Packages
+// ---------------------------------------------------------------------------
+
+/**
+ * What each product physically arrives in.
+ *
+ * Deliberately not all tablets. A clinic that only ever ships strips of
+ * fifteen never finds out that the conversion is data: the ampoule tray, the
+ * syrup carton, the cream box and the gauze dispenser are here so that every
+ * screen and every query meets a ladder that is not the tablet one.
+ *
+ * The first entry is always the base — the smallest safe countable item the
+ * clinic stocks, which is a whole bottle and a whole ampoule, never a
+ * millilitre. The clinic answered "no" to dividing an opened container.
+ */
+const FIXTURE_PACKAGES = {
+  paracetamol: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 15, sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'strip', containsCount: 10, sellable: true },
+      { levelName: 'case', levelType: 'case', contains: 'box', containsCount: 20 },
+    ],
+  },
+  amoxicillin: {
+    baseUnit: 'capsule',
+    levels: [
+      { levelName: 'capsule', levelType: 'capsule', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'capsule', containsCount: 10, sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'strip', containsCount: 10, sellable: true },
+    ],
+  },
+  azithromycin: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 3, sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'strip', containsCount: 10 },
+    ],
+  },
+  cetirizine: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 10, sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'strip', containsCount: 20, sellable: true },
+    ],
+  },
+  /** Sealed. `breakable: false` is what keeps millilitres out of the counter. */
+  coughSyrup: {
+    baseUnit: 'bottle',
+    levels: [
+      { levelName: 'bottle', levelType: 'bottle', sellable: true, breakable: false, mrpBasis: true },
+      { levelName: 'carton', levelType: 'carton', contains: 'bottle', containsCount: 12 },
+    ],
+  },
+  clotrimazoleCream: {
+    baseUnit: 'tube',
+    levels: [
+      { levelName: 'tube', levelType: 'tube', sellable: true, breakable: false, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'tube', containsCount: 24 },
+    ],
+  },
+  /** Three rungs and a hard floor: no fraction of an ampoule exists. */
+  ondansetronInjection: {
+    baseUnit: 'vial',
+    levels: [
+      { levelName: 'vial', levelType: 'vial', sellable: true, breakable: false, mrpBasis: true },
+      { levelName: 'tray', levelType: 'tray', contains: 'vial', containsCount: 5 },
+      { levelName: 'carton', levelType: 'carton', contains: 'tray', containsCount: 10 },
+    ],
+  },
+  /** A custom type, configured rather than coded. */
+  gauze: {
+    baseUnit: 'piece',
+    levels: [
+      { levelName: 'piece', levelType: 'piece', sellable: true },
+      { levelName: 'inner pack', levelType: 'inner pack', contains: 'piece', containsCount: 5, sellable: true, mrpBasis: true },
+      { levelName: 'dispenser', levelType: 'dispenser', contains: 'inner pack', containsCount: 20 },
+    ],
+  },
+  ors: {
+    baseUnit: 'sachet',
+    levels: [
+      { levelName: 'sachet', levelType: 'sachet', sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'sachet', containsCount: 20, sellable: true },
+    ],
+  },
+  ibuprofen: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 15, sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'strip', containsCount: 10, sellable: true },
+    ],
+  },
+  metformin: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 20, sellable: true, mrpBasis: true },
+      { levelName: 'box', levelType: 'box', contains: 'strip', containsCount: 15, sellable: true },
+    ],
+  },
+  amlodipine: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 10, sellable: true, mrpBasis: true },
+    ],
+  },
+  pantoprazole: {
+    baseUnit: 'tablet',
+    levels: [
+      { levelName: 'tablet', levelType: 'tablet', sellable: true },
+      { levelName: 'strip', levelType: 'strip', contains: 'tablet', containsCount: 15, sellable: true, mrpBasis: true },
+    ],
+  },
+}
+
+/**
+ * Expand a fixture ladder into the rows the schema holds.
+ *
+ * The same arithmetic `supabase/functions/_shared/packages.ts` does, written
+ * again rather than imported: the fixtures are a Node script and the backend
+ * is Deno TypeScript, and the point of a fixture is to be an independent
+ * statement of what the data should look like. If the two ever disagree the
+ * package trigger raises, which is the check that matters.
+ */
+function expandLadder(pack) {
+  const byName = new Map(pack.levels.map((level) => [level.levelName, level]))
+  let factor = 1
+  return pack.levels.map((level, depth) => {
+    if (depth > 0) {
+      const child = byName.get(level.contains)
+      if (!child) throw new Error(`${level.levelName} contains ${level.contains}, which is not a level`)
+      factor *= level.containsCount
+    }
+    return {
+      levelName: level.levelName,
+      levelType: level.levelType,
+      contains: level.contains ?? null,
+      containsCount: level.containsCount ?? null,
+      depth,
+      baseFactor: factor,
+      receivable: level.receivable ?? true,
+      sellable: level.sellable ?? depth === 0,
+      breakable: level.breakable ?? depth > 0,
+      minimumSaleMultiple: level.minimumSaleMultiple ?? 1,
+      mrpBasis: level.mrpBasis ?? false,
+      barcodeHint: '',
+    }
+  })
+}
+
+/**
+ * Codes on the shelf.
+ *
+ * `carriesBatch` is false for every EAN-13 here, and that is not laziness: a
+ * plain GTIN identifies a trade item, not a lot. Only the DataMatrix carries
+ * batch and expiry, because only a GS1 payload with application identifiers
+ * (10) and (17) actually does.
+ */
+const FIXTURE_BARCODES = [
+  { medicine: 'paracetamol', levelName: 'strip', code: '8909990000017', symbology: 'ean13' },
+  { medicine: 'paracetamol', levelName: 'box', code: '18909990000014', symbology: 'itf14' },
+  { medicine: 'amoxicillin', levelName: 'strip', code: '8909990000024', symbology: 'ean13' },
+  { medicine: 'cetirizine', levelName: 'strip', code: '8909990000048', symbology: 'ean13' },
+  { medicine: 'coughSyrup', levelName: 'bottle', code: '8909990000055', symbology: 'ean13' },
+  {
+    medicine: 'azithromycin', levelName: 'strip',
+    code: '0108909990000313172803311012AZ4471', symbology: 'gs1_datamatrix', carriesBatch: true,
+  },
+]
+
+/** A code somebody scanned that maps to nothing. The admin's queue, not an error. */
+const FIXTURE_UNMAPPED_BARCODE = { code: '5060337028134', symbology: 'ean13', seenCount: 3 }
+
+// ---------------------------------------------------------------------------
 // The shelf
 // ---------------------------------------------------------------------------
 
@@ -1146,9 +1326,19 @@ export async function seedClinic(sql, options = {}) {
         barcode: medicine.barcode,
         sale_class: medicine.saleClass,
         schedule: medicine.schedule,
+        // A classification is a fact somebody checked. The two the clinic has
+        // never reviewed stay unverified, which is what the anonymous counter
+        // path refuses — see the register report.
+        schedule_source: medicine.schedule === 'unset' ? '' : 'Printed on the pack',
+        schedule_verified_by: medicine.schedule === 'unset' ? null : staffId('pharmacist'),
+        schedule_verified_at: medicine.schedule === 'unset' ? null : clock.at(-200, '10:00'),
         reorder_level: medicine.reorderLevel,
         target_stock: medicine.targetStock,
         preferred_supplier_id: supplierId(medicine.supplier),
+        // The unit `available_quantity` has always counted in, said out loud.
+        base_unit: medicine.unit,
+        brand_name: medicine.brandName ?? '',
+        manufacturer: medicine.manufacturer ?? '',
         active: medicine.active ? 1 : 0,
         created_at: clock.at(-395, '11:30'),
       })),
@@ -1172,6 +1362,100 @@ export async function seedClinic(sql, options = {}) {
       }),
     )}`
 
+    // -- what each product arrives in --------------------------------------
+    //
+    // Verified, because an unverified conversion cannot receive stock and
+    // every batch below has already arrived. The verification is attributed to
+    // the pharmacist and dated, like a real one.
+    const packageVersionIds = new Map()
+    const packageLadders = new Map()
+    const versionRows = []
+    const levelRows = []
+
+    for (const [key, pack] of Object.entries(FIXTURE_PACKAGES)) {
+      const medicine = medicineId(key)
+      const versionId = uid('b1', versionRows.length + 1)
+      const levels = expandLadder(pack)
+      packageVersionIds.set(key, versionId)
+      packageLadders.set(key, { baseUnit: pack.baseUnit, levels })
+
+      // Drafted, then verified, in that order — which is not a formality. A
+      // verified ladder is frozen, so its levels cannot be inserted after the
+      // fact; the application's own two commands take the same two steps for
+      // the same reason.
+      versionRows.push({
+        id: versionId,
+        medicine_id: medicine,
+        version: 1,
+        base_unit: pack.baseUnit,
+        status: 'draft',
+        entered_by: staffId('pharmacist'),
+        entered_at: clock.at(-394, '09:30'),
+        verification_source: '',
+        verification_note: '',
+        note: '',
+      })
+
+      const levelIds = new Map()
+      for (const level of levels) {
+        const levelId = uid('b2', levelRows.length + 1)
+        levelIds.set(level.levelName, levelId)
+        levelRows.push({
+          id: levelId,
+          package_version_id: versionId,
+          level_name: level.levelName,
+          level_type: level.levelType,
+          child_level_id: level.contains ? levelIds.get(level.contains) : null,
+          child_count: level.containsCount,
+          base_factor: level.baseFactor,
+          depth: level.depth,
+          receivable: level.receivable,
+          sellable: level.sellable,
+          breakable: level.breakable,
+          minimum_sale_multiple: level.minimumSaleMultiple,
+          mrp_basis: level.mrpBasis,
+          barcode_hint: '',
+        })
+      }
+    }
+
+    await tx`insert into jmc.package_versions ${tx(versionRows)}`
+    // Base first: the chain trigger checks each level against the one it
+    // contains, so the child has to exist by the time the parent lands.
+    await tx`insert into jmc.package_levels ${tx(levelRows)}`
+
+    await tx`update jmc.package_versions
+                set status = 'verified',
+                    verified_by = ${staffId('pharmacist')},
+                    verified_at = ${clock.at(-394, '09:45')},
+                    verification_source = 'physical_pack',
+                    verification_note = 'Checked against the pack on the shelf'
+              where id in ${tx(versionRows.map((row) => row.id))}`
+
+    await tx`insert into jmc.medicine_barcodes ${tx(
+      FIXTURE_BARCODES.map((entry, index) => ({
+        id: uid('b3', index + 1),
+        medicine_id: medicineId(entry.medicine),
+        level_name: entry.levelName,
+        code: entry.code,
+        symbology: entry.symbology,
+        carries_batch: entry.carriesBatch ?? false,
+        verified_by: staffId('pharmacist'),
+        verified_at: clock.at(-393, '10:15'),
+        created_by: staffId('pharmacist'),
+        created_at: clock.at(-393, '10:15'),
+      })),
+    )}`
+
+    await tx`insert into jmc.unmapped_barcodes ${tx([{
+      code: FIXTURE_UNMAPPED_BARCODE.code,
+      symbology: FIXTURE_UNMAPPED_BARCODE.symbology,
+      seen_count: FIXTURE_UNMAPPED_BARCODE.seenCount,
+      first_seen_at: clock.at(-9, '11:20'),
+      last_seen_at: clock.at(-1, '17:40'),
+      first_seen_by: staffId('pharmacist'),
+    }])}`
+
     // -- the shelf ---------------------------------------------------------
     await tx`insert into jmc.batches ${tx(
       Object.values(BATCH_PLAN).map((batch) => ({
@@ -1188,6 +1472,21 @@ export async function seedClinic(sql, options = {}) {
         received_from_supplier_id: supplierId(batch.supplier),
         received_at: clock.at(-batch.receivedDaysAgo, '09:00'),
         version: 1,
+        // The conversion this lot arrived under, copied onto it. A later pack
+        // size change creates a new version and cannot reach back into this.
+        base_unit: FIXTURE_MEDICINES[batch.medicine].unit,
+        package_version_id: packageVersionIds.get(batch.medicine) ?? null,
+        package_snapshot: packageLadders.has(batch.medicine)
+          ? JSON.stringify(packageLadders.get(batch.medicine))
+          : null,
+        // These fixture prices were always per base unit, so the basis is the
+        // base level and the factor is 1. Saying so explicitly is the point:
+        // a price with no basis is the ambiguity Slice 3 removed.
+        mrp_basis_level: FIXTURE_MEDICINES[batch.medicine].unit,
+        mrp_basis_factor: 1,
+        purchase_basis_level: FIXTURE_MEDICINES[batch.medicine].unit,
+        purchase_basis_factor: 1,
+        status: 'active',
       })),
     )}`
 
@@ -1836,6 +2135,7 @@ async function assertConsistent(tx) {
     patients: Object.keys(FIXTURE_PATIENTS).length,
     suppliers: Object.keys(FIXTURE_SUPPLIERS).length,
     medicines: Object.keys(FIXTURE_MEDICINES).length,
+    packages: Object.keys(FIXTURE_PACKAGES).length,
     batches: Object.keys(BATCH_PLAN).length,
     movements: Object.values(BATCH_PLAN).reduce((sum, b) => sum + b.movements.length, 0),
     appointments: Object.keys(FIXTURE_APPOINTMENTS).length,
@@ -1860,6 +2160,7 @@ async function counts(client) {
            (select count(*) from jmc.patients)::int as patients,
            (select count(*) from jmc.suppliers)::int as suppliers,
            (select count(*) from jmc.medicines)::int as medicines,
+           (select count(*) from jmc.package_versions)::int as packages,
            (select count(*) from jmc.batches)::int as batches,
            (select count(*) from jmc.stock_movements)::int as movements,
            (select count(*) from jmc.appointments)::int as appointments,
@@ -1871,7 +2172,8 @@ async function counts(client) {
 function summarise(row) {
   return (
     `${row.staff} staff, ${row.patients} patients, ${row.suppliers} suppliers, ` +
-    `${row.medicines} medicines, ${row.batches} batches, ${row.movements} stock movements, ` +
+    `${row.medicines} medicines, ${row.packages} packages, ${row.batches} batches, ` +
+    `${row.movements} stock movements, ` +
     `${row.appointments} appointments today, ${row.prescriptions} prescriptions, ${row.bills} bills`
   )
 }

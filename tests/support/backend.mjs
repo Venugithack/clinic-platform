@@ -59,3 +59,48 @@ export const snapshot = await import('../../supabase/functions/_shared/snapshot.
 /** Shorthand: the two things every characterization test reaches for. */
 export const runCommand = commands.runCommand
 export const createSession = auth.createSession
+
+/**
+ * One Edge Function's handler, so a read endpoint can be tested like anything
+ * else.
+ *
+ * Every function file's whole body is one `Deno.serve(handler)`. The shim in
+ * register.mjs deliberately does not provide `Deno.serve` — a file reaching
+ * for an unimplemented Deno API should fail loudly rather than quietly — so it
+ * is provided here, for the length of one import, and taken away again. That
+ * is the same trick `scripts/staging/functions-server.mjs` uses to serve the
+ * functions to a browser; doing it here means the on-demand reads are covered
+ * by the database suite rather than only by a browser journey.
+ *
+ * The handler is the real one. It runs the real authorization check and the
+ * real SQL against the staging database.
+ */
+const handlers = new Map()
+
+export async function edgeFunction(name) {
+  if (handlers.has(name)) return handlers.get(name)
+
+  let captured = null
+  const previous = globalThis.Deno.serve
+  globalThis.Deno.serve = (handler) => { captured = handler }
+  try {
+    await import(`../../supabase/functions/${name}/index.ts`)
+  } finally {
+    if (previous) globalThis.Deno.serve = previous
+    else delete globalThis.Deno.serve
+  }
+  if (typeof captured !== 'function') {
+    throw new Error(`supabase/functions/${name}/index.ts did not call Deno.serve`)
+  }
+  handlers.set(name, captured)
+  return captured
+}
+
+/** A GET to one of those handlers, as a signed-in staff member. */
+export async function edgeGet(name, path, token) {
+  const handler = await edgeFunction(name)
+  const response = await handler(new Request(`http://staging/functions/v1/${name}${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  }))
+  return { status: response.status, body: await response.json() }
+}

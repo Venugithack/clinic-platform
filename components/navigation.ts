@@ -17,6 +17,9 @@ export type View =
   | 'stocktake'
   | 'counter'
   | 'inventory'
+  | 'formulary'
+  | 'receiving'
+  | 'opening'
   | 'suppliers'
   | 'orders'
   | 'printer'
@@ -34,6 +37,9 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
     { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
+    { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages' },
+    { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received' },
+    { id: 'opening', label: 'Opening count', eyebrow: 'Blind opening count' },
     { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
     { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
@@ -75,6 +81,9 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
     { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
+    { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages' },
+    { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received' },
+    { id: 'opening', label: 'Opening count', eyebrow: 'Blind opening count' },
     { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
     { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
     { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },

@@ -3,6 +3,7 @@
 import { callApi } from '@/lib/api'
 import { useMemo, useState, type FormEvent } from 'react'
 import type {
+  BatchView,
   ClinicSnapshot,
   CommandResponse,
   MedicineView,
@@ -10,6 +11,7 @@ import type {
   SupplierView,
 } from '@/lib/types'
 import { useBusy, type ActionRunner } from './clinic-context'
+import { BatchActions, mrpWithBasis, plural } from './formulary-workspace'
 import { Stack } from './shared-panels'
 import {
   ActionButton,
@@ -520,6 +522,11 @@ export function InventoryPanel({
   const [query, setQuery] = useState('')
   const [batchesFor, setBatchesFor] = useState<MedicineView | null>(null)
 
+  // The one batch being corrected or flagged, inside the same modal rather
+  // than a second one on top of it: a pharmacist who has just found a box that
+  // should not be sold is already looking at this list.
+  const [managing, setManaging] = useState<BatchView | null>(null)
+
   // The export is the one thing on this screen that does not go through `run`,
   // so it has no share of the shell's notice strip and has to say what went
   // wrong itself. Kept next to the buttons that raise it, which is where
@@ -812,45 +819,136 @@ export function InventoryPanel({
 
       <Modal
         open={batchesFor !== null}
-        onClose={() => setBatchesFor(null)}
-        title="Batches on the shelf"
-        sub={batchesFor ? `${batchesFor.name} ${batchesFor.strength}`.trim() : undefined}
+        onClose={() => {
+          setBatchesFor(null)
+          setManaging(null)
+        }}
+        title={managing ? 'Correct this batch' : 'Batches on the shelf'}
+        sub={
+          managing
+            ? `${managing.medicineName} · batch ${managing.batchNumber}`
+            : batchesFor
+              ? `${batchesFor.name} ${batchesFor.strength}`.trim()
+              : undefined
+        }
       >
-        {(() => {
-          const batches = data.batches.filter((batch) => batch.medicineId === batchesFor?.id)
-          if (batches.length === 0) {
+        {managing ? (
+          <div className="space-y-4">
+            <Button variant="ghost" onClick={() => setManaging(null)}>
+              Back to the batches
+            </Button>
+            <BatchActions
+              key={managing.id}
+              batch={managing}
+              roles={data.session.roles}
+              run={run}
+              onDone={() => setManaging(null)}
+            />
+          </div>
+        ) : (
+          (() => {
+            const batches = data.batches.filter((batch) => batch.medicineId === batchesFor?.id)
+            if (batches.length === 0) {
+              return (
+                <EmptyState
+                  title="No stock on the shelf"
+                  direction="Receiving a supplier delivery, or importing a CSV, creates the first batch."
+                />
+              )
+            }
             return (
-              <EmptyState
-                title="No stock on the shelf"
-                direction="Receiving a supplier delivery, or importing a CSV, creates the first batch."
-              />
-            )
-          }
-          return (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Batch</TH>
-                  <TH>Expiry</TH>
-                  <TH num>Available</TH>
-                  <TH num>MRP</TH>
-                  <TH>From</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {batches.map((batch) => (
-                  <TR key={batch.id}>
-                    <TD num>{batch.batchNumber}</TD>
-                    <TD num>{formatExpiry(batch.expiry)}</TD>
-                    <TD num>{batch.availableQuantity}</TD>
-                    <TD num>{money(batch.mrp)}</TD>
-                    <TD className="text-ink-2">{batch.receivedFromSupplierName ?? '—'}</TD>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Batch</TH>
+                    <TH>Expiry</TH>
+                    <TH>Status</TH>
+                    <TH num>Available</TH>
+                    <TH num>Held back</TH>
+                    <TH>In packages</TH>
+                    <TH num>MRP</TH>
+                    <TH>From</TH>
+                    <TH>Correct</TH>
                   </TR>
-                ))}
-              </TBody>
-            </Table>
-          )
-        })()}
+                </THead>
+                <TBody>
+                  {batches.map((batch) => (
+                    <TR key={batch.id} muted={!batch.pickable}>
+                      <TD num>{batch.batchNumber}</TD>
+                      <TD num>
+                        {formatExpiry(batch.expiry)}
+                        {batch.expired ? (
+                          <span className="mt-0.5 block text-[11px] font-semibold text-stop">
+                            Expired
+                          </span>
+                        ) : null}
+                      </TD>
+                      <TD>
+                        <Badge
+                          tone={
+                            batch.status === 'active'
+                              ? batch.pickable
+                                ? 'free'
+                                : 'attn'
+                              : 'stop'
+                          }
+                        >
+                          {batch.status === 'active'
+                            ? batch.pickable
+                              ? 'Active'
+                              : 'Active but not pickable'
+                            : words(batch.status)}
+                        </Badge>
+                        {batch.statusReason ? (
+                          <span className="mt-0.5 block text-[12px] text-ink-2">
+                            {batch.statusReason}
+                          </span>
+                        ) : null}
+                      </TD>
+                      <TD num>
+                        {batch.availableQuantity}
+                        <span className="ml-1 text-[11px] text-ink-2">
+                          {plural(batch.baseUnit || 'unit', batch.availableQuantity)}
+                        </span>
+                      </TD>
+                      <TD num>
+                        {batch.quarantinedQuantity === 0 && batch.blockedQuantity === 0 ? (
+                          '—'
+                        ) : (
+                          <>
+                            {batch.quarantinedQuantity > 0 ? (
+                              <span className="block text-attn">
+                                {batch.quarantinedQuantity} quarantined
+                              </span>
+                            ) : null}
+                            {batch.blockedQuantity > 0 ? (
+                              <span className="block text-stop">
+                                {batch.blockedQuantity} blocked
+                              </span>
+                            ) : null}
+                          </>
+                        )}
+                      </TD>
+                      <TD className="text-ink-2">{batch.packageBreakdown || '—'}</TD>
+                      <TD num>{mrpWithBasis(batch)}</TD>
+                      <TD className="text-ink-2">{batch.receivedFromSupplierName ?? '—'}</TD>
+                      <TD>
+                        <Button
+                          size="sm"
+                          data-print="hide"
+                          disabled={busy}
+                          onClick={() => setManaging(batch)}
+                        >
+                          Correct
+                        </Button>
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )
+          })()
+        )}
       </Modal>
     </Stack>
   )

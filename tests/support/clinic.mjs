@@ -11,7 +11,7 @@
  * these helpers are for the database suite, and they start from empty.
  */
 import postgres from 'postgres'
-import { STAGING_DB_URL, runCommand, password } from './backend.mjs'
+import { STAGING_DB_URL, createSession, runCommand, password } from './backend.mjs'
 
 /**
  * A second connection, used only to reset between tests. The backend's own
@@ -98,6 +98,7 @@ export async function resetClinic() {
   for (const seq of [
     'appointment_token_seq', 'otc_receipt_seq', 'purchase_order_seq',
     'supplier_return_seq', 'stock_take_seq', 'prescription_number_seq',
+    'goods_receipt_seq', 'opening_count_seq',
   ]) {
     await admin.unsafe(`select setval('jmc.${seq}', 1, false)`)
   }
@@ -161,6 +162,23 @@ export function sessionFor(staff) {
 /** Run a command as a staff member. */
 export function as(staff, action, payload = {}) {
   return runCommand(sessionFor(staff), action, payload)
+}
+
+/**
+ * A real session token for a staff member.
+ *
+ * `sessionFor` builds the SessionView the command layer wants without a
+ * sign-in; the GET endpoints take a bearer token instead and resolve it
+ * themselves, so this signs in properly through the backend's own
+ * `createSession`. Each caller string is unique so one test's failed attempt
+ * cannot throttle another's.
+ */
+export async function tokenFor(staff) {
+  const result = await createSession(staff.id, staff.pin, `test-${staff.id}-${Math.random()}`)
+  if (!('token' in result)) {
+    throw new Error(`Could not sign in as ${staff.username}: ${JSON.stringify(result)}`)
+  }
+  return result.token
 }
 
 /** Read a single value out of the clinic, for assertions. */

@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import type { PrescriptionItemView, Role, SessionView } from './types.ts'
 import { deliveredOrderStatus } from './order-status.ts'
-import { hasRole } from './auth.ts'
 import { audit, db, isoNow, transaction } from './db.ts'
 import { hashPassword } from './password.ts'
 import { sendWhatsAppText } from './whatsapp.ts'
+import {
+  booleanValue, numberValue, optional, optionalDate, optionalPositiveInteger,
+  requireChoice, requireRole, sequence, value, type Payload,
+} from './command-input.ts'
+import { runInventoryCommand } from './inventory.ts'
 
 /**
  * Today, in the clinic rather than in Greenwich.
@@ -19,7 +23,6 @@ import { sendWhatsAppText } from './whatsapp.ts'
  */
 const CLINIC_TODAY = `(now() at time zone 'Asia/Kolkata')::date`
 
-type Payload = Record<string, unknown>
 type Line = { medicineId: string; quantity: number }
 
 type StructuredLine = PrescriptionItemView & {
@@ -51,42 +54,7 @@ type ClinicalFields = {
   followUpDate?: string
 }
 
-function value(payload: Payload, key: string) {
-  const result = payload[key]
-  if (result == null || String(result).trim() === '') throw new Error(`${key} is required.`)
-  return String(result).trim()
-}
 
-function optional(payload: Payload, key: string) {
-  return String(payload[key] ?? '').trim()
-}
-
-function numberValue(payload: Payload, key: string, minimum = 0) {
-  const result = Number(payload[key])
-  if (!Number.isFinite(result) || result < minimum) throw new Error(`${key} must be at least ${minimum}.`)
-  return result
-}
-
-function booleanValue(payload: Payload, key: string) {
-  return payload[key] === true || payload[key] === 1 || payload[key] === 'true'
-}
-
-function optionalPositiveInteger(payload: Payload, key: string): number | undefined {
-  const raw = optional(payload, key)
-  if (!raw) return undefined
-  const result = Number(raw)
-  if (!Number.isInteger(result) || result <= 0) throw new Error(`${key} must be a whole number above zero.`)
-  return result
-}
-
-function optionalDate(payload: Payload, key: string): string | undefined {
-  const result = optional(payload, key)
-  if (!result) return undefined
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(Date.parse(`${result}T00:00:00Z`))) {
-    throw new Error(`${key} is not a valid date.`)
-  }
-  return result
-}
 
 function clinicalFields(payload: Payload, requireDiagnosis: boolean): ClinicalFields {
   const diagnosis = optional(payload, 'diagnosis')
@@ -159,65 +127,9 @@ function requirePin(payload: Payload, key: string): string {
   return pin
 }
 
-function requireRole(session: SessionView, ...roles: Role[]) {
-  if (!hasRole(session, ...roles)) throw new Error('Your role cannot perform this action.')
-}
 
-function requireChoice<T extends string>(
-  payload: Payload,
-  key: string,
-  choices: readonly T[],
-  fallback?: T,
-) {
-  // A missing value takes the fallback where one is offered — a medicine added
-  // before the schedule field existed should become 'unset', not fail to save.
-  const raw = String(payload[key] ?? '').trim()
-  if (!raw && fallback !== undefined) return fallback
 
-  const result = value(payload, key) as T
-  if (!choices.includes(result)) throw new Error(`${key} is not valid.`)
-  return result
-}
 
-/**
- * The next number in a printed series — OTC-0008, PO-0042, JMC-0004.
- *
- * This used to count the rows in the table and add one, which fails in two
- * different ways that both end at the same place. Two tablets ringing up a sale
- * in the same second read the same count and mint the same receipt number; the
- * second insert dies on the unique index and the counter is told "The request
- * could not be completed." for a sale that was perfectly good. And a deleted
- * row lowers the count, so the series walks backwards over numbers that are
- * already printed on paper and written in somebody's ledger.
- *
- * Queue tokens are the quiet half of the same bug. `appointments.token` carries
- * no unique index, so nothing objects at all: two waiting patients simply hold
- * the same number, and one of them is called in for the other's consultation.
- *
- * A Postgres sequence hands each number to exactly one caller no matter what
- * else is happening, and it does so OUTSIDE the transaction — a sale that rolls
- * back burns its number and leaves a gap in the receipts. That is the right way
- * round: a missing number is a question somebody asks, a repeated one is two
- * documents that cannot be told apart afterwards.
- */
-const SERIES = {
-  JMC: 'appointment_token_seq',
-  OTC: 'otc_receipt_seq',
-  PO: 'purchase_order_seq',
-  RET: 'supplier_return_seq',
-  ST: 'stock_take_seq',
-  RX: 'prescription_number_seq',
-} as const
-
-async function sequence(prefix: keyof typeof SERIES) {
-  // A bigint arrives as a string, and padStart wants one anyway. Four digits is
-  // the floor rather than the width: the series is allowed to outgrow it, and
-  // OTC-10000 is still readable where a wrapped number would not be.
-  const row = (await db
-    .prepare(`select nextval('jmc.${SERIES[prefix]}') as value`)
-    .get()) as { value: string | number }
-  return `${prefix}-${String(row.value).padStart(prefix === 'RX' ? 6 : 4, '0')}`
-}
 
 /**
  * One shape for a moment in time, whoever wrote it.
@@ -577,8 +489,16 @@ async function allocateStock(
   referenceType: string,
   referenceId: string,
 ): Promise<Allocation[]> {
-  const rows = await db.prepare(`select id,batch_number,available_quantity,selling_price from batches
-    where medicine_id=? and available_quantity>0 and expiry::date>=${CLINIC_TODAY}
+  /*
+   * `status='active'` joined the eligibility rule in Slice 3, and it is not
+   * cosmetic. Before it, a batch the pharmacist had just marked RECALLED was
+   * still the earliest-expiring row with stock, so FEFO picked it first — the
+   * recall changed a column nobody read. Expired, recalled and held stock are
+   * now one question asked in one place: `jmc.batch_availability.pickable`.
+   */
+  const rows = await db.prepare(`select id,batch_number,available_quantity,selling_price
+    from batch_availability
+    where medicine_id=? and pickable
     order by expiry,id`).all(medicineId) as Array<{
       id: string
       batch_number: string
@@ -2173,10 +2093,15 @@ export async function runCommand(session: SessionView, action: string, payload: 
       const targetStock = Math.floor(numberValue(payload, 'targetStock'))
       if (targetStock < reorderLevel) throw new Error('Target stock must be at least the reorder level.')
       await transaction(async () => {
+        // The base unit is what `available_quantity` counts. It defaults to
+        // `unit`, which is what that column has always meant here, so an
+        // existing caller keeps working and the shelf figure keeps its name.
+        const baseUnit = optional(payload, 'baseUnit') || value(payload, 'unit')
         await db.prepare(`insert into medicines
           (id,code,name,generic_name,strength,dosage_form,route,unit,barcode,sale_class,schedule,
-           reorder_level,target_stock,preferred_supplier_id,active,created_at)
-          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+           reorder_level,target_stock,preferred_supplier_id,active,created_at,
+           base_unit,brand_name,manufacturer)
+          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
             id, value(payload, 'code').toUpperCase(), value(payload, 'name'), optional(payload, 'genericName'),
             optional(payload, 'strength'), optional(payload, 'dosageForm'), optional(payload, 'route'),
             value(payload, 'unit'), optional(payload, 'barcode'),
@@ -2186,6 +2111,7 @@ export async function runCommand(session: SessionView, action: string, payload: 
             requireChoice(payload, 'schedule', ['unset', 'OTC', 'H', 'H1', 'X'] as const, 'unset'),
             reorderLevel, targetStock,
             supplierId, 1, isoNow(),
+            baseUnit, optional(payload, 'brandName'), optional(payload, 'manufacturer'),
           )
         if (supplierId) {
           await db.prepare(`insert into supplier_medicines (supplier_id,medicine_id,active) values (?,?,1)
@@ -2195,11 +2121,12 @@ export async function runCommand(session: SessionView, action: string, payload: 
         if (initialQuantity > 0) {
           const batchId = randomUUID()
           await db.prepare(`insert into batches
-            (id,medicine_id,batch_number,expiry,available_quantity,mrp,purchase_price,selling_price,received_from_supplier_id,received_at)
-            values (?,?,?,?,?,?,?,?,?,?)`).run(
+            (id,medicine_id,batch_number,expiry,available_quantity,mrp,purchase_price,selling_price,
+             received_from_supplier_id,received_at,base_unit)
+            values (?,?,?,?,?,?,?,?,?,?,?)`).run(
               batchId, id, value(payload, 'batchNumber'), value(payload, 'expiry'), initialQuantity,
               numberValue(payload, 'mrp'), numberValue(payload, 'purchasePrice'), numberValue(payload, 'sellingPrice'),
-              supplierId, isoNow(),
+              supplierId, isoNow(), baseUnit,
             )
           await db.prepare(`insert into stock_movements
             (id,medicine_id,batch_id,movement_type,quantity_delta,reference_type,reference_id,actor_id,created_at)
@@ -2352,9 +2279,9 @@ export async function runCommand(session: SessionView, action: string, payload: 
         const supplier = await db.prepare('select name from suppliers where id=? and active=1').get(supplierId) as { name: string } | undefined
         if (!supplier) throw new Error('Choose an active supplier.')
         const lines = suppliedLines.length > 0 ? suppliedLines : (await db.prepare(`select m.id medicineId,m.name,
-          greatest(m.target_stock-coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=${CLINIC_TODAY}),0),1) quantity
+          greatest(m.target_stock-coalesce((select sum(b.available_quantity) from batch_availability b where b.medicine_id=m.id and b.pickable),0),1) quantity
           from medicines m join supplier_medicines sm on sm.medicine_id=m.id and sm.supplier_id=? and sm.active=1
-          where m.active=1 and coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=${CLINIC_TODAY}),0)<=m.reorder_level
+          where m.active=1 and coalesce((select sum(b.available_quantity) from batch_availability b where b.medicine_id=m.id and b.pickable),0)<=m.reorder_level
           group by m.id`).all(supplierId) as Array<{ medicineId: string; quantity: number }>)
         if (lines.length === 0) throw new Error('No low-stock medicines are linked to this supplier.')
         const namedLines: Array<{ medicineId: string; quantity: number; name: string }> = []
@@ -2438,11 +2365,13 @@ export async function runCommand(session: SessionView, action: string, payload: 
           }
           const batchId = randomUUID()
           await db.prepare(`insert into batches
-            (id,medicine_id,batch_number,expiry,available_quantity,mrp,purchase_price,selling_price,received_from_supplier_id,received_at)
-            values (?,?,?,?,?,?,?,?,?,?)`).run(
+            (id,medicine_id,batch_number,expiry,available_quantity,mrp,purchase_price,selling_price,
+             received_from_supplier_id,received_at,base_unit)
+            values (?,?,?,?,?,?,?,?,?,?,
+              (select coalesce(nullif(base_unit,''), unit) from medicines where id=?))`).run(
               batchId, line.medicine_id, value(entry, 'batchNumber'), value(entry, 'expiry'), quantity,
               numberValue(entry, 'mrp'), numberValue(entry, 'purchasePrice'), numberValue(entry, 'sellingPrice'),
-              order.supplier_id, isoNow(),
+              order.supplier_id, isoNow(), line.medicine_id,
             )
           await db.prepare('update purchase_order_lines set received_quantity=received_quantity+? where id=?').run(quantity, lineId)
           await db.prepare(`insert into stock_movements
@@ -2481,7 +2410,17 @@ export async function runCommand(session: SessionView, action: string, payload: 
       return { message: 'Patient message sent.' }
     }
 
+    /*
+     * Slice 3's formulary, package, receiving and stock commands live in
+     * inventory.ts. They are a third of the command surface and they share
+     * almost nothing with the clinical half above; keeping them here would
+     * have made this file the place everybody edits at once, which the brief
+     * names as the hotspot to avoid.
+     *
+     * It throws 'Unknown action.' for anything it does not recognise either,
+     * so the contract at this boundary is unchanged.
+     */
     default:
-      throw new Error('Unknown action.')
+      return runInventoryCommand(session, action, payload)
   }
 }

@@ -19,8 +19,12 @@ import type {
   ConsultationTemplateView,
   EncounterView,
   FollowUpView,
+  MedicineBarcodeView,
   MedicineView,
+  OpeningCountView,
   OtcSaleView,
+  PackageLevelView,
+  PackageVersionView,
   PatientView,
   PrescriptionItemView,
   PrescriptionView,
@@ -29,9 +33,11 @@ import type {
   SessionView,
   StaffView,
   SupplierView,
+  UnmappedBarcodeView,
   VitalView,
 } from './types.ts'
 import { db } from './db.ts'
+import { decompose, describeEntry, describeLadder, ladderFromRows } from './packages.ts'
 import { doctorLoggedIn, hasRole, legacyPinCount } from './auth.ts'
 import { whatsappStatus } from './whatsapp.ts'
 
@@ -196,6 +202,132 @@ function followUpView(r: Row): FollowUpView {
     note: text(r.note),
     status: text(r.status) as FollowUpView['status'],
     createdAt: text(r.created_at),
+  }
+}
+
+/** A PackageLevelView back into the shape `packages.ts` computes with. */
+function toLadderLevel(level: PackageLevelView) {
+  return {
+    levelName: level.levelName,
+    levelType: level.levelType,
+    contains: level.contains ?? null,
+    containsCount: level.containsCount ?? null,
+    depth: level.depth,
+    baseFactor: level.baseFactor,
+    receivable: level.receivable,
+    sellable: level.sellable,
+    breakable: level.breakable,
+    minimumSaleMultiple: level.minimumSaleMultiple,
+    mrpBasis: level.mrpBasis,
+    barcodeHint: level.barcodeHint,
+  }
+}
+
+/**
+ * "1 box, 3 strips and 4 tablets" for one batch, from that batch's own frozen
+ * snapshot.
+ *
+ * Never from the product's current package: a batch received when a strip held
+ * fifteen must keep reading in fifteens after the manufacturer moves to ten,
+ * or the figure on the screen is one the pharmacist cannot find on the shelf.
+ * A batch that predates Slice 3 has no snapshot and gets no breakdown, which
+ * is the honest answer rather than a decomposition using somebody else's pack.
+ */
+function batchBreakdown(row: Row): string {
+  const raw = row.package_snapshot
+  if (!raw) return ''
+  try {
+    const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
+      baseUnit: string
+      levels: PackageLevelView[]
+    }
+    if (!parsed?.levels?.length) return ''
+    const ladder = ladderFromRows(parsed.baseUnit, parsed.levels.map(toLadderLevel))
+    return describeEntry(decompose(ladder, num(row.available_quantity)))
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * The open opening count, with its entries.
+ *
+ * `expected_base_quantity` is NULL until the count is submitted, so while a
+ * pharmacist is counting this carries no expected figure to leak. That is not
+ * a filter applied here — there is nothing to filter.
+ */
+async function readOpeningCount(): Promise<OpeningCountView | null> {
+  const count = (await db.prepare(
+    `select c.id, c.reference, c.status, c.note, c.started_at, s.name as started_by_name
+       from opening_counts c join staff s on s.id = c.started_by
+      where c.status in ('counting','submitted','recount')
+      order by c.started_at desc limit 1`,
+  ).get()) as Row | undefined
+  if (!count) return null
+
+  /*
+   * While counting, no entry carries an expected figure — not even one from an
+   * earlier attempt that was already reviewed.
+   *
+   * A first-round entry keeps its expected quantity and variance for the
+   * record, and a count sent back for recount returns to `counting`-like
+   * status with those rows still present. Sending them and trusting the screen
+   * not to draw them would make the blind count a property of a React
+   * component: one refactor, one debug panel, one CSV export away from the
+   * counter seeing what the software expects before they count it.
+   *
+   * So it is enforced here. The numbers stay in the table, where the audit
+   * needs them, and simply do not leave the database until the count is
+   * submitted.
+   *
+   * An already-reviewed entry does not leave either. Its expected figure is
+   * hidden by the same rule, but the pharmacist's OWN earlier count is just as
+   * anchoring — being shown "you said 120 last time" is not a recount, it is
+   * an invitation to agree with yourself. `resolution = 'pending'` is exactly
+   * "this round"; everything the admin has ruled on belongs to the last one.
+   */
+  const blind = text(count.status) !== 'submitted'
+
+  const entries = await all(
+    `select e.id, e.batch_id, e.medicine_id, e.attempt, e.counted_base_quantity,
+            case when ? then null else e.expected_base_quantity end as expected_base_quantity,
+            case when ? then null else e.variance end as variance,
+            case when ? then null else e.variance_value end as variance_value,
+            e.resolution, e.review_note,
+            e.counted_at, s.name as counted_by_name, m.name as medicine_name, b.batch_number
+       from opening_count_entries e
+       join staff s on s.id = e.counted_by
+       join medicines m on m.id = e.medicine_id
+       join batches b on b.id = e.batch_id
+      where e.opening_count_id = ?
+        and (? = false or e.resolution = 'pending')
+      order by m.name, b.expiry, e.attempt`,
+    blind, blind, blind, text(count.id), blind,
+  )
+
+  return {
+    id: text(count.id),
+    reference: text(count.reference),
+    status: text(count.status) as OpeningCountView['status'],
+    startedByName: text(count.started_by_name),
+    startedAt: text(count.started_at),
+    note: text(count.note),
+    entries: entries.map((r) => ({
+      id: text(r.id),
+      batchId: text(r.batch_id),
+      medicineId: text(r.medicine_id),
+      medicineName: text(r.medicine_name),
+      batchNumber: text(r.batch_number),
+      attempt: num(r.attempt),
+      countedBaseQuantity: num(r.counted_base_quantity),
+      countedByName: text(r.counted_by_name),
+      countedAt: text(r.counted_at),
+      expectedBaseQuantity: r.expected_base_quantity === null ? null : num(r.expected_base_quantity),
+      variance: r.variance === null ? null : num(r.variance),
+      varianceValue: r.variance_value === null ? null : num(r.variance_value),
+      resolution: text(r.resolution) as OpeningCountView['entries'][number]['resolution'],
+      reviewNote: text(r.review_note),
+    })),
   }
 }
 
@@ -545,30 +677,160 @@ export async function readSnapshot(
       }))
     : []
 
+  /*
+   * Package ladders, read before the medicines that quote them.
+   *
+   * Small — a handful of rows per product — so it belongs in the polled
+   * snapshot rather than behind an on-demand fetch: the counter needs the
+   * sellable levels to draw its buttons, and a round trip per medicine would
+   * make the tablet feel broken. The ledgers, receipt history and count sheets
+   * that are NOT small stay out, as the brief requires.
+   */
+  const packageLevelRows = shelf
+    ? await all(`select l.package_version_id, l.level_name, l.level_type, l.child_count,
+          l.base_factor, l.depth, l.receivable, l.sellable, l.breakable,
+          l.minimum_sale_multiple, l.mrp_basis, l.barcode_hint,
+          (select c.level_name from package_levels c where c.id = l.child_level_id) as contains
+        from package_levels l order by l.package_version_id, l.depth`)
+    : []
+
+  const levelsByVersion = new Map<string, PackageLevelView[]>()
+  for (const row of packageLevelRows) {
+    const list = levelsByVersion.get(text(row.package_version_id)) ?? []
+    list.push({
+      levelName: text(row.level_name),
+      levelType: text(row.level_type),
+      contains: optional(row.contains),
+      containsCount: row.child_count === null ? undefined : num(row.child_count),
+      depth: num(row.depth),
+      baseFactor: num(row.base_factor),
+      receivable: flag(row.receivable),
+      sellable: flag(row.sellable),
+      breakable: flag(row.breakable),
+      minimumSaleMultiple: num(row.minimum_sale_multiple),
+      mrpBasis: flag(row.mrp_basis),
+      barcodeHint: text(row.barcode_hint),
+    })
+    levelsByVersion.set(text(row.package_version_id), list)
+  }
+
+  const packages: PackageVersionView[] = shelf
+    ? (await all(`select p.id, p.medicine_id, p.version, p.base_unit, p.status,
+          p.verification_source, p.verified_at, s.name as verified_by_name
+        from package_versions p left join staff s on s.id = p.verified_by
+        order by p.medicine_id, p.version desc`)).map((r) => {
+        const levels = levelsByVersion.get(text(r.id)) ?? []
+        return {
+          id: text(r.id),
+          medicineId: text(r.medicine_id),
+          version: num(r.version),
+          baseUnit: text(r.base_unit),
+          status: text(r.status) as PackageVersionView['status'],
+          summary: levels.length
+            ? describeLadder(ladderFromRows(text(r.base_unit), levels.map(toLadderLevel)))
+            : `1 ${text(r.base_unit)}`,
+          verificationSource: text(r.verification_source),
+          verifiedByName: optional(r.verified_by_name),
+          verifiedAt: optional(r.verified_at),
+          levels,
+        }
+      })
+    : []
+
+  // Retired versions are carried rather than filtered out. A pharmacist who
+  // retires a package and then sees it simply vanish cannot tell that from
+  // having deleted it, and the batches that arrived under it still exist.
+  const activePackage = new Map<string, PackageVersionView>()
+  for (const version of packages) {
+    if (version.status === 'verified' && !activePackage.has(version.medicineId)) {
+      activePackage.set(version.medicineId, version)
+    }
+  }
+
   const medicines: MedicineView[] = (await all(`select m.*,s.name preferred_supplier_name,
-      coalesce((select sum(b.available_quantity) from batches b where b.medicine_id=m.id and b.expiry::date>=${CLINIC_TODAY}),0) total_available
-    from medicines m left join suppliers s on s.id=m.preferred_supplier_id order by m.name`)).map((r) => ({
-      id: text(r.id), code: text(r.code), name: text(r.name), genericName: text(r.generic_name),
-      strength: text(r.strength), dosageForm: text(r.dosage_form), route: text(r.route),
-      unit: text(r.unit), barcode: text(r.barcode), saleClass: text(r.sale_class) as MedicineView['saleClass'],
-      schedule: text(r.schedule) as MedicineView['schedule'],
-      reorderLevel: num(r.reorder_level), targetStock: num(r.target_stock), preferredSupplierId: optional(r.preferred_supplier_id),
-      preferredSupplierName: optional(r.preferred_supplier_name), totalAvailable: num(r.total_available), active: flag(r.active),
-    }))
+      d.display_name as clinical_drug_name,
+      coalesce((select sum(b.available_quantity) from batch_availability b where b.medicine_id=m.id and b.pickable),0) total_available,
+      coalesce((select sum(b.quarantined_quantity) from batches b where b.medicine_id=m.id),0) quarantined_quantity,
+      coalesce((select sum(b.blocked_quantity) from batches b where b.medicine_id=m.id),0) blocked_quantity
+    from medicines m
+    left join suppliers s on s.id=m.preferred_supplier_id
+    left join clinical_drugs d on d.id=m.clinical_drug_id
+    order by m.name`)).map((r) => {
+      const pack = activePackage.get(text(r.id))
+      return {
+        id: text(r.id), code: text(r.code), name: text(r.name), genericName: text(r.generic_name),
+        strength: text(r.strength), dosageForm: text(r.dosage_form), route: text(r.route),
+        unit: text(r.unit), barcode: text(r.barcode), saleClass: text(r.sale_class) as MedicineView['saleClass'],
+        schedule: text(r.schedule) as MedicineView['schedule'],
+        reorderLevel: num(r.reorder_level), targetStock: num(r.target_stock),
+        preferredSupplierId: optional(r.preferred_supplier_id),
+        preferredSupplierName: optional(r.preferred_supplier_name),
+        totalAvailable: num(r.total_available), active: flag(r.active),
+        baseUnit: text(r.base_unit) || text(r.unit),
+        brandName: text(r.brand_name),
+        manufacturer: text(r.manufacturer),
+        clinicalDrugId: optional(r.clinical_drug_id),
+        clinicalDrugName: optional(r.clinical_drug_name),
+        scheduleVerified: Boolean(r.schedule_verified_at),
+        scheduleSource: text(r.schedule_source),
+        activePackageVersionId: pack?.id,
+        packageSummary: pack?.summary ?? '',
+        quarantinedQuantity: num(r.quarantined_quantity),
+        blockedQuantity: num(r.blocked_quantity),
+      }
+    })
 
   // Every batch in the building, which is a per-strip list and the longest
   // thing here. Only the three shelf stations spend it: Inventory, Expiring and
   // Stock-take. A nurse has none of them and was carrying all of it.
   const batches: BatchView[] = shelf
-    ? (await all(`select b.*,m.name medicine_name,s.name received_from_supplier_name from batches b
-        join medicines m on m.id=b.medicine_id left join suppliers s on s.id=b.received_from_supplier_id
+    ? (await all(`select b.*, a.pickable, a.expired,
+          m.name medicine_name, s.name received_from_supplier_name
+        from batches b
+        join batch_availability a on a.id = b.id
+        join medicines m on m.id=b.medicine_id
+        left join suppliers s on s.id=b.received_from_supplier_id
         order by m.name,b.expiry`)).map((r) => ({
         id: text(r.id), medicineId: text(r.medicine_id), medicineName: text(r.medicine_name), batchNumber: text(r.batch_number),
         expiry: text(r.expiry), availableQuantity: num(r.available_quantity), mrp: num(r.mrp), purchasePrice: num(r.purchase_price),
         sellingPrice: num(r.selling_price), receivedFromSupplierId: optional(r.received_from_supplier_id),
         receivedFromSupplierName: optional(r.received_from_supplier_name), receivedAt: text(r.received_at),
+        status: text(r.status) as BatchView['status'],
+        statusReason: text(r.status_reason),
+        quarantinedQuantity: num(r.quarantined_quantity),
+        blockedQuantity: num(r.blocked_quantity),
+        baseUnit: text(r.base_unit),
+        pickable: flag(r.pickable),
+        expired: flag(r.expired),
+        mrpBasisLevel: text(r.mrp_basis_level),
+        mrpBasisFactor: num(r.mrp_basis_factor) || 1,
+        purchaseBasisLevel: text(r.purchase_basis_level),
+        purchaseBasisFactor: num(r.purchase_basis_factor) || 1,
+        packageVersionId: optional(r.package_version_id),
+        packageBreakdown: batchBreakdown(r),
       }))
     : []
+
+  const medicineBarcodes: MedicineBarcodeView[] = shelf
+    ? (await all(`select c.code, c.medicine_id, c.level_name, c.symbology, c.carries_batch,
+          v.name as verified_by_name
+        from medicine_barcodes c left join staff v on v.id = c.verified_by
+        order by c.medicine_id, c.level_name`)).map((r) => ({
+        code: text(r.code), medicineId: text(r.medicine_id), levelName: text(r.level_name),
+        symbology: text(r.symbology), carriesBatch: flag(r.carries_batch),
+        verifiedByName: optional(r.verified_by_name),
+      }))
+    : []
+
+  const unmappedBarcodes: UnmappedBarcodeView[] = supplyNetwork
+    ? (await all(`select code, symbology, seen_count, last_seen_at from unmapped_barcodes
+        where resolved_at is null order by last_seen_at desc limit 50`)).map((r) => ({
+        code: text(r.code), symbology: text(r.symbology),
+        seenCount: num(r.seen_count), lastSeenAt: text(r.last_seen_at),
+      }))
+    : []
+
+  const openingCount: OpeningCountView | null = shelf ? await readOpeningCount() : null
 
   // Suppliers and the orders placed with them are the buying side of the
   // clinic, and the two stations that show them — Suppliers and Orders, plus
@@ -666,6 +928,10 @@ export async function readSnapshot(
     beds,
     medicines,
     batches,
+    packages,
+    medicineBarcodes,
+    unmappedBarcodes,
+    openingCount,
     suppliers,
     orders,
     otcSales,

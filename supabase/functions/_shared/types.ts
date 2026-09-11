@@ -306,7 +306,21 @@ export type SaleClass = 'otc' | 'prescription' | 'restricted' | 'unknown'
  * 'unset' is the honest default for a medicine nobody has classified yet. The
  * register counts them and refuses to call itself complete while any remain.
  */
-export type DrugSchedule = 'unset' | 'OTC' | 'H' | 'H1' | 'X'
+/**
+ * What a medicine legally IS, under the Drugs and Cosmetics Rules.
+ *
+ * `unset` is Unknown / pharmacist review required, and it is refused from the
+ * anonymous counter path. It is never inferred from `saleClass`, which is a
+ * selling rule: `restricted` could be H1 or X, and a register that guesses is
+ * one an inspector can fault in both directions.
+ *
+ * Slice 3 widened this. `classify_medicine` had always accepted G, C, C1 and
+ * `other` — Indian practice uses all of them — while this union still listed
+ * five, so a medicine classified `G` came back through the snapshot as a value
+ * the type said could not exist. Nothing failed; a switch on it simply fell
+ * through to whatever the last branch was.
+ */
+export type DrugSchedule = 'unset' | 'OTC' | 'H' | 'H1' | 'X' | 'G' | 'C' | 'C1' | 'other'
 
 export interface MedicineView {
   id: string
@@ -326,6 +340,28 @@ export interface MedicineView {
   preferredSupplierName?: string
   totalAvailable: number
   active: boolean
+
+  // ── Slice 3 ──────────────────────────────────────────────────────────────
+  /** The smallest countable item the clinic stocks. What `totalAvailable` counts. */
+  baseUnit: string
+  brandName: string
+  manufacturer: string
+  /** Empty until a pharmacist links it. Never guessed from the shelf label. */
+  clinicalDrugId?: string
+  clinicalDrugName?: string
+  /**
+   * A classification is a fact somebody checked, not a colour. Unverified means
+   * the anonymous counter path refuses it, whatever `schedule` says.
+   */
+  scheduleVerified: boolean
+  scheduleSource: string
+  /** The newest verified package. Absent means stock cannot be received yet. */
+  activePackageVersionId?: string
+  /** "1 box = 10 strips = 150 tablets", for the screen. */
+  packageSummary: string
+  /** Quantities that exist but cannot be sold, so a shelf figure is never a surprise. */
+  quarantinedQuantity: number
+  blockedQuantity: number
 }
 
 export interface BatchView {
@@ -335,12 +371,127 @@ export interface BatchView {
   batchNumber: string
   expiry: string
   availableQuantity: number
+  /** The printed figure. `mrpBasisLevel`/`mrpBasisFactor` say what it is FOR. */
   mrp: number
+  /** Per base unit. */
   purchasePrice: number
+  /** Per base unit. */
   sellingPrice: number
   receivedFromSupplierId?: string
   receivedFromSupplierName?: string
   receivedAt: string
+
+  // ── Slice 3 ──────────────────────────────────────────────────────────────
+  status: 'active' | 'recalled' | 'blocked'
+  statusReason: string
+  quarantinedQuantity: number
+  blockedQuantity: number
+  baseUnit: string
+  /** False for expired, recalled or blocked stock. One question, one answer. */
+  pickable: boolean
+  expired: boolean
+  mrpBasisLevel: string
+  mrpBasisFactor: number
+  purchaseBasisLevel: string
+  purchaseBasisFactor: number
+  packageVersionId?: string
+  /**
+   * "1 box, 3 strips and 4 tablets", using THIS batch's frozen conversion.
+   * Per batch and never per medicine: a shelf holding strips of fifteen and
+   * strips of ten has no single correct decomposition.
+   */
+  packageBreakdown: string
+}
+
+/** One rung of a package ladder. */
+export interface PackageLevelView {
+  levelName: string
+  levelType: string
+  contains?: string
+  containsCount?: number
+  depth: number
+  baseFactor: number
+  receivable: boolean
+  sellable: boolean
+  breakable: boolean
+  minimumSaleMultiple: number
+  mrpBasis: boolean
+  /** The code printed on this level, if the builder recorded one. */
+  barcodeHint: string
+}
+
+/** A code mapped to one package level of one product. */
+export interface MedicineBarcodeView {
+  code: string
+  medicineId: string
+  levelName: string
+  symbology: string
+  /**
+   * False for an ordinary GTIN, which identifies the trade item and NOT the
+   * lot. Only a GS1-128, DataMatrix or QR payload carrying application
+   * identifiers (10) and (17) says otherwise.
+   */
+  carriesBatch: boolean
+  verifiedByName?: string
+}
+
+/**
+ * A package SKU as it stood at one point in time.
+ *
+ * Versioned rather than edited: when a strip goes from fifteen tablets to ten,
+ * the old version stays for the batches that arrived under it and a new one is
+ * created for new stock.
+ */
+export interface PackageVersionView {
+  id: string
+  medicineId: string
+  version: number
+  baseUnit: string
+  status: 'draft' | 'verified' | 'retired'
+  summary: string
+  verificationSource: string
+  verifiedByName?: string
+  verifiedAt?: string
+  levels: PackageLevelView[]
+}
+
+/** A scanned code nobody has mapped yet — a queue for the admin, not an error. */
+export interface UnmappedBarcodeView {
+  code: string
+  symbology: string
+  seenCount: number
+  lastSeenAt: string
+}
+
+export interface OpeningCountEntryView {
+  id: string
+  batchId: string
+  medicineId: string
+  medicineName: string
+  batchNumber: string
+  attempt: number
+  countedBaseQuantity: number
+  countedByName: string
+  countedAt: string
+  /**
+   * Null while counting. That is the blind count: the figure is not withheld
+   * by the screen, it has not been written yet.
+   */
+  expectedBaseQuantity: number | null
+  variance: number | null
+  varianceValue: number | null
+  resolution: 'pending' | 'approved' | 'recount_requested' | 'rejected'
+  reviewNote: string
+}
+
+export interface OpeningCountView {
+  id: string
+  reference: string
+  status: 'counting' | 'submitted' | 'recount' | 'approved' | 'abandoned'
+  startedByName: string
+  startedAt: string
+  note: string
+  entries: OpeningCountEntryView[]
 }
 
 export interface SupplierView {
@@ -576,6 +727,12 @@ export interface ClinicSnapshot {
   beds: BedView[]
   medicines: MedicineView[]
   batches: BatchView[]
+  /** Package ladders for every product that has one. Shelf roles only. */
+  packages: PackageVersionView[]
+  /** What each mapped code means, so a screen can show it and spot a clash. */
+  medicineBarcodes: MedicineBarcodeView[]
+  unmappedBarcodes: UnmappedBarcodeView[]
+  openingCount: OpeningCountView | null
   suppliers: SupplierView[]
   orders: PurchaseOrderView[]
   otcSales: OtcSaleView[]

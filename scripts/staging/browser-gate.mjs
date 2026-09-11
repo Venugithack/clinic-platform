@@ -136,7 +136,10 @@ async function main() {
   step('journeys')
   const tests = spawn(
     process.execPath,
-    ['--test', '--test-concurrency=1', 'tests/browser/clinic-gate.test.mjs'],
+    // Every journey file, one at a time. They share one browser and one
+    // database, so concurrency here is two tests signing in as different
+    // people into the same tab.
+    ['--test', '--test-concurrency=1', 'tests/browser/*.test.mjs'],
     { stdio: 'inherit', env: { ...process.env, STAGING_DB_URL: url } },
   )
 

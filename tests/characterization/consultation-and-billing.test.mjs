@@ -297,25 +297,82 @@ describe('paying a bill', () => {
   })
 })
 
-describe('money is stored as float, which is a rounding bug waiting for volume', () => {
-  test('bills.amount is `real`, and a sum of realistic fees is already wrong', async () => {
+describe('money is exact, because a rupee is not a measurement', () => {
+  // This began as a characterization of a defect: every money column was
+  // `real`, and the test asserted the drift rather than the fix, because the
+  // fix belonged with the code that does money arithmetic. Slice 3 made the
+  // conversion, so the assertion is now the other way round. The float
+  // arithmetic is still exercised below, because the reason to leave the type
+  // does not stop being true once you have left it.
+  test('every money column is numeric, and none is float', async () => {
     await resetClinic()
 
-    assert.equal(
-      await scalar(
-        `select data_type from information_schema.columns
-          where table_schema='jmc' and table_name='bills' and column_name='amount'`,
-      ),
-      'real',
+    const floats = await rows(
+      `select table_name||'.'||column_name as column
+         from information_schema.columns
+        where table_schema='jmc'
+          and data_type in ('real','double precision')
+          and column_name not in ('temperature','weight')
+        order by 1`,
     )
+    assert.deepEqual(floats.map((row) => row.column), [])
 
-    // Not a hypothetical. sum(real) is real in Postgres, so the error is not
-    // even promoted away by aggregating: a hundred bills of 33.33 do not add
-    // up to 3333.00, and this is the exact shape of the day-book total.
-    const summed = Number(await scalar(
+    // The ones that carry rupees, named rather than counted, so a money column
+    // added later as `real` fails here instead of passing by absence.
+    for (const [table, column] of [
+      ['bills', 'amount'],
+      ['batches', 'mrp'],
+      ['batches', 'purchase_price'],
+      ['batches', 'selling_price'],
+      ['otc_sales', 'total'],
+      ['clinic_settings', 'consultation_fee'],
+      ['cash_movements', 'amount'],
+      ['till_sessions', 'expected_cash'],
+      ['stock_writeoffs', 'cost_value'],
+      ['supplier_returns', 'expected_credit'],
+    ]) {
+      assert.equal(
+        await scalar(
+          `select data_type from information_schema.columns
+            where table_schema='jmc' and table_name=$1 and column_name=$2`,
+          [table, column],
+        ),
+        'numeric',
+        `${table}.${column} must hold exact decimal rupees`,
+      )
+    }
+  })
+
+  test('a hundred bills of 33.33 now add up to exactly 3333.00', async () => {
+    await resetClinic()
+
+    // The same sum that drifted while the column was `real`. sum(real) is real
+    // in Postgres, so aggregating did not promote the error away — a hundred
+    // fees of ₹33.33 came to 3332.9995 and that is the shape of the day-book
+    // total.
+    const asFloat = Number(await scalar(
       `select sum(v)::real from (select 33.33::real as v from generate_series(1,100)) t`,
     ))
-    assert.notEqual(summed, 3333)
-    assert.ok(Math.abs(summed - 3333) > 0.0001, `expected drift, got ${summed}`)
+    assert.ok(Math.abs(asFloat - 3333) > 0.0001, `float drift is the reason; got ${asFloat}`)
+
+    const asNumeric = String(await scalar(
+      `select sum(v) from (select 33.33::numeric(12,2) as v from generate_series(1,100)) t`,
+    ))
+    assert.equal(asNumeric, '3333.00')
+  })
+
+  test('and a bill written through the application comes back to the paisa', async () => {
+    const { doctor } = await clinic()
+    const patientId = await addPatient(doctor)
+
+    await as(doctor, 'sign_consultation', {
+      patientId, complaint: 'Fever', diagnosis: 'Acute viral febrile illness',
+      diagnosisStatus: 'provisional', consultationFee: 33.33,
+    })
+
+    assert.equal(
+      String(await scalar(`select amount from jmc.bills order by created_at desc limit 1`)),
+      '33.33',
+    )
   })
 })

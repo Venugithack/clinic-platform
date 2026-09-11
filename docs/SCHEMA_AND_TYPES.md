@@ -1544,3 +1544,166 @@ programme queries production. The test asserts the pessimistic case — a role
 with neither `SUPERUSER` nor `BYPASSRLS` — so the application is now known to
 work whether or not the deployed role holds them. Confirming what the deployed
 role actually is remains a deployment-time check, not a staging one.
+
+---
+
+## 8. Slice 3: identity, packages and stock
+
+### 8.1 The three things that used to be one row
+
+`jmc.medicines` carried a brand name, a strength as free text, one `unit`
+column and a reorder level; `jmc.batches` carried a quantity in that same
+unnamed unit. That is enough for a pharmacy that only ever stocks tablets in
+one pack size and never changes it, and it is wrong the first time a supplier
+ships strips of ten where they used to ship fifteen — because `150` in
+`available_quantity` then means "ten strips" or "fifteen strips" depending on a
+fact the database does not hold.
+
+Slice 3 separates them:
+
+```text
+substance        clinical drug              product        package version   batch     ledger
+Paracetamol  ->  500 mg tablet (oral)  ->   Calpol 500  ->  strip of 15   ->  HIST-1 -> -349 tablets
+                                            (GSK)           box of 10 strips
+```
+
+Clinical identity is above the line, inventory below it. A doctor prescribes a
+clinical drug or a product; the pharmacy receives a package and moves base
+units. Neither can silently become the other.
+
+| Table | What it holds |
+|---|---|
+| `substances` | An ingredient, deduplicated on a normalized name. `source` says which authority the row came from; `clinic` means a pharmacist typed it. |
+| `clinical_drugs` + `clinical_drug_ingredients` | Ingredient(s) + strength + dose form + route/release. Strength is `numeric` with a unit and an optional per-amount, so "125 mg per 5 mL" and "500 mg + 125 mg" are both representable. `identity_key` is a sorted, normalized digest built by the command layer: two people typing the same drug get one row, and 500 mg never merges with 650 mg. |
+| `medicines` (extended) | Still the product. Gains `clinical_drug_id` (nullable — every existing product starts unlinked), `brand_name`, `manufacturer`, `base_unit`, and the provenance of its regulatory class. |
+| `package_versions` + `package_levels` | A versioned SKU and the chain of levels under it. |
+| `medicine_barcodes`, `unmapped_barcodes` | What a scan means, and the queue of scans that mean nothing yet. |
+| `batches` (extended) | The frozen receipt-time conversion, the price bases, and three quantity pools. |
+| `goods_receipts` + `goods_receipt_lines` | What actually arrived. A purchase order adds no stock; this does. |
+| `opening_counts` + `opening_count_entries` | The blind count, its review, and the adjustments it posts. |
+
+**No terminology was imported.** The brief and the research document both refuse
+to redistribute a licensed vocabulary without confirming the applicable terms.
+These tables are created empty and filled by the clinic typing what is on the
+pack; the `source`/`source_code`/`source_version` columns exist so that mapping
+to a licensed set later is an update rather than a migration.
+
+### 8.2 The ladder, and why it is a chain rather than two columns
+
+Each level names the level directly inside it and how many of them it holds.
+`base_factor` and `depth` are stored rather than computed on read, because a
+batch snapshot has to freeze them and every stock query multiplies by them —
+and because a wrong `base_factor` does not look wrong, it looks like a pack
+size.
+
+`jmc.enforce_package_level_chain()` keeps them honest on every insert and
+update: the contained level must belong to the same version, sit exactly one
+step below, and satisfy `base_factor = child.base_factor × child_count`. With
+`unique (package_version_id, depth)` and a unique index on `child_level_id`,
+that makes a fork impossible and a cycle unconstructible — following child
+links strictly decreases an integer bounded below by zero.
+
+`child_count` is `integer`, which is what actually keeps measured dispensing
+out. There is no way to express 100 mL inside one bottle, because the clinic
+answered "no" to dividing an opened container (approval pack §8.A) and a
+fraction cannot be stored at all.
+
+A **verified** version is frozen: `jmc.protect_verified_package()` refuses every
+edit to its levels and to the fields that define it. A changed pack size is a
+new version. `medicine_active_package` is the newest verified one, and
+receiving refuses anything else — which is what makes "verify it against the
+physical pack" a control rather than a habit.
+
+### 8.3 The ledger is the truth
+
+`stock_movements` gains a `bucket` (`available` / `quarantine` / `blocked`),
+the `package_entry` the person actually typed, a `reason`, an `approved_by`,
+and `reverses_movement_id`. It is append-only, enforced:
+`jmc.reject_stock_movement_change()` refuses UPDATE and DELETE, because a
+ledger somebody can edit is a balance, and a balance cannot be audited.
+
+`jmc.batch_ledger_reconciliation` exposes the drift between each batch's three
+cached quantities and the sum of its movements per bucket. The Slice 3 suite
+asserts it reads zero after receiving, releasing quarantine, holding stock and
+writing stock off. Nothing in the application can change a quantity except
+`moveStock`, which writes both halves in one statement pair inside one
+transaction, and whose `where` clause carries the arithmetic
+(`set x = x - ? where x >= ?`) so two transactions racing for the last tablet
+cannot both win.
+
+Batch eligibility is asked in exactly one place — `jmc.batch_availability`'s
+`pickable`, which is `status = 'active' and available_quantity > 0 and not
+expired`, with expiry compared in clinic time. FEFO reads it. **This closed a
+live defect:** before Slice 3, `allocateStock` filtered on quantity and expiry
+only, so a batch a pharmacist had just marked recalled was still the
+earliest-expiring row with stock and FEFO picked it first. The recall changed a
+column nothing read.
+
+### 8.4 Money stopped being approximate
+
+Every money column was `real` — about seven significant decimal digits, which a
+rupee amount of 99,999.99 already consumes. They are `numeric(12,2)` now, and
+the backend does its arithmetic in integer paise through
+`supabase/functions/_shared/money.ts`. Amounts are parsed at the edge, formatted
+at the edge, and never added as floating point in between.
+
+Two money conventions to know:
+
+- `batches.mrp` is the **printed** figure, and `mrp_basis_level` /
+  `mrp_basis_factor` say what it is for — "₹30 per strip of 15", never a bare
+  ₹30. A batch received before Slice 3 has a null factor, which reads as 1, so
+  its `mrp` was already per base unit and the two generations agree without
+  either being rewritten.
+- `selling_price` and `purchase_price` stay **per base unit**, because every
+  existing reader — the day book, the OTC line total, the write-off cost, the
+  stock-take variance — multiplies them by a base quantity.
+
+### 8.5 The blind count is blind in the data
+
+Policy register 14: the pharmacist counts without seeing what the software
+expects. That is enforced where the rows are read, not where they are drawn.
+
+- `opening_count_entries.expected_base_quantity` is NULL until the count is
+  submitted. While counting, the number does not exist to be leaked.
+- While the count's status is not `submitted`, `readOpeningCount` nulls the
+  expected figure, the variance and its value, **and returns only entries whose
+  resolution is still `pending`**. A recount that can see the first round's
+  answer — even the pharmacist's own earlier count — is not a recount, it is an
+  invitation to agree with yourself.
+- The figures stay in the table throughout, because the audit needs them.
+
+A browser journey checks the same claim about the screen, by asserting that the
+exact shelf quantity of a batch received minutes earlier appears nowhere in the
+counting sheet's rendered text.
+
+### 8.6 What the UI review found in this contract
+
+The Slice 3 screens were built against the frozen types and reported seven
+gaps. Five were real and are fixed here rather than worked around:
+
+| Gap | Fix |
+|---|---|
+| `DrugSchedule` listed five values; `classify_medicine` accepted nine. A medicine classified `G` came back as a value the type said was impossible. | The union now matches the command. |
+| Mapped barcodes never reached the snapshot, so a screen could not show what a code means or spot a clash before the server refused it. | `ClinicSnapshot.medicineBarcodes`, shelf roles only. |
+| Retired package versions were filtered out of the snapshot, so retiring one looked identical to deleting it. | Retired versions are carried, with their status. |
+| `link_medicine_identity` used `coalesce(nullif(?, ''), …)` for every field, so a wrongly linked clinical drug could be replaced but never cleared. | An explicit `clear: ['clinicalDrugId', …]`, refused alongside a value for the same field. |
+| A recount's blindness rested entirely on the screen declining to render rows the server had sent. | §8.5 above. |
+
+Two were noted and left: pack photographs for catalogue verification need an
+object-storage command that does not exist until Slice 5, and `barcodeHint` is
+now on `PackageLevelView` but the builder does not offer a field for it.
+
+### 8.7 What Slice 4 inherits
+
+- Every active product has a base unit, and every batch counts in one.
+- A sale can be expressed at any configured **sellable** level and converted by
+  one function, `baseQuantityOf`, which refuses a level that is not sellable and
+  a quantity that breaks the minimum sale multiple.
+- A price can be converted from its basis to any quantity by `proRata`, which
+  multiplies before it divides and rounds once, half-up — the same rounding
+  `numeric`'s own `round()` does, so a figure computed in TypeScript and one
+  computed in SQL agree.
+- Eligibility is one boolean on one view.
+- `medicines.schedule = 'unset'` is Unknown / pharmacist review required, and
+  `schedule_verified_at` says whether anybody checked. Slice 4's anonymous OTC
+  path refuses both.
