@@ -80,12 +80,20 @@ async function clinicWithHistory() {
     dosage: '1-0-1', instructions: 'After food', ...extra,
   }])
 
+  // `valid_until` is set explicitly and in the future.
+  //
+  // Slice 4 gives every prescription a remainder-validity date, defaulting to
+  // seven days from signing — so left alone these 2024 rows would be refused
+  // at the counter for being out of date, which is correct and is not what
+  // this file is about. The validity rule has its own tests in the Slice 4
+  // gate; here the question is what happens to a line nobody can read.
   await rows(
-    `insert into jmc.prescriptions (id,patient_id,encounter_id,doctor_id,items_json,signed_at,prescription_number)
-     values ('hist-gone',$1,'hist-e1',$2,$3,'2024-02-01T10:05:00Z','RX-900001'),
-            ('hist-noqty',$1,'hist-e2',$2,$4,'2024-02-02T10:05:00Z','RX-900002'),
-            ('hist-zeroqty',$1,'hist-e3',$2,$5,'2024-02-03T10:05:00Z','RX-900003'),
-            ('hist-normal',$1,'hist-e4',$2,$6,'2024-02-04T10:05:00Z','RX-900004')`,
+    `insert into jmc.prescriptions
+       (id,patient_id,encounter_id,doctor_id,items_json,signed_at,prescription_number,valid_until)
+     values ('hist-gone',$1,'hist-e1',$2,$3,'2024-02-01T10:05:00Z','RX-900001', current_date + 30),
+            ('hist-noqty',$1,'hist-e2',$2,$4,'2024-02-02T10:05:00Z','RX-900002', current_date + 30),
+            ('hist-zeroqty',$1,'hist-e3',$2,$5,'2024-02-03T10:05:00Z','RX-900003', current_date + 30),
+            ('hist-normal',$1,'hist-e4',$2,$6,'2024-02-04T10:05:00Z','RX-900004', current_date + 30)`,
     [
       patientId, doctor.id,
       item('medicine-deleted-long-ago', { quantity: 6 }),
@@ -175,7 +183,7 @@ describe('a legacy item with no usable quantity', () => {
     const { doctor, patientId, medicineId } = await clinicWithHistory()
     const payload = {
       patientId, complaint: 'Fever', diagnosis: 'Acute viral febrile illness',
-      diagnosisStatus: 'provisional', consultationFee: 0,
+      diagnosisStatus: 'provisional', feeWaived: true, feeReason: 'Not what this test is about',
       prescriptionItems: [{ medicineId, instructions: 'After food', quantity: 0 }],
     }
     await assert.rejects(as(doctor, 'sign_consultation', payload), /quantity/i)
@@ -323,14 +331,19 @@ describe('an unresolved line cannot be handed over', () => {
     assert.equal(cancelled.dispensable, false)
     assert.equal(cancelled.needs_review, false)
 
-    // A prescription whose only line is cancelled completes without moving
-    // anything off the shelf.
-    await as(pharmacy, 'dispense_rx', { prescriptionId: 'hist-zeroqty' })
+    // A prescription whose only line is cancelled has nothing to hand over,
+    // and Slice 4 says so rather than completing silently. The older behaviour
+    // — marking it dispensed and moving nothing — looked identical at the
+    // counter to a prescription that had actually been supplied.
+    await assert.rejects(
+      as(pharmacy, 'dispense_rx', { prescriptionId: 'hist-zeroqty' }),
+      /nothing left to hand over/,
+    )
     assert.equal(
       await scalar(`select count(*)::int from jmc.stock_movements where reference_id='hist-zeroqty'`),
       0,
     )
-    assert.ok(await scalar(`select dispensed_at from jmc.prescriptions where id='hist-zeroqty'`))
+    assert.equal(await scalar(`select dispensed_at from jmc.prescriptions where id='hist-zeroqty'`), null)
   })
 })
 
@@ -395,7 +408,7 @@ describe('a resolution answers only what the line failed to record', () => {
     // have thousands of.
     await as(doctor, 'sign_consultation', {
       patientId, complaint: 'Fever', diagnosis: 'Acute viral febrile illness',
-      diagnosisStatus: 'provisional', consultationFee: 0,
+      diagnosisStatus: 'provisional', feeWaived: true, feeReason: 'Not what this test is about',
       prescriptionItems: [{ medicineId, instructions: 'After food', quantity: 10 }],
     })
     const signed = String(await scalar(

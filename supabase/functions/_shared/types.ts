@@ -157,6 +157,29 @@ export interface PrescriptionItemView {
   cancelled?: boolean
   /** True when a doctor must resolve the line before pharmacy may supply it. */
   needsReview?: boolean
+
+  // ── Slice 4: what has actually been handed over ─────────────────────────
+  /** The prescription line this item is, so the counter can name it back. */
+  prescriptionLineId?: string
+  /** Handed over so far, across every completed dispense. */
+  supplied?: number
+  /** Prescribed minus supplied, floored at zero. What `Give now` may be. */
+  remaining?: number
+  /**
+   * Waiting, part supplied, supplied, patient declined, doctor cancelled, or
+   * needs review. Derived from the events every time, never stored.
+   */
+  supplyState?:
+    | 'waiting'
+    | 'part_supplied'
+    | 'supplied'
+    | 'patient_declined'
+    | 'doctor_cancelled'
+    | 'needs_review'
+  /** Why the patient declined it, or why the doctor withdrew it. */
+  outcomeReason?: string
+  /** On the shelf right now, in base units. Information, never a block. */
+  available?: number
 }
 
 export interface PrescriptionView {
@@ -169,6 +192,12 @@ export interface PrescriptionView {
   signedAt: string
   dispensedAt?: string
   printCount: number
+  /** The last day the remainder may be collected against. Policy register 18. */
+  validUntil?: string
+  /** False when the doctor directed that it be supplied in one go. */
+  supplyInParts?: boolean
+  /** True when `validUntil` has passed and only a new order can supply it. */
+  expired?: boolean
 }
 
 export type ClinicalPhraseKind =
@@ -267,16 +296,74 @@ export interface VitalReviewRuleView {
   prompt: string
 }
 
-export interface BillView {
+/**
+ * One charge on a bill. It is what was charged and it never changes.
+ *
+ * A correction is another line — an `adjustment`, the only kind that may be
+ * negative — so the bill comes down because something was added to it rather
+ * than because something was edited.
+ */
+export interface InvoiceLineView {
   id: string
+  lineNumber: number
+  source: 'consultation_fee' | 'prescription' | 'otc' | 'adjustment'
+  description: string
+  quantity: number
+  unitAmount: number
+  amount: number
+  medicineId?: string
+  dispenseLineId?: string
+  otcLineId?: string
+}
+
+/** Money that arrived, or money that went back. Never a flag on a bill. */
+export interface PaymentView {
+  id: string
+  receiptNumber: string
+  kind: 'payment' | 'refund'
+  method: 'cash' | 'upi' | 'card'
+  reference: string
+  amount: number
+  status: 'received' | 'reversed'
+  receivedAt: string
+  receivedByName: string
+  reversalReason?: string
+}
+
+/**
+ * A bill, and what it adds up to.
+ *
+ * `total`, `paid`, `due` and `paymentState` are derived from the lines and the
+ * payment allocations every time they are read — `jmc.invoice_balances` — so
+ * there is no status column that can disagree with the money.
+ */
+export interface InvoiceView {
+  id: string
+  invoiceNumber: string
+  /** Absent for an anonymous counter sale, which must be paid in full. */
+  patientId?: string
+  patientName?: string
+  encounterId?: string
+  status: 'open' | 'void'
+  voidReason?: string
+  createdAt: string
+  total: number
+  paid: number
+  due: number
+  paymentState: 'unpaid' | 'part_paid' | 'paid' | 'void'
+  lines: InvoiceLineView[]
+  payments: PaymentView[]
+}
+
+/** What one patient owes, across every bill. No credit limit, no due date. */
+export interface PatientBalanceView {
   patientId: string
   patientName: string
-  label: string
-  amount: number
-  status: 'unpaid' | 'paid'
-  paymentMethod?: 'cash' | 'upi' | 'card'
-  createdAt: string
-  paidAt?: string
+  billed: number
+  paid: number
+  outstanding: number
+  openInvoices: number
+  oldestDueAt?: string
 }
 
 export interface BedView {
@@ -652,13 +739,38 @@ export interface PurchaseOrderView {
   lines: OrderLineView[]
 }
 
+/** One line of a counter sale, and what can still be returned against it. */
+export interface OtcSaleLineView {
+  id: string
+  medicineId: string
+  medicineName: string
+  packageLevelName: string
+  quantity: number
+  unitAmount: number
+  amount: number
+  /** Already returned. `quantity - returned` is what a return may still take. */
+  returned: number
+}
+
 export interface OtcSaleView {
   id: string
   receiptNumber: string
   total: number
-  paymentMethod: 'cash' | 'upi' | 'card'
+  /**
+   * How it was paid, from the payments actually allocated to its bill —
+   * 'split' when more than one method was used, empty when nothing has been
+   * paid yet. It used to be a column on the sale, which could say only one
+   * thing and said nothing about a part payment.
+   */
+  paymentMethod: 'cash' | 'upi' | 'card' | 'split' | ''
   createdAt: string
+  createdByName: string
+  patientId?: string
+  patientName?: string
+  invoiceId?: string
+  status: 'completed' | 'voided'
   lineCount: number
+  lines: OtcSaleLineView[]
 }
 
 export interface AuditView {
@@ -704,7 +816,7 @@ export interface PatientRecordView {
   encounters: EncounterView[]
   prescriptions: PrescriptionView[]
   vitals: VitalView[]
-  bills: BillView[]
+  invoices: InvoiceView[]
   draft?: ConsultationDraftView
   templates: ConsultationTemplateView[]
   phrases: ClinicalPhraseView[]
@@ -723,10 +835,12 @@ export interface ClinicSnapshot {
   vitalReviewRules: VitalReviewRuleView[]
   encounters: EncounterView[]
   prescriptions: PrescriptionView[]
-  bills: BillView[]
+  invoices: InvoiceView[]
   beds: BedView[]
   medicines: MedicineView[]
   batches: BatchView[]
+  /** What each patient owes. Money, so only the roles that handle it. */
+  patientBalances: PatientBalanceView[]
   /** Package ladders for every product that has one. Shelf roles only. */
   packages: PackageVersionView[]
   /** What each mapped code means, so a screen can show it and spot a clash. */

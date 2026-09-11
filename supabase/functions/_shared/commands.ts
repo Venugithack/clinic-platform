@@ -9,6 +9,8 @@ import {
   requireChoice, requireRole, sequence, value, type Payload,
 } from './command-input.ts'
 import { runInventoryCommand } from './inventory.ts'
+import { addInvoiceLine, openInvoice } from './counter.ts'
+import { money, parseMoney, rupees } from './money.ts'
 
 /**
  * Today, in the clinic rather than in Greenwich.
@@ -359,11 +361,27 @@ async function completeConsultation(session: SessionView, payload: Payload) {
     if (prescriptionItems.length > 0) {
       prescriptionId = randomUUID()
       prescriptionNumber = await sequence('RX')
+      /*
+       * How long the remainder may be collected against.
+       *
+       * Policy register 18: seven calendar days from signing is the clinic
+       * default, and the doctor may shorten or extend it for one prescription.
+       * It is written at signing rather than computed on read, because the
+       * default may change and this prescription's direction must not.
+       */
+      const validUntil = optionalDate(payload, 'validUntil')
       await db.prepare(`insert into prescriptions
-        (id,patient_id,encounter_id,doctor_id,items_json,signed_at,prescription_number)
-        values (?,?,?,?,?,?,?)`).run(
+        (id,patient_id,encounter_id,doctor_id,items_json,signed_at,prescription_number,
+         valid_until,supply_in_parts,validity_set_by,validity_reason)
+        values (?,?,?,?,?,?,?,
+                coalesce(?::date, ${CLINIC_TODAY} + 7),
+                ?,?,?)`).run(
           prescriptionId, patientId, encounterId, session.staffId,
           JSON.stringify(prescriptionItems), signedAt, prescriptionNumber,
+          validUntil ?? null,
+          payload.supplyInParts === undefined ? true : booleanValue(payload, 'supplyInParts'),
+          validUntil ? session.staffId : null,
+          validUntil ? optional(payload, 'validityReason') : '',
         )
       await insertSignedLines(prescriptionId, prescriptionItems)
     }
@@ -381,12 +399,71 @@ async function completeConsultation(session: SessionView, payload: Payload) {
         )
     }
 
-    // Slice 4 replaces this client-provided fee with the configured fee
-    // snapshot and waiver rules. Slice 2 preserves current billing behaviour.
-    const fee = Number(payload.consultationFee ?? 0)
-    if (fee > 0) {
-      await db.prepare(`insert into bills (id,patient_id,label,amount,status,created_at)
-        values (?,?,?,?, 'unpaid',?)`).run(randomUUID(), patientId, 'Consultation', fee, signedAt)
+    /*
+     * The consultation fee.
+     *
+     * It comes from the clinic's settings, not from the browser. Until Slice 4
+     * it came from a literal 300 in the doctor's form, so an admin who changed
+     * the fee on the Clinic screen changed nothing that was ever billed — and
+     * the figure charged was whatever the tablet happened to send.
+     *
+     * Policy register 15 and 16: the admin sets the default, the doctor may
+     * override, discount or waive it for ONE consultation with a reason, and a
+     * later change to the default never rewrites an old visit. So the amount
+     * charged is snapshotted onto the encounter, and the default in force at
+     * the time is snapshotted beside it — otherwise "was this a discount?" is
+     * unanswerable a month later.
+     *
+     * A waived visit is an explicit ₹0 line with a reason and an actor, not an
+     * absent one (policy register 33). A missing line cannot say who decided.
+     *
+     * At most one fee line per encounter, and that is not a promise made here:
+     * `invoice_lines.source_key` is uniquely indexed clinic-wide, so a retry
+     * cannot produce a second one even on a second invoice.
+     */
+    const settings = await db.prepare('select consultation_fee from clinic_settings where id=1')
+      .get() as { consultation_fee: string } | undefined
+    const defaultFeePaise = parseMoney(settings?.consultation_fee ?? '0', 'The clinic consultation fee')
+
+    const waived = booleanValue(payload, 'feeWaived')
+    const overridden = optional(payload, 'consultationFee') !== ''
+    const feePaise = waived ? 0 : (overridden
+      ? parseMoney(payload.consultationFee, 'The consultation fee')
+      : defaultFeePaise)
+    const feeReason = optional(payload, 'feeReason')
+
+    if (waived && !feeReason) {
+      throw new Error('Say why this consultation is being waived. A free visit is recorded, not omitted.')
+    }
+    if (!waived && overridden && feePaise !== defaultFeePaise && !feeReason) {
+      throw new Error(
+        `The clinic fee is ${rupees(defaultFeePaise)}. Say why this visit is being charged ` +
+        `${rupees(feePaise)}.`,
+      )
+    }
+
+    await db.prepare(`update encounters set
+        consultation_fee=?, consultation_fee_default=?, fee_waived=?, fee_reason=?,
+        fee_set_by=?, fee_set_at=now()
+      where id=?`).run(
+        money(feePaise), money(defaultFeePaise), waived, feeReason, session.staffId, encounterId,
+      )
+
+    {
+      const invoiceId = await openInvoice({ patientId, encounterId, actorId: session.staffId })
+      await addInvoiceLine(invoiceId, {
+        source: 'consultation_fee',
+        sourceKey: `consultation:${encounterId}`,
+        description: waived ? 'Consultation (waived)' : 'Consultation',
+        quantity: 1,
+        unitAmountPaise: feePaise,
+        amountPaise: feePaise,
+        encounterId,
+      })
+      if (waived || (overridden && feePaise !== defaultFeePaise)) {
+        await audit(session.staffId, 'consultation.fee_overridden', 'encounter', encounterId,
+          `${waived ? 'Waived' : `Charged ${rupees(feePaise)} instead of ${rupees(defaultFeePaise)}`}: ${feeReason}`)
+      }
     }
 
     await rememberClinicalPhrases(session.staffId, fields, prescriptionItems)
@@ -1155,18 +1232,15 @@ export async function runCommand(session: SessionView, action: string, payload: 
       return { message: status === 'completed' ? 'Follow-up completed.' : 'Follow-up cancelled.' }
     }
 
-    case 'pay_bill': {
-      requireRole(session, 'admin', 'nurse', 'pharmacy')
-      const billId = value(payload, 'billId')
-      const paymentMethod = requireChoice(payload, 'paymentMethod', ['cash', 'upi', 'card'] as const)
-      await transaction(async () => {
-        const result = await db.prepare(`update bills set status='paid',payment_method=?,paid_at=?
-          where id=? and status='unpaid'`).run(paymentMethod, isoNow(), billId)
-        if (Number(result.changes) !== 1) throw new Error('This bill is already paid or no longer exists.')
-        await audit(session.staffId, 'bill.paid', 'bill', billId, `Payment collected by ${paymentMethod}`)
-      })
-      return { message: 'Payment recorded.' }
-    }
+    /*
+     * `pay_bill` is gone.
+     *
+     * It flipped one row from unpaid to paid and wrote the method onto the
+     * bill, which is the shape that cannot express a part payment, a split
+     * across cash and UPI, a pay-later balance, a refund or a reversal. Money
+     * is `take_payment` now — see counter.ts — which writes payments as their
+     * own records and allocates them against an invoice.
+     */
 
     case 'update_bed': {
       requireRole(session, 'admin', 'nurse')
@@ -1895,24 +1969,32 @@ export async function runCommand(session: SessionView, action: string, payload: 
         const since = String(till.opened_at)
         const now = isoNow()
 
-        // What the drawer should hold: the float, plus every rupee of CASH
-        // taken since it opened, plus and minus anything moved by hand. Card
-        // and UPI are deliberately excluded — they never touch the drawer, and
-        // counting them is how a till appears to be hundreds short every day.
-        const [bills] = (await db
+        /*
+         * Every rupee of CASH that arrived since the drawer opened.
+         *
+         * One query now, where there were two. A bill's cash and a counter
+         * sale's cash used to be counted from two different tables with two
+         * different shapes — `bills.payment_method` and `otc_sales.payment_method`
+         * — and anything paid in a way neither table described was simply
+         * missing from the drawer figure. A payment is a payment; where the
+         * charge came from is the invoice's business, not the till's.
+         *
+         * Reversed payments are excluded and refunds are subtracted, because
+         * both left the drawer in the opposite direction from the one they went
+         * in. Card and UPI are still excluded entirely: they never touch the
+         * drawer, and counting them is how a till appears to be hundreds short
+         * every single day until staff stop reading the number.
+         */
+        const [cash] = (await db
           .prepare(
-            `select coalesce(sum(amount), 0) as total from bills
-               where status = 'paid' and payment_method = 'cash'
-                 and paid_at >= ? and paid_at <= ?`,
+            `select coalesce(sum(case when kind = 'refund' then -amount else amount end), 0) as total
+               from payments
+              where method = 'cash' and status = 'received'
+                and received_at >= ?::timestamptz and received_at <= ?::timestamptz`,
           )
-          .all(since, now)) as Array<{ total: number }>
-
-        const [sales] = (await db
-          .prepare(
-            `select coalesce(sum(total), 0) as total from otc_sales
-               where payment_method = 'cash' and created_at >= ? and created_at <= ?`,
-          )
-          .all(since, now)) as Array<{ total: number }>
+          .all(since, now)) as Array<{ total: string }>
+        const bills = { total: Number(cash.total) }
+        const sales = { total: 0 }
 
         const [moved] = (await db
           .prepare(
@@ -2097,21 +2179,43 @@ export async function runCommand(session: SessionView, action: string, payload: 
         // `unit`, which is what that column has always meant here, so an
         // existing caller keeps working and the shelf figure keeps its name.
         const baseUnit = optional(payload, 'baseUnit') || value(payload, 'unit')
+
+        /*
+         * A class stated when the medicine is created is a class somebody
+         * chose, so it counts as reviewed.
+         *
+         * Policy register 42 wants a pharmacist-verified classification before
+         * sale, and `unset` — Unknown / pharmacist review required — is what
+         * the EXISTING formulary starts at, because nobody has looked at those.
+         * A pharmacist typing "Schedule H1" into the form that creates the
+         * medicine has looked at it. Making them then open a second screen to
+         * verify their own answer is friction that buys nothing, and the
+         * provenance is recorded either way.
+         */
+        const schedule = requireChoice(
+          payload, 'schedule',
+          ['unset', 'OTC', 'H', 'H1', 'X', 'G', 'C', 'C1', 'other'] as const, 'unset',
+        )
+        const classified = schedule !== 'unset'
         await db.prepare(`insert into medicines
           (id,code,name,generic_name,strength,dosage_form,route,unit,barcode,sale_class,schedule,
            reorder_level,target_stock,preferred_supplier_id,active,created_at,
-           base_unit,brand_name,manufacturer)
-          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+           base_unit,brand_name,manufacturer,
+           schedule_source,schedule_verified_by,schedule_verified_at)
+          values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
             id, value(payload, 'code').toUpperCase(), value(payload, 'name'), optional(payload, 'genericName'),
             optional(payload, 'strength'), optional(payload, 'dosageForm'), optional(payload, 'route'),
             value(payload, 'unit'), optional(payload, 'barcode'),
             requireChoice(payload, 'saleClass', ['otc', 'prescription', 'restricted', 'unknown'] as const),
             // Defaults to 'unset' rather than guessing from saleClass. The
             // register would rather report a gap than invent a classification.
-            requireChoice(payload, 'schedule', ['unset', 'OTC', 'H', 'H1', 'X'] as const, 'unset'),
+            schedule,
             reorderLevel, targetStock,
             supplierId, 1, isoNow(),
             baseUnit, optional(payload, 'brandName'), optional(payload, 'manufacturer'),
+            classified ? (optional(payload, 'scheduleSource') || 'Stated when the medicine was added') : '',
+            classified ? session.staffId : null,
+            classified ? isoNow() : null,
           )
         if (supplierId) {
           await db.prepare(`insert into supplier_medicines (supplier_id,medicine_id,active) values (?,?,1)
@@ -2139,135 +2243,20 @@ export async function runCommand(session: SessionView, action: string, payload: 
       return { message: 'Medicine added to inventory.' }
     }
 
-    case 'otc_sale': {
-      requireRole(session, 'admin', 'pharmacy')
-      const lines = parsedLines(payload)
-      const paymentMethod = requireChoice(payload, 'paymentMethod', ['cash', 'upi', 'card'] as const)
-      const saleId = randomUUID()
-      let total = 0
-      let receiptNumber = ''
-      await transaction(async () => {
-        receiptNumber = await sequence('OTC')
-        const saleLines: Array<Line & { name: string; allocations: Allocation[]; lineTotal: number }> = []
-        for (const line of lines) {
-          const medicine = (await db
-            .prepare(`select name,strength,sale_class from medicines where id=? and active=1`)
-            .get(line.medicineId)) as { name: string; strength: string; sale_class: string } | undefined
-          if (!medicine || medicine.sale_class !== 'otc') throw new Error('Only medicines marked OTC can be sold here.')
-          const allocations = await allocateStock(line.medicineId, line.quantity, session.staffId, 'otc_sale', saleId)
-          const lineTotal = allocations.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
-          total += lineTotal
-          saleLines.push({ ...line, name: `${medicine.name} ${medicine.strength}`.trim(), allocations, lineTotal })
-        }
-        await db.prepare(`insert into otc_sales
-          (id,receipt_number,total,payment_method,lines_json,created_by,created_at) values (?,?,?,?,?,?,?)`).run(
-            saleId, receiptNumber, total, paymentMethod, JSON.stringify(saleLines), session.staffId, isoNow(),
-          )
-        await audit(session.staffId, 'otc.sale', 'otc_sale', saleId, `${receiptNumber} collected ₹${total.toFixed(2)}`)
-      })
-      return { message: 'Anonymous OTC sale completed.', data: { saleId, receiptNumber, total } }
-    }
+    /*
+     * `otc_sale` moved to counter.ts, where it writes lines and allocations
+     * rather than a JSON blob, and where the payment it takes is a payment
+     * record rather than a column.
+     */
 
-    case 'dispense_rx': {
-      requireRole(session, 'admin', 'pharmacy')
-      const prescriptionId = value(payload, 'prescriptionId')
-      await transaction(async () => {
-        /**
-         * `for update` — and it has to be here, before a single unit moves.
-         *
-         * Without the lock this read is the whole bug. Two counters submitting
-         * the same prescription in the same second both saw `dispensed_at`
-         * null, both walked the items, and both allocated: a prescription for
-         * ten tablets took twenty off the shelf. The `dispensed_at is null`
-         * guard on the UPDATE below looks like it prevents that and does not —
-         * it runs after the stock has already gone, and its result was never
-         * examined, so the second transaction wrote nothing, said nothing and
-         * committed its allocations anyway.
-         *
-         * A sequential retry was always refused, which is why this survived:
-         * reproducing it needs two people at the counter at the same moment,
-         * and by the time the shelf disagrees with the ledger nobody can say
-         * which sale it was.
-         *
-         * The lock makes the second transaction wait here rather than race
-         * past. Postgres is READ COMMITTED, so when the first commits, the
-         * second acquires the lock and re-reads the row as it now stands —
-         * `dispensed_at` set — and refuses before allocating anything.
-         *
-         * Lock order is prescription, then batches by (expiry, id) inside
-         * allocateStock. Every path that touches both takes them in that
-         * order, which is what keeps two dispenses from deadlocking; an OTC
-         * sale takes only batches, in the same (expiry, id) order, so it
-         * cannot close a cycle either.
-         */
-        const prescription = await db.prepare(`select items_json,dispensed_at from prescriptions where id=? for update`)
-          .get(prescriptionId) as { items_json: string; dispensed_at: string | null } | undefined
-        if (!prescription) throw new Error('Prescription was not found.')
-        if (prescription.dispensed_at) throw new Error('This prescription is already dispensed.')
-
-        /**
-         * The normalized lines, not `items_json`.
-         *
-         * Slice 2 built the lines and left dispensing reading the legacy JSON,
-         * which was harmless while the two always agreed. Slice 2.1 makes them
-         * disagree on purpose: a line whose medicine row is gone, or whose
-         * quantity the clinic never wrote, is marked unknown instead of being
-         * dropped or defaulted to 1. Reading the JSON here would hand over
-         * against exactly the values that were found to be untrustworthy.
-         *
-         * `prescription_lines_effective` folds in the doctor's resolutions, so
-         * a line an unrelated doctor amended this morning dispenses with what
-         * they determined, and a cancelled line is not supplied at all.
-         */
-        const lines = await db.prepare(`select id,line_number,medicine_name_snapshot,
-            effective_medicine_id,effective_quantity,cancelled,dispensable,needs_review
-          from prescription_lines_effective
-          where prescription_id=? order by line_number`).all(prescriptionId) as Array<{
-            id: string
-            line_number: number
-            medicine_name_snapshot: string
-            effective_medicine_id: string | null
-            effective_quantity: number | null
-            cancelled: boolean
-            dispensable: boolean
-            needs_review: boolean
-          }>
-
-        const unreadable = lines.filter((line) => line.needs_review)
-        if (unreadable.length > 0) {
-          // Named, because "this prescription cannot be dispensed" sends the
-          // pharmacist back to the doctor without saying what to ask about.
-          const first = unreadable[0]
-          const missing = first.effective_medicine_id === null
-            ? 'which medicine it was'
-            : 'what quantity it authorized'
-          throw new Error(
-            `Line ${first.line_number} (${first.medicine_name_snapshot}) is from before this ` +
-            `system and does not record ${missing}. A doctor must resolve it before anything ` +
-            `is handed over.`,
-          )
-        }
-
-        for (const line of lines) {
-          if (!line.dispensable) continue // cancelled by a doctor; nothing to supply
-          await allocateStock(
-            String(line.effective_medicine_id), Number(line.effective_quantity),
-            session.staffId, 'prescription', prescriptionId,
-          )
-        }
-        const items = lines.filter((line) => line.dispensable)
-        // Belt and braces, and cheap. The lock above should make this
-        // unreachable; a guarded UPDATE whose row count nobody reads is
-        // exactly how the original defect stayed invisible, so this one is
-        // read. If it ever fires, the transaction rolls back and the stock
-        // allocated moments ago goes back with it.
-        const completed = await db.prepare('update prescriptions set dispensed_at=? where id=? and dispensed_at is null')
-          .run(isoNow(), prescriptionId)
-        if (Number(completed.changes) !== 1) throw new Error('This prescription is already dispensed.')
-        await audit(session.staffId, 'prescription.dispensed', 'prescription', prescriptionId, `Dispensed ${items.length} item(s)`)
-      })
-      return { message: 'Prescription dispensed using earliest-expiry stock.' }
-    }
+    /*
+     * `dispense_rx` moved to counter.ts.
+     *
+     * The version that lived here handed over the whole prescription or none
+     * of it, because `prescriptions.dispensed_at` is one timestamp and there
+     * was nowhere to record "six of ten, four on Friday". It also moved stock
+     * and charged for nothing. Both are the point of Slice 4.
+     */
 
     case 'create_order': {
       requireRole(session, 'admin', 'pharmacy')

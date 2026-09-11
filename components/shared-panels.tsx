@@ -1,7 +1,15 @@
 'use client'
 
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import type { BedView, ClinicSnapshot, PatientView, Role } from '@/lib/types'
+import type {
+  BedView,
+  ClinicSnapshot,
+  CommandResponse,
+  InvoiceLineView,
+  InvoiceView,
+  PatientView,
+  Role,
+} from '@/lib/types'
 import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
 import { callApi } from '@/lib/api'
 import {
@@ -21,6 +29,7 @@ import {
   Modal,
   Notice,
   PageHeader,
+  SectionHeader,
   Select,
   TBody,
   TD,
@@ -35,6 +44,7 @@ import {
   formatDay,
   money,
   words,
+  type Tone,
 } from '@/components/ui'
 
 export type { ActionRunner }
@@ -82,7 +92,18 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
     (item) => item.status === 'waiting' || item.status === 'in_consult',
   )
   const low = data.medicines.filter((item) => item.active && item.totalAvailable <= item.reorderLevel)
-  const unpaid = data.bills.filter((item) => item.status === 'unpaid')
+  /*
+   * What is owed, derived rather than read off a flag.
+   *
+   * This used to count bills whose `status` column said `unpaid`, which could
+   * not describe a bill that had been part paid — the commonest case at this
+   * counter — and would have gone on saying "unpaid" beside a bill with ₹10
+   * left on it. `due` comes from the lines and the payment allocations every
+   * time it is read, so a part-paid bill counts once and for what is actually
+   * left on it.
+   */
+  const owing = data.invoices.filter((item) => item.status !== 'void' && item.due > 0)
+  const outstanding = owing.reduce((sum, item) => sum + item.due, 0)
   const occupied = data.beds.filter((item) => item.status === 'occupied')
   const attention = [...low].slice(0, 5)
   const openFollowUps = data.followUps.filter((item) => item.status === 'open')
@@ -119,9 +140,9 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
         <Stat label="Patient queue" value={waiting.length} note="Waiting or in consultation" />
         <Stat label="Beds occupied" value={`${occupied.length}/${data.beds.length}`} note="Observation beds" />
         <Stat
-          label="Unpaid bills"
-          value={unpaid.length}
-          note={`${money(unpaid.reduce((sum, item) => sum + item.amount, 0))} outstanding`}
+          label="Bills owing"
+          value={owing.length}
+          note={`${money(outstanding)} still due`}
         />
         <Stat label="Low stock" value={low.length} note="At or below reorder level" />
       </div>
@@ -1078,16 +1099,456 @@ function ObservationForm({
   )
 }
 
+/* ══════════════════════════════════════════════════════ money, as a fabric */
+
+/**
+ * The pieces every screen that touches money is built from.
+ *
+ * They live here rather than beside the counter because both ends of the
+ * clinic's money use them: the pharmacy takes a split payment at the counter
+ * and an admin refunds one on the Billing screen, and those must be the same
+ * control or they will drift into being two different sets of rules about what
+ * a reference is and whether a method is optional.
+ */
+
+/** Where a charge came from, in the clinic's words rather than the column's. */
+export const SOURCE_LABEL: Record<InvoiceLineView['source'], string> = {
+  consultation_fee: 'Consultation',
+  prescription: 'Medicine',
+  otc: 'Counter sale',
+  adjustment: 'Adjustment',
+}
+
+const PAYMENT_STATE: Record<InvoiceView['paymentState'], { word: string; tone: Tone }> = {
+  unpaid: { word: 'Unpaid', tone: 'stop' },
+  part_paid: { word: 'Part paid', tone: 'attn' },
+  paid: { word: 'Paid', tone: 'free' },
+  void: { word: 'Void', tone: 'plain' },
+}
+
+/** The bill's state as a word. The tone repeats it; it never replaces it. */
+export function PaymentStateBadge({ invoice }: { invoice: InvoiceView }) {
+  const state = PAYMENT_STATE[invoice.paymentState]
+  return state ? (
+    <Badge tone={state.tone}>{state.word}</Badge>
+  ) : (
+    <Badge tone="plain">{words(invoice.paymentState)}</Badge>
+  )
+}
+
+export const METHOD_LABEL = { cash: 'Cash', upi: 'UPI / GPay', card: 'Card' } as const
+export type Method = keyof typeof METHOD_LABEL
+const METHODS = ['cash', 'upi', 'card'] as const
+
+/**
+ * Paise, read the way `parseMoney` on the server reads them.
+ *
+ * For the screen, and for deciding whether a button says "Take payment" or
+ * "Record part payment" — never for what is sent. What is sent is the string
+ * the counter typed, so the figure on the bill is the one the server parsed and
+ * not one this file rounded on the way past.
+ */
+function paiseOf(raw: string): number | undefined {
+  const cleaned = raw.trim().replace(/^₹\s*/, '').replaceAll(',', '')
+  if (cleaned === '') return undefined
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(cleaned)
+  if (!match) return undefined
+  return Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'))
+}
+
+/** An amount held in paise, printed the one way this clinic prints money. */
+export function fromPaise(paise: number): string {
+  return money(paise / 100)
+}
+
+/**
+ * One row of a split. Cash and GPay on the same bill is two of these, and two
+ * receipt numbers, because that is what the day book reconciles against.
+ */
+export type PartDraft = { key: string; method: Method; amount: string; reference: string }
+
+export function blankPart(amount = ''): PartDraft {
+  return { key: crypto.randomUUID(), method: 'cash', amount, reference: '' }
+}
+
+/** What has been typed, totalled for the screen. Undefined if a row is not an amount. */
+export function partsTotal(parts: PartDraft[]): number | undefined {
+  let total = 0
+  for (const part of parts) {
+    if (part.amount.trim() === '') continue
+    const paise = paiseOf(part.amount)
+    if (paise === undefined) return undefined
+    total += paise
+  }
+  return total
+}
+
+/** The `parts` a command reads. The amount goes across exactly as typed. */
+export function partsPayload(parts: PartDraft[]) {
+  return parts
+    .filter((part) => part.amount.trim() !== '')
+    .map((part) => ({
+      method: part.method,
+      amount: part.amount.trim(),
+      reference: part.reference.trim(),
+    }))
+}
+
+export function PaymentParts({
+  parts,
+  onChange,
+  legend,
+  hint,
+}: {
+  parts: PartDraft[]
+  onChange: (parts: PartDraft[]) => void
+  legend: string
+  hint?: string
+}) {
+  const busy = useBusy()
+  const total = partsTotal(parts)
+
+  function patch(key: string, change: Partial<PartDraft>) {
+    onChange(parts.map((part) => (part.key === key ? { ...part, ...change } : part)))
+  }
+
+  return (
+    <div>
+      <SectionHeader title={legend} sub={hint} />
+      <div className="mt-2 space-y-3">
+        {parts.map((part, index) => (
+          <div
+            key={part.key}
+            className="grid grid-cols-1 gap-3 border-l-2 border-ink bg-paper/40 p-3 sm:grid-cols-[minmax(0,150px)_minmax(0,140px)_minmax(0,1fr)_auto] sm:items-end"
+          >
+            <Field label={`Part ${index + 1} · method`} required>
+              <Select
+                value={part.method}
+                disabled={busy}
+                onChange={(event) => patch(part.key, { method: event.target.value as Method })}
+              >
+                {METHODS.map((method) => (
+                  <option key={method} value={method}>
+                    {METHOD_LABEL[method]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Amount" unit="₹">
+              <Input
+                inputMode="decimal"
+                placeholder="0.00"
+                value={part.amount}
+                disabled={busy}
+                aria-label={`Amount of part ${index + 1}`}
+                onChange={(event) => patch(part.key, { amount: event.target.value })}
+              />
+            </Field>
+            <Field label="Reference" hint="Optional. The UPI or card reference, if there is one.">
+              <Input
+                value={part.reference}
+                disabled={busy}
+                aria-label={`Reference for part ${index + 1}`}
+                onChange={(event) => patch(part.key, { reference: event.target.value })}
+              />
+            </Field>
+            {parts.length > 1 ? (
+              <Button
+                variant="danger"
+                disabled={busy}
+                aria-label={`Remove part ${index + 1}`}
+                onClick={() => onChange(parts.filter((row) => row.key !== part.key))}
+              >
+                Remove
+              </Button>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </div>
+        ))}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button disabled={busy} onClick={() => onChange([...parts, blankPart()])}>
+            Add another part
+          </Button>
+          <p className="font-mono text-[13px] text-ink-2">
+            {total === undefined
+              ? 'One of those amounts is not an amount in rupees.'
+              : `${parts.length} ${parts.length === 1 ? 'part' : 'parts'} · ${fromPaise(total)}`}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * An action that cannot be taken without saying why.
+ *
+ * Voiding a bill, reversing a receipt and recording that a patient declined a
+ * line all keep their reason on the record beside the actor and the time, so
+ * the reason is collected before the action rather than typed into an audit
+ * note afterwards. A refusal keeps the dialog and the typed reason, so the next
+ * attempt is a correction rather than a retype.
+ */
+export function ReasonAction({
+  children,
+  title,
+  question,
+  confirmLabel,
+  reasonLabel = 'Reason',
+  reasonHint,
+  variant = 'secondary',
+  size = 'md',
+  disabled = false,
+  disabledReason,
+  onConfirm,
+}: {
+  children: ReactNode
+  title: string
+  question: ReactNode
+  confirmLabel: string
+  reasonLabel?: string
+  reasonHint?: string
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
+  size?: 'sm' | 'md'
+  disabled?: boolean
+  disabledReason?: string
+  onConfirm: (reason: string) => Promise<CommandResponse | void>
+}) {
+  const busy = useBusy()
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState('')
+
+  async function commit() {
+    const result = await onConfirm(reason.trim())
+    if (!result || result.ok) {
+      setOpen(false)
+      setReason('')
+    }
+  }
+
+  return (
+    <>
+      <ActionButton
+        variant={variant}
+        size={size}
+        busy={busy}
+        disabled={disabled}
+        disabledReason={disabledReason}
+        onClick={() => setOpen(true)}
+      >
+        {children}
+      </ActionButton>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={title}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <ActionButton
+              variant={variant === 'danger' ? 'danger' : 'primary'}
+              busy={busy}
+              disabled={reason.trim() === ''}
+              disabledReason="Say why before this is recorded."
+              onClick={commit}
+            >
+              {confirmLabel}
+            </ActionButton>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="text-[14px] leading-relaxed">{question}</div>
+          <Field label={reasonLabel} hint={reasonHint} required>
+            <Textarea
+              value={reason}
+              disabled={busy}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </Field>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+/** A figure with the word that says what it is. Never a number on its own. */
+export function Figure({
+  label,
+  value,
+  note,
+  strong = false,
+}: {
+  label: string
+  value: ReactNode
+  note?: string
+  strong?: boolean
+}) {
+  return (
+    <div className={`min-w-0 border bg-sheet px-2.5 py-2 ${strong ? 'border-ink' : 'border-rule'}`}>
+      <p className="eyebrow">{label}</p>
+      <p
+        className={`mt-1 font-mono tabular-nums ${strong ? 'text-[20px] font-medium' : 'text-[17px]'}`}
+      >
+        {value}
+      </p>
+      {note ? <p className="mt-0.5 text-[11px] leading-snug text-ink-2">{note}</p> : null}
+    </div>
+  )
+}
+
+/** Every charge on the bill, with the desk it came from beside it. */
+export function InvoiceLines({ invoice }: { invoice: InvoiceView }) {
+  if (invoice.lines.length === 0) {
+    return <p className="text-[13px] text-ink-2">This bill has no charges on it yet.</p>
+  }
+  return (
+    <Table>
+      <THead>
+        <TR>
+          <TH num>#</TH>
+          <TH>From</TH>
+          <TH>Charge</TH>
+          <TH num>Quantity</TH>
+          <TH num>Each</TH>
+          <TH num>Amount</TH>
+        </TR>
+      </THead>
+      <TBody>
+        {invoice.lines.map((line) => (
+          <TR key={line.id}>
+            <TD num>{line.lineNumber}</TD>
+            <TD>{SOURCE_LABEL[line.source] ?? words(line.source)}</TD>
+            <TD className="font-semibold">{line.description}</TD>
+            <TD num>{line.quantity}</TD>
+            <TD num>{money(line.unitAmount)}</TD>
+            <TD num>{money(line.amount)}</TD>
+          </TR>
+        ))}
+      </TBody>
+    </Table>
+  )
+}
+
+/**
+ * What has been taken against this bill, and what came back.
+ *
+ * A reversal and a refund are different rows and say so in words: one means the
+ * money never arrived, the other that it went back. Reversing is an admin
+ * decision, so the column only appears where somebody may take it.
+ */
+export function InvoicePayments({
+  invoice,
+  run,
+  canReverse = false,
+}: {
+  invoice: InvoiceView
+  run?: ActionRunner
+  canReverse?: boolean
+}) {
+  return (
+    <div>
+      <SectionHeader title="Money against this bill" sub={`${invoice.payments.length} recorded`} />
+      <Table>
+        <THead>
+          <TR>
+            <TH num>Receipt</TH>
+            <TH>Kind</TH>
+            <TH>Method</TH>
+            <TH>Reference</TH>
+            <TH num>Amount</TH>
+            <TH>State</TH>
+            <TH num>Taken</TH>
+            {canReverse ? <TH>Reverse</TH> : null}
+          </TR>
+        </THead>
+        <TBody>
+          {invoice.payments.map((payment) => (
+            <TR key={payment.id} muted={payment.status === 'reversed'}>
+              <TD num>{payment.receiptNumber}</TD>
+              <TD>{payment.kind === 'refund' ? 'Refund' : 'Payment'}</TD>
+              <TD>{METHOD_LABEL[payment.method] ?? words(payment.method)}</TD>
+              <TD className="text-ink-2">{payment.reference || '—'}</TD>
+              <TD num>{money(payment.amount)}</TD>
+              <TD>
+                {payment.status === 'reversed' ? (
+                  <Badge tone="stop">Reversed</Badge>
+                ) : (
+                  <Badge tone="free">Received</Badge>
+                )}
+              </TD>
+              <TD num>{formatDate(payment.receivedAt)}</TD>
+              {canReverse ? (
+                <TD>
+                  {payment.status === 'reversed' || !run ? (
+                    <span className="text-[12px] text-ink-2">{payment.reversalReason || '—'}</span>
+                  ) : (
+                    <ReasonAction
+                      size="sm"
+                      variant="danger"
+                      title="Reverse this receipt"
+                      confirmLabel="Reverse the receipt"
+                      reasonLabel="Why it never arrived"
+                      reasonHint="A reversal says the money never arrived. A refund says it came back — they are not the same."
+                      question={
+                        <>
+                          Reverse receipt{' '}
+                          <span className="font-mono font-semibold">{payment.receiptNumber}</span>{' '}
+                          for {money(payment.amount)}? It keeps its number and stays on the record
+                          as reversed, and it stops counting towards what has been paid.
+                        </>
+                      }
+                      onConfirm={(reason) =>
+                        run('reverse_payment', { paymentId: payment.id, reason })
+                      }
+                    >
+                      Reverse
+                    </ReasonAction>
+                  )}
+                </TD>
+              ) : null}
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+    </div>
+  )
+}
+
+/**
+ * The money the clinic is owed, and the corrections only an admin may make.
+ *
+ * Slice 4 replaced a bill — one row, one amount, a paid flag — with an invoice
+ * header, immutable charge lines and payment allocations. Nothing on this
+ * screen edits a total: a bill comes down because an adjustment line was added
+ * to it, a receipt stops counting because it was reversed, and money goes back
+ * because a refund was recorded. Each of those keeps the original exactly as it
+ * was printed.
+ */
 export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
-  const unpaid = data.bills.filter((bill) => bill.status === 'unpaid')
-  const outstanding = unpaid.reduce((sum, bill) => sum + bill.amount, 0)
+  const admin = data.session.roles.includes('admin')
+  const live = data.invoices.filter((invoice) => invoice.status !== 'void')
+  const owing = live.filter((invoice) => invoice.due > 0)
+  const voided = data.invoices.filter((invoice) => invoice.status === 'void')
+  const outstanding = owing.reduce((total, invoice) => total + invoice.due, 0)
+  const owedByPatients = data.patientBalances.reduce(
+    (total, balance) => total + balance.outstanding,
+    0,
+  )
+
+  const [openId, setOpenId] = useState('')
+  const open = data.invoices.find((invoice) => invoice.id === openId) ?? null
 
   return (
     <Stack>
       <PageHeader
         eyebrow="Collected at the clinic"
         title="Billing"
-        sub={`${unpaid.length} unpaid · ${money(outstanding)} outstanding`}
+        sub={`${owing.length} bills owing · ${money(outstanding)} outstanding · ${data.patientBalances.length} patients carrying a balance`}
         action={
           <Button onClick={() => window.print()} title="Opens this tablet's own print sheet">
             Print register
@@ -1095,14 +1556,169 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
         }
       />
 
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-print="hide">
+        <Stat
+          label="Bills owing"
+          value={owing.length}
+          note={`${money(outstanding)} across every open bill`}
+        />
+        <Stat
+          label="Patients carrying a balance"
+          value={data.patientBalances.length}
+          note={`${money(owedByPatients)} owed to the clinic`}
+        />
+        <Stat
+          label="Bills voided"
+          value={voided.length}
+          note="They keep their number and stay on the record"
+        />
+      </div>
+
       <Card data-print="sheet">
         <ClinicLetterhead settings={data.settings} kind="register" />
-        <CardHeader title="Bill register" sub={`${data.bills.length} bills`} />
-        {data.bills.length === 0 ? (
+        <CardHeader
+          title="Bill register"
+          sub={`${data.invoices.length} bills · every charge, what has been paid, and what is due`}
+        />
+        {data.invoices.length === 0 ? (
           <CardBody>
             <EmptyState
               title="No bills yet"
-              direction="A consultation raises its own bill, and the pharmacy counter raises one per sale."
+              direction="A signed consultation raises one for the fee, the pharmacy counter adds the medicine handed over, and a counter sale raises its own."
+            />
+          </CardBody>
+        ) : (
+          <Table>
+            <THead>
+              <TR>
+                <TH>Bill</TH>
+                <TH>Patient</TH>
+                <TH>Raised</TH>
+                <TH num>Total</TH>
+                <TH num>Paid</TH>
+                <TH num>Due</TH>
+                <TH>State</TH>
+                <TH>Open</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {data.invoices.map((invoice) => (
+                <TR key={invoice.id} muted={invoice.status === 'void'}>
+                  <TD num>{invoice.invoiceNumber}</TD>
+                  <TD className="font-semibold">
+                    {invoice.patientName ?? 'Counter sale — no patient'}
+                  </TD>
+                  <TD num>{formatDate(invoice.createdAt)}</TD>
+                  <TD num>{money(invoice.total)}</TD>
+                  <TD num>{money(invoice.paid)}</TD>
+                  <TD num>{money(invoice.due)}</TD>
+                  <TD>
+                    <PaymentStateBadge invoice={invoice} />
+                  </TD>
+                  <TD>
+                    <Button
+                      size="sm"
+                      aria-label={`Open bill ${invoice.invoiceNumber}`}
+                      onClick={() => setOpenId(invoice.id === openId ? '' : invoice.id)}
+                    >
+                      {invoice.id === openId ? 'Close' : 'Open'}
+                    </Button>
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      {open ? (
+        <Card variant="record">
+          <CardHeader
+            title="Bill"
+            sub={`${open.patientName ?? 'Counter sale — no patient attached'} · ${open.invoiceNumber}`}
+            action={<PaymentStateBadge invoice={open} />}
+          />
+          <CardBody className="space-y-4">
+            {open.status === 'void' ? (
+              <Notice tone="bad">
+                This bill was voided{open.voidReason ? `: ${open.voidReason}` : '.'} It keeps its
+                number and its lines and stays on the record.
+              </Notice>
+            ) : null}
+
+            <InvoiceLines invoice={open} />
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="border border-rule bg-sheet px-2.5 py-2">
+                <p className="eyebrow">Total</p>
+                <p className="mt-1 font-mono text-[17px] tabular-nums">{money(open.total)}</p>
+              </div>
+              <div className="border border-rule bg-sheet px-2.5 py-2">
+                <p className="eyebrow">Paid</p>
+                <p className="mt-1 font-mono text-[17px] tabular-nums">{money(open.paid)}</p>
+              </div>
+              <div className="border border-ink bg-sheet px-2.5 py-2">
+                <p className="eyebrow">Due</p>
+                <p className="mt-1 font-mono text-[20px] font-medium tabular-nums">
+                  {money(open.due)}
+                </p>
+              </div>
+            </div>
+
+            {open.payments.length > 0 ? (
+              <InvoicePayments invoice={open} run={run} canReverse={admin} />
+            ) : (
+              <p className="text-[13px] text-ink-2">No money has been taken against this bill.</p>
+            )}
+
+            {admin ? (
+              <div className="flex flex-wrap gap-2 border-t-2 border-ink pt-4" data-print="hide">
+                <ReasonAction
+                  variant="danger"
+                  title="Void this bill"
+                  confirmLabel="Void the bill"
+                  reasonLabel="Why it should never have been raised"
+                  question={
+                    <>
+                      Void <span className="font-mono font-semibold">{open.invoiceNumber}</span>? It
+                      keeps its number and its lines and stays on the record as void. A bill that has
+                      been paid against cannot be voided — refund the payment first, or the money is
+                      lost.
+                    </>
+                  }
+                  disabled={open.status === 'void' || open.paid > 0}
+                  disabledReason={
+                    open.status === 'void'
+                      ? 'This bill is already void.'
+                      : 'Money has been taken against this bill. Refund it first.'
+                  }
+                  onConfirm={(reason) => run('void_invoice', { invoiceId: open.id, reason })}
+                >
+                  Void the bill
+                </ReasonAction>
+
+                <RefundAction invoice={open} run={run} />
+              </div>
+            ) : (
+              <p className="text-[12px] text-ink-2" data-print="hide">
+                Voiding a bill, refunding money and reversing a receipt are admin decisions. Ask an
+                admin; the request and the reason go on the record with their name.
+              </p>
+            )}
+          </CardBody>
+        </Card>
+      ) : null}
+
+      <Card data-print="sheet">
+        <CardHeader
+          title="Patient balances"
+          sub={`${data.patientBalances.length} carrying a balance · ${money(owedByPatients)} owed`}
+        />
+        {data.patientBalances.length === 0 ? (
+          <CardBody>
+            <EmptyState
+              title="Nobody owes the clinic anything"
+              direction="A balance appears here when a registered patient leaves without settling a bill in full. There is no credit limit and no due date."
             />
           </CardBody>
         ) : (
@@ -1110,32 +1726,22 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
             <THead>
               <TR>
                 <TH>Patient</TH>
-                <TH>Item</TH>
-                <TH num>Amount</TH>
-                <TH>Status</TH>
-                <TH>Raised</TH>
-                <TH>Collect</TH>
+                <TH num>Billed</TH>
+                <TH num>Paid</TH>
+                <TH num>Outstanding</TH>
+                <TH num>Open bills</TH>
+                <TH num>Oldest unpaid</TH>
               </TR>
             </THead>
             <TBody>
-              {data.bills.map((bill) => (
-                <TR key={bill.id}>
-                  <TD className="font-semibold">{bill.patientName}</TD>
-                  <TD className="text-ink-2">{bill.label}</TD>
-                  <TD num>{money(bill.amount)}</TD>
-                  <TD>
-                    <Badge tone={bill.status === 'paid' ? 'free' : 'attn'}>{bill.status}</Badge>
-                  </TD>
-                  <TD num>{formatDate(bill.createdAt)}</TD>
-                  <TD>
-                    {bill.status === 'unpaid' ? (
-                      <CollectPayment bill={bill} run={run} />
-                    ) : (
-                      <span className="font-mono text-[12px] text-ink-2 uppercase">
-                        {bill.paymentMethod ?? 'paid'}
-                      </span>
-                    )}
-                  </TD>
+              {data.patientBalances.map((balance) => (
+                <TR key={balance.patientId}>
+                  <TD className="font-semibold">{balance.patientName}</TD>
+                  <TD num>{money(balance.billed)}</TD>
+                  <TD num>{money(balance.paid)}</TD>
+                  <TD num>{money(balance.outstanding)}</TD>
+                  <TD num>{balance.openInvoices}</TD>
+                  <TD num>{balance.oldestDueAt ? formatDate(balance.oldestDueAt) : '—'}</TD>
                 </TR>
               ))}
             </TBody>
@@ -1146,47 +1752,109 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
   )
 }
 
-function CollectPayment({
-  bill,
+/**
+ * Money back, with the parts it went back in.
+ *
+ * Kept apart from reversing a receipt on purpose. A refund says the money came
+ * back; a reversal says it never arrived. The day book has to tell them apart,
+ * so the screen does too.
+ */
+function RefundAction({
+  invoice,
   run,
 }: {
-  bill: ClinicSnapshot['bills'][number]
+  invoice: ClinicSnapshot['invoices'][number]
   run: ActionRunner
 }) {
   const busy = useBusy()
-  const [method, setMethod] = useState('cash')
+  const [open, setOpen] = useState(false)
+  const [parts, setParts] = useState<PartDraft[]>([blankPart()])
+  const [reason, setReason] = useState('')
+
+  const typed = partsTotal(parts)
+  const entered = partsPayload(parts)
+  const problem =
+    invoice.paid <= 0
+      ? 'Nothing has been paid on this bill, so nothing can be refunded.'
+      : typed === undefined
+        ? 'One of those amounts is not an amount in rupees.'
+        : entered.length === 0
+          ? 'Say how much is being refunded, and how.'
+          : typed > Math.round(invoice.paid * 100)
+            ? `${money(invoice.paid)} has been paid; more than that cannot be refunded.`
+            : reason.trim() === ''
+              ? 'Say why the money is going back.'
+              : undefined
+
+  async function commit() {
+    const result = await run('refund_payment', {
+      invoiceId: invoice.id,
+      idempotencyKey: crypto.randomUUID(),
+      reason: reason.trim(),
+      refund: entered,
+    })
+    if (result.ok) {
+      setOpen(false)
+      setParts([blankPart()])
+      setReason('')
+    }
+  }
 
   return (
-    <div className="flex items-center gap-2" data-print="hide">
-      <select
-        aria-label={`Payment method for ${bill.patientName}`}
-        value={method}
-        onChange={(event) => setMethod(event.target.value)}
-        className="blank min-h-[44px] px-2 py-1.5 text-[13px] outline-none focus:border-active"
-      >
-        <option value="cash">Cash</option>
-        <option value="upi">UPI</option>
-        <option value="card">Card</option>
-      </select>
-      <ConfirmButton
-        size="sm"
-        variant="primary"
+    <>
+      <ActionButton
+        variant="danger"
         busy={busy}
-        busyLabel="…"
-        title="Collect payment"
-        question={
+        disabled={invoice.paid <= 0}
+        disabledReason="Nothing has been paid on this bill."
+        onClick={() => setOpen(true)}
+      >
+        Refund money
+      </ActionButton>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Refund against this bill"
+        sub={invoice.invoiceNumber}
+        footer={
           <>
-            Record <span className="font-mono font-semibold">{money(bill.amount)}</span> taken from{' '}
-            <span className="font-semibold">{bill.patientName}</span> by {method}? Money changing
-            hands cannot be undone here.
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <ActionButton
+              variant="danger"
+              busy={busy}
+              disabled={Boolean(problem)}
+              disabledReason={problem}
+              onClick={commit}
+            >
+              Record the refund
+            </ActionButton>
           </>
         }
-        confirmLabel="Collect"
-        onConfirm={() => run('pay_bill', { billId: bill.id, paymentMethod: method })}
       >
-        Collect
-      </ConfirmButton>
-    </div>
+        <div className="space-y-4">
+          <p className="text-[14px] leading-relaxed">
+            {money(invoice.paid)} has been paid on {invoice.invoiceNumber}. A refund is money going
+            back out and is recorded beside the payment it answers — the original receipt keeps its
+            number and its amount.
+          </p>
+          <PaymentParts
+            parts={parts}
+            onChange={setParts}
+            legend="What is going back"
+            hint="One row per method it goes back in."
+          />
+          <Field label="Why the money is going back" required>
+            <Textarea
+              value={reason}
+              disabled={busy}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </Field>
+        </div>
+      </Modal>
+    </>
   )
 }
 

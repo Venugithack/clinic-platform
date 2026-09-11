@@ -30,6 +30,8 @@ import {
   Textarea,
   Token,
   formatDate,
+  formatDay,
+  money,
 } from '@/components/ui'
 
 type DiagnosisStatus = 'provisional' | 'differential' | 'confirmed'
@@ -177,6 +179,19 @@ function dateAfter(days: number): string {
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+
+/**
+ * How the doctor is charging this one visit.
+ *
+ * Policy register 15, 16 and 33. The clinic default is set by an admin on the
+ * Clinic screen and is the ordinary case; the doctor may charge something else
+ * or nothing at all for this consultation, with a reason, and neither decision
+ * reaches back to change the default or any earlier visit.
+ */
+type FeeChoice = 'clinic' | 'override' | 'waive'
+
+/** The clinic's default validity for the remainder of a prescription. */
+const VALIDITY_DAYS = 7
 
 function daysFromToday(dateValue: string): number | undefined {
   if (!dateValue) return undefined
@@ -366,6 +381,16 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
   })
   const [signed, setSigned] = useState<SignedPrint | null>(null)
 
+  // Slice 4: what this visit is charged, and how long its remainder may be
+  // collected against. Both are decisions about THIS consultation and both
+  // reset with the patient.
+  const [feeChoice, setFeeChoice] = useState<FeeChoice>('clinic')
+  const [feeAmount, setFeeAmount] = useState('')
+  const [feeReason, setFeeReason] = useState('')
+  const [validUntil, setValidUntil] = useState(() => dateAfter(VALIDITY_DAYS))
+  const [supplyInParts, setSupplyInParts] = useState(true)
+  const [validityReason, setValidityReason] = useState('')
+
   const patient = data.patients.find((item) => item.id === patientId)
   const appointment = data.appointments.find(
     (item) => item.patientId === patientId && item.status !== 'done' && item.status !== 'cancelled',
@@ -379,8 +404,17 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
     ? `${patientId}:${record.draft?.updatedAt ?? 'blank'}:${record.clinicalProfile.updatedAt ?? `${record.clinicalProfile.allergyStatus}:${record.clinicalProfile.allergyNotes}:${record.clinicalProfile.clinicalFlags}`}`
     : ''
 
+  // Fee and validity are decisions about one visit, so they never travel to the
+  // next patient. A waiver left standing on the screen would be charged to
+  // somebody who never asked for it.
   useEffect(() => {
     setSigned(null)
+    setFeeChoice('clinic')
+    setFeeAmount('')
+    setFeeReason('')
+    setValidUntil(dateAfter(VALIDITY_DAYS))
+    setSupplyInParts(true)
+    setValidityReason('')
   }, [patientId])
 
   useEffect(() => {
@@ -436,6 +470,20 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
     setItems((current) => current.map((item) => item.key === key ? { ...item, ...change } : item))
   }
 
+  const clinicFee = data.settings.consultationFee
+  const validityDefault = dateAfter(VALIDITY_DAYS)
+  const validityChanged = validUntil !== validityDefault || !supplyInParts
+
+  /**
+   * What the signed record will say about the money and the validity.
+   *
+   * `consultationFee` is sent ONLY when the doctor is overriding it. The server
+   * reads its presence as the override — an empty string is "charge the clinic
+   * default" — so echoing the default back would record every ordinary visit as
+   * a doctor decision. Same reasoning for `validUntil`: leaving it out lets the
+   * server apply the clinic's seven days, and sending it stamps this doctor's
+   * name on the direction.
+   */
   function payload() {
     return {
       patientId,
@@ -443,9 +491,28 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
       ...sheet,
       complaintDurationValue: sheet.complaintDurationValue || undefined,
       prescriptionItems: items,
-      consultationFee: data.settings.consultationFee,
+      feeWaived: feeChoice === 'waive',
+      consultationFee: feeChoice === 'override' ? feeAmount.trim() : '',
+      feeReason: feeChoice === 'clinic' ? '' : feeReason.trim(),
+      ...(items.length > 0 && validityChanged
+        ? { validUntil, supplyInParts, validityReason: validityReason.trim() }
+        : {}),
     }
   }
+
+  /** Why the sheet cannot be signed yet, in the sentence the doctor needs. */
+  const feeProblem =
+    feeChoice === 'waive' && feeReason.trim() === ''
+      ? 'Say why this consultation is being waived. A free visit is recorded as ₹0 with a reason, not left off the bill.'
+      : feeChoice === 'override' && feeAmount.trim() === ''
+        ? 'Enter what this visit is being charged.'
+        : feeChoice === 'override' &&
+            feeAmount.trim() !== String(clinicFee) &&
+            feeReason.trim() === ''
+          ? `The clinic fee is ${money(clinicFee)}. Say why this visit is being charged something else.`
+          : items.length > 0 && validityChanged && validityReason.trim() === ''
+            ? 'Say why this prescription’s validity is being changed from the clinic’s seven days.'
+            : undefined
 
   function applyTemplate(template: ConsultationTemplateView) {
     setSheet({
@@ -704,6 +771,104 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
             </CardBody>
           </Card>
 
+          {/* ------------------------------------------- fee and validity */}
+          <Card>
+            <CardBody className="space-y-5 py-5">
+              <div>
+                <h2 className="text-[17px] font-semibold">Fee for this visit</h2>
+                <p className="mt-0.5 text-[12px] text-ink-2">
+                  The clinic charges {money(clinicFee)}, set by an admin on the Clinic screen. You
+                  may charge something else or nothing for this consultation, with a reason. The
+                  patient pays at the pharmacy counter — the fee goes there whether or not any
+                  medicine is bought.
+                </p>
+              </div>
+
+              <fieldset className="space-y-3">
+                <legend className="eyebrow">What this visit is charged</legend>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {([
+                    ['clinic', `Clinic fee · ${money(clinicFee)}`, 'The ordinary case'],
+                    ['override', 'A different amount', 'Charge more or less, once'],
+                    ['waive', 'Waive it · ₹0', 'Recorded as ₹0 with a reason'],
+                  ] as Array<[FeeChoice, string, string]>).map(([choice, label, note]) => (
+                    <label
+                      key={choice}
+                      className="flex min-h-[56px] cursor-pointer items-center gap-3 rounded-box border border-rule bg-sheet px-3 py-2 transition-colors hover:bg-paper/60 has-[input:checked]:border-ink has-[input:checked]:bg-active-wash"
+                    >
+                      <input
+                        type="radio"
+                        name="consultation-fee-choice"
+                        value={choice}
+                        disabled={busy}
+                        checked={feeChoice === choice}
+                        onChange={() => setFeeChoice(choice)}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-[14px] leading-tight font-semibold">{label}</span>
+                        <span className="mt-0.5 block text-[12px] text-ink-2">{note}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                {feeChoice === 'override' ? (
+                  <Field label="Amount to charge" unit="₹" required hint="Rupees and paise, e.g. 250 or 250.50.">
+                    <Input inputMode="decimal" disabled={busy} value={feeAmount} placeholder={String(clinicFee)} onChange={(event) => setFeeAmount(event.target.value)} />
+                  </Field>
+                ) : null}
+
+                {feeChoice !== 'clinic' ? (
+                  <Field
+                    label={feeChoice === 'waive' ? 'Why this visit is free' : 'Why the amount is different'}
+                    required
+                    hint="Kept on the record with your name and the time. A later change to the clinic fee never rewrites this visit."
+                  >
+                    <Textarea value={feeReason} disabled={busy} onChange={(event) => setFeeReason(event.target.value)} rows={2} />
+                  </Field>
+                ) : null}
+
+                {feeChoice === 'waive' ? (
+                  <Notice>
+                    A waived visit is recorded as a ₹0 charge with this reason and your name against
+                    it — it is not left off the bill. The pharmacy counter still sees the visit, and
+                    the clinic can answer later why nothing was charged.
+                  </Notice>
+                ) : null}
+              </fieldset>
+
+              {items.length > 0 ? (
+                <div className="space-y-3 border-t border-rule pt-5">
+                  <div>
+                    <h2 className="text-[17px] font-semibold">How long this prescription may be supplied</h2>
+                    <p className="mt-0.5 text-[12px] text-ink-2">
+                      The clinic default is {VALIDITY_DAYS} days from today —{' '}
+                      {formatDay(validityDefault)}. It governs the REMAINDER: a first supply is
+                      always in time, and after this date the pharmacy needs a new or amended order
+                      from you before it hands over what is left.
+                    </p>
+                  </div>
+                  <FieldRow>
+                    <Field label="Valid until" hint={`Clinic default is ${formatDay(validityDefault)}.`}>
+                      <Input type="date" disabled={busy} value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />
+                    </Field>
+                    <Field label="May be supplied in parts" hint="Turn this off to require the whole prescription to be handed over in one go.">
+                      <Select value={supplyInParts ? 'yes' : 'no'} disabled={busy} onChange={(event) => setSupplyInParts(event.target.value === 'yes')}>
+                        <option value="yes">Yes — the remainder may be collected later</option>
+                        <option value="no">No — supply all of it, or none of it</option>
+                      </Select>
+                    </Field>
+                  </FieldRow>
+                  {validityChanged ? (
+                    <Field label="Why the validity is being changed" required>
+                      <Textarea value={validityReason} disabled={busy} onChange={(event) => setValidityReason(event.target.value)} rows={2} />
+                    </Field>
+                  ) : null}
+                </div>
+              ) : null}
+            </CardBody>
+          </Card>
+
           </fieldset>
 
           <Disclosure label="Templates" hint={`${record.templates.length} available · applied as an editable draft`}>
@@ -736,10 +901,26 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
               </>
             ) : (
               <>
-                <ActionButton variant="primary" busy={busy} busyLabel="Signing…" disabled={!sheet.diagnosis.trim()} disabledReason="Record the diagnosis before signing." onClick={signConsultation}>Sign &amp; finish</ActionButton>
+                <ActionButton
+                  variant="primary"
+                  busy={busy}
+                  busyLabel="Signing…"
+                  disabled={!sheet.diagnosis.trim() || Boolean(feeProblem)}
+                  disabledReason={!sheet.diagnosis.trim() ? 'Record the diagnosis before signing.' : feeProblem}
+                  onClick={signConsultation}
+                >
+                  Sign &amp; finish
+                </ActionButton>
                 <ActionButton busy={busy} busyLabel="Saving…" onClick={saveDraft}>Save draft</ActionButton>
                 {record.draft ? <ActionButton variant="danger" busy={busy} onClick={discardDraft}>Discard draft</ActionButton> : null}
-                <span className="text-[12px] text-ink-2">Fee ₹{data.settings.consultationFee} goes to Pharmacy with the patient.</span>
+                <span className="text-[12px] text-ink-2">
+                  {feeChoice === 'waive'
+                    ? 'Waived — recorded as ₹0 with your reason. The visit still goes to Pharmacy.'
+                    : feeChoice === 'override'
+                      ? `₹${feeAmount || '—'} goes to Pharmacy with the patient, instead of the clinic’s ${money(clinicFee)}.`
+                      : `${money(clinicFee)} goes to Pharmacy with the patient, medicine or no medicine.`}
+                </span>
+                {feeProblem ? <span className="text-[12px] font-semibold text-stop">{feeProblem}</span> : null}
               </>
             )}
           </div>

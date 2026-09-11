@@ -1,5 +1,6 @@
 import type {
   AppointmentView,
+  PatientBalanceView,
   PatientRecordView,
   StockTakeHistoryView,
   StockTakeLineView,
@@ -11,7 +12,6 @@ import type {
   AuditView,
   BatchView,
   BedView,
-  BillView,
   ClinicSettingsView,
   ClinicSnapshot,
   ClinicalPhraseKind,
@@ -19,13 +19,17 @@ import type {
   ConsultationTemplateView,
   EncounterView,
   FollowUpView,
+  InvoiceLineView,
+  InvoiceView,
   MedicineBarcodeView,
   MedicineView,
   OpeningCountView,
+  OtcSaleLineView,
   OtcSaleView,
   PackageLevelView,
   PackageVersionView,
   PatientView,
+  PaymentView,
   PrescriptionItemView,
   PrescriptionView,
   PurchaseOrderView,
@@ -132,7 +136,19 @@ const LINE_JSON = `jsonb_build_object(
   'medicineState', l.medicine_state,
   'quantityState', l.quantity_state,
   'cancelled', l.cancelled,
-  'needsReview', l.needs_review
+  'needsReview', l.needs_review,
+  -- Slice 4. The counter needs prescribed, supplied, remaining and available on
+  -- the same row, because "give now" is arithmetic over all four and a
+  -- pharmacist should not have to do it in their head.
+  'prescriptionLineId', l.id,
+  'supplied', sup.supplied,
+  'remaining', sup.remaining,
+  'supplyState', sup.supply_state,
+  'outcomeReason', sup.outcome_reason,
+  'available', coalesce((
+    select sum(a.available_quantity) from jmc.batch_availability a
+     where a.medicine_id = l.effective_medicine_id and a.pickable
+  ), 0)
 )`
 
 const DRAFT_LINE_JSON = `jsonb_build_object(
@@ -187,7 +203,176 @@ function prescriptionView(r: Row): PrescriptionView {
     signedAt: text(r.signed_at),
     dispensedAt: optional(r.dispensed_at),
     printCount: num(r.print_count),
+    validUntil: optional(r.valid_until),
+    supplyInParts: r.supply_in_parts !== false,
+    expired: flag(r.expired),
   }
+}
+
+/**
+ * Counter sales, with their lines.
+ *
+ * Two things here were wrong until Slice 4 finished moving OTC out of a JSON
+ * blob. `lineCount` read `json_array_length(lines_json)`, which the new sale
+ * writes as `'[]'` and never updates — so every sale showed zero lines. And
+ * `payment_method` was a column on the sale, which can say only one thing:
+ * after split payment existed, a sale paid half in cash and half by UPI said
+ * "cash", and a sale not yet paid said whatever was last there.
+ *
+ * Both now come from the rows that actually record them — `otc_lines` and the
+ * payments allocated to the sale's invoice. `split` is a real answer and so is
+ * nothing at all.
+ */
+async function readOtcSales(): Promise<OtcSaleView[]> {
+  const sales = await all(
+    `select s.id, s.receipt_number, s.total, s.created_at, s.status,
+            s.patient_id, s.invoice_id,
+            st.name as created_by_name, p.name as patient_name,
+            (select count(*)::int from otc_lines l where l.otc_sale_id = s.id) as line_count,
+            (select string_agg(distinct y.method, ',')
+               from payment_allocations a
+               join payments y on y.id = a.payment_id
+              where a.invoice_id = s.invoice_id and y.status = 'received' and y.kind = 'payment'
+            ) as methods
+       from otc_sales s
+       join staff st on st.id = s.created_by
+       left join patients p on p.id = s.patient_id
+      order by s.created_at desc limit 100`,
+  )
+  if (sales.length === 0) return []
+
+  const lines = await all(
+    `select l.*, m.name as medicine_name,
+            coalesce((select sum(r.quantity) from otc_returns r where r.otc_line_id = l.id), 0) as returned
+       from otc_lines l join medicines m on m.id = l.medicine_id
+      where l.otc_sale_id = any(?::text[])
+      order by l.otc_sale_id, l.line_number`,
+    sales.map((row) => text(row.id)),
+  )
+
+  const linesBy = new Map<string, OtcSaleLineView[]>()
+  for (const row of lines) {
+    const list = linesBy.get(text(row.otc_sale_id)) ?? []
+    list.push({
+      id: text(row.id),
+      medicineId: text(row.medicine_id),
+      medicineName: text(row.medicine_name),
+      packageLevelName: text(row.package_level_name),
+      quantity: num(row.quantity),
+      unitAmount: num(row.unit_amount),
+      amount: num(row.amount),
+      returned: num(row.returned),
+    })
+    linesBy.set(text(row.otc_sale_id), list)
+  }
+
+  return sales.map((row) => {
+    const methods = text(row.methods).split(',').filter(Boolean)
+    return {
+      id: text(row.id),
+      receiptNumber: text(row.receipt_number),
+      total: num(row.total),
+      paymentMethod: (methods.length > 1 ? 'split' : methods[0] ?? '') as OtcSaleView['paymentMethod'],
+      createdAt: text(row.created_at),
+      createdByName: text(row.created_by_name),
+      patientId: optional(row.patient_id),
+      patientName: optional(row.patient_name),
+      invoiceId: optional(row.invoice_id),
+      status: text(row.status) as OtcSaleView['status'],
+      lineCount: num(row.line_count),
+      lines: linesBy.get(text(row.id)) ?? [],
+    }
+  })
+}
+
+/**
+ * The bills, their lines and the money taken against them.
+ *
+ * Three reads rather than one query with two joins, because an invoice with
+ * four lines and three payments would otherwise come back as twelve rows and
+ * be de-duplicated in JavaScript — which is where a payment gets counted twice
+ * and a bill looks settled that is not.
+ */
+async function readInvoices(where: string, params: unknown[] = []): Promise<InvoiceView[]> {
+  const headers = await all(
+    `select b.*, p.name as patient_name, i.void_reason
+       from invoice_balances b
+       join invoices i on i.id = b.id
+       left join patients p on p.id = b.patient_id
+      where ${where}
+      order by b.created_at desc`,
+    ...params,
+  )
+  if (headers.length === 0) return []
+
+  const ids = headers.map((row) => text(row.id))
+  const lines = await all(
+    `select * from invoice_lines where invoice_id = any(?::text[]) order by invoice_id, line_number`,
+    ids,
+  )
+  const payments = await all(
+    `select a.invoice_id, a.amount as allocated, y.*, s.name as received_by_name
+       from payment_allocations a
+       join payments y on y.id = a.payment_id
+       join staff s on s.id = y.received_by
+      where a.invoice_id = any(?::text[])
+      order by y.received_at`,
+    ids,
+  )
+
+  const linesBy = new Map<string, InvoiceLineView[]>()
+  for (const row of lines) {
+    const list = linesBy.get(text(row.invoice_id)) ?? []
+    list.push({
+      id: text(row.id),
+      lineNumber: num(row.line_number),
+      source: text(row.source) as InvoiceLineView['source'],
+      description: text(row.description),
+      quantity: num(row.quantity),
+      unitAmount: num(row.unit_amount),
+      amount: num(row.amount),
+      medicineId: optional(row.medicine_id),
+      dispenseLineId: optional(row.dispense_line_id),
+      otcLineId: optional(row.otc_line_id),
+    })
+    linesBy.set(text(row.invoice_id), list)
+  }
+
+  const paymentsBy = new Map<string, PaymentView[]>()
+  for (const row of payments) {
+    const list = paymentsBy.get(text(row.invoice_id)) ?? []
+    list.push({
+      id: text(row.id),
+      receiptNumber: text(row.receipt_number),
+      kind: text(row.kind) as PaymentView['kind'],
+      method: text(row.method) as PaymentView['method'],
+      reference: text(row.reference),
+      // What was allocated to THIS bill, which is not always the whole payment.
+      amount: num(row.allocated),
+      status: text(row.status) as PaymentView['status'],
+      receivedAt: text(row.received_at),
+      receivedByName: text(row.received_by_name),
+      reversalReason: optional(row.reversal_reason),
+    })
+    paymentsBy.set(text(row.invoice_id), list)
+  }
+
+  return headers.map((row) => ({
+    id: text(row.id),
+    invoiceNumber: text(row.invoice_number),
+    patientId: optional(row.patient_id),
+    patientName: optional(row.patient_name),
+    encounterId: optional(row.encounter_id),
+    status: text(row.status) as InvoiceView['status'],
+    voidReason: optional(row.void_reason),
+    createdAt: text(row.created_at),
+    total: num(row.total),
+    paid: num(row.paid),
+    due: num(row.due),
+    paymentState: text(row.payment_state) as InvoiceView['paymentState'],
+    lines: linesBy.get(text(row.id)) ?? [],
+    payments: paymentsBy.get(text(row.id)) ?? [],
+  }))
 }
 
 function followUpView(r: Row): FollowUpView {
@@ -383,16 +568,16 @@ async function readTill(): Promise<TillView | null> {
 
   const since = text(till.opened_at)
 
-  const [bills] = await all(
-    `select coalesce(sum(amount), 0) as total from bills
-      where status = 'paid' and payment_method = 'cash' and paid_at >= ?`,
+  // The same single question `close_till` asks: cash in, minus cash refunded,
+  // ignoring anything reversed. See the note there.
+  const [cash] = await all(
+    `select coalesce(sum(case when kind = 'refund' then -amount else amount end), 0) as total
+       from payments
+      where method = 'cash' and status = 'received' and received_at >= ?::timestamptz`,
     since,
   )
-  const [sales] = await all(
-    `select coalesce(sum(total), 0) as total from otc_sales
-      where payment_method = 'cash' and created_at >= ?`,
-    since,
-  )
+  const bills = { total: num(cash.total) }
+  const sales = { total: 0 }
   const [moved] = await all(
     `select
        coalesce(sum(case when direction = 'in'  then amount else 0 end), 0) as cash_in,
@@ -537,7 +722,15 @@ export async function readSnapshot(
   const staffAdmin = hasRole(session, 'admin') // Staff, Activity
   const careRegister = hasRole(session, 'admin', 'doctor', 'nurse') // Patients, Queue, Vitals, Consult, Beds
   const clinicalRecord = hasRole(session, 'doctor') // Records
-  const pharmacyCounter = hasRole(session, 'pharmacy') // Counter
+  /*
+   * The counter, and it is `admin` as well as `pharmacy`.
+   *
+   * `dispense_rx`, `otc_sale` and `take_payment` all authorize admin, and the
+   * owner runs this clinic — so an admin opening Counter was shown an empty
+   * queue by a screen whose backend would have accepted every command on it.
+   * The rail offered the station; only the data did not arrive.
+   */
+  const pharmacyCounter = hasRole(session, 'admin', 'pharmacy') // Counter
   const shelf = hasRole(session, 'admin', 'doctor', 'pharmacy') // Inventory, Expiring, Stock-take
   const supplyNetwork = hasRole(session, 'admin', 'pharmacy') // Suppliers, Orders, Expiring
   const cashDrawer = hasRole(session, 'admin', 'nurse', 'pharmacy') // Day book, Counter
@@ -578,10 +771,22 @@ export async function readSnapshot(
   // tablet is a list of bare ids: enough to count, nothing to read. The blanks
   // the mapper fills in below are not defaults, they are the absence of the
   // column, and the only code that would notice is code that must not exist.
+  /*
+   * Slice 4 widened this by exactly one desk.
+   *
+   * The counter attaches a patient to a pay-later sale and to a bill, and a
+   * list of bare ids cannot do that — a first-time walk-in with no prior bill
+   * was simply unattachable, which is the one case pay-later is for. So the
+   * counter now receives name and phone: what is needed to find the right
+   * person and no more. Age, sex and consent stay behind the care register,
+   * and the clinical record was never here at all.
+   */
   const patients: PatientView[] = (await all(
     careRegister
       ? `select id,name,age,sex,phone,whatsapp_consent,created_at from patients order by created_at desc`
-      : `select id from patients order by created_at desc`,
+      : pharmacyCounter
+        ? `select id,name,phone,created_at from patients order by created_at desc`
+        : `select id from patients order by created_at desc`,
   )).map((r) => ({
     id: text(r.id), name: text(r.name), age: num(r.age), sex: text(r.sex) as PatientView['sex'],
     phone: text(r.phone), address: '', whatsappConsent: flag(r.whatsapp_consent), createdAt: text(r.created_at),
@@ -645,7 +850,9 @@ export async function readSnapshot(
   const prescriptions: PrescriptionView[] = pharmacyCounter
     ? (await all(`select rx.*,p.name patient_name,s.name doctor_name,
           coalesce((select jsonb_agg(${LINE_JSON} order by l.line_number)
-                      from prescription_lines_effective l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
+                      from prescription_lines_effective l
+                      join prescription_line_supply sup on sup.id = l.id
+                     where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
           (select count(*)::int from prescription_prints pp where pp.prescription_id=rx.id) print_count
         from prescriptions rx
         join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
@@ -653,15 +860,48 @@ export async function readSnapshot(
         order by rx.signed_at desc`)).map(prescriptionView)
     : []
 
-  // Same rule, same reason: an unpaid bill is money owed to the clinic and
-  // must never age out of the list. Paid ones are today's, for the day book.
-  const bills: BillView[] = (await all(`select b.*,p.name patient_name from bills b join patients p on p.id=b.patient_id
-    where b.status = 'unpaid' or b.created_at >= ${CLINIC_DAY_START}
-    order by b.created_at desc`)).map((r) => ({
-      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), label: text(r.label), amount: num(r.amount),
-      status: text(r.status) as BillView['status'], paymentMethod: optional(r.payment_method) as BillView['paymentMethod'],
-      createdAt: text(r.created_at), paidAt: optional(r.paid_at),
+  // Same rule, same reason: money owed to the clinic must never age out of the
+  // list. Settled ones are today's, for the day book. `due > 0` rather than a
+  // status column — a part-paid bill from last Tuesday is still owed.
+  /*
+   * Bills, for the desks that handle money.
+   *
+   * Ungated, this shipped every open bill in the clinic — patient names and
+   * full payment history — to a doctor-only session that has no billing
+   * station to show it on. `patientBalances` right beside it was gated
+   * correctly, which is how the omission stood out.
+   *
+   * The third clause is the day book's. A bill raised last week and settled
+   * this morning has `due = 0` and an old `created_at`, so the first two
+   * clauses drop it — and today's takings lose a payment that the till's own
+   * server-side figure still counts. The two then disagree by exactly that
+   * amount, every time somebody settles an old balance.
+   */
+  const invoices: InvoiceView[] = cashDrawer
+    ? await readInvoices(
+      `(b.due > 0 and b.status <> 'void')
+       or b.created_at >= ${CLINIC_DAY_START}::timestamptz
+       or exists (
+         select 1 from payment_allocations pa
+           join payments py on py.id = pa.payment_id
+          where pa.invoice_id = b.id and py.received_at >= ${CLINIC_DAY_START}::timestamptz
+       )`,
+    )
+    : []
+
+  const patientBalances: PatientBalanceView[] = cashDrawer
+    ? (await all(
+      `select * from patient_balances where outstanding <> 0 order by outstanding desc`,
+    )).map((row) => ({
+      patientId: text(row.patient_id),
+      patientName: text(row.name),
+      billed: num(row.billed),
+      paid: num(row.paid),
+      outstanding: num(row.outstanding),
+      openInvoices: num(row.open_invoices),
+      oldestDueAt: optional(row.oldest_due_at),
     }))
+    : []
 
   const beds: BedView[] = careRegister
     ? (await all(`select b.*,p.name patient_name,hr.name handoff_requested_by_name
@@ -889,11 +1129,7 @@ export async function readSnapshot(
   // Counter receipts. The Counter raises them and the Day book reconciles them,
   // and a doctor stands at neither.
   const otcSales: OtcSaleView[] = cashDrawer
-    ? (await all(`select id,receipt_number,total,payment_method,created_at,
-        json_array_length(lines_json::json) line_count from otc_sales order by created_at desc limit 100`)).map((r) => ({
-          id: text(r.id), receiptNumber: text(r.receipt_number), total: num(r.total),
-          paymentMethod: text(r.payment_method) as OtcSaleView['paymentMethod'], createdAt: text(r.created_at), lineCount: num(r.line_count),
-        }))
+    ? await readOtcSales()
     : []
 
   const audits: AuditView[] = staffAdmin
@@ -924,10 +1160,11 @@ export async function readSnapshot(
     vitalReviewRules,
     encounters,
     prescriptions,
-    bills,
+    invoices,
     beds,
     medicines,
     batches,
+    patientBalances,
     packages,
     medicineBarcodes,
     unmappedBarcodes,
@@ -1044,7 +1281,9 @@ export async function readPatientRecord(
     all(
       `select rx.*,p.name patient_name,s.name doctor_name,
           coalesce((select jsonb_agg(${LINE_JSON} order by l.line_number)
-                      from prescription_lines_effective l where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
+                      from prescription_lines_effective l
+                      join prescription_line_supply sup on sup.id = l.id
+                     where l.prescription_id=rx.id), '[]'::jsonb) normalized_items,
           (select count(*)::int from prescription_prints pp where pp.prescription_id=rx.id) print_count
          from prescriptions rx
          join patients p on p.id=rx.patient_id join staff s on s.id=rx.doctor_id
@@ -1056,11 +1295,8 @@ export async function readPatientRecord(
         where v.patient_id=? order by v.recorded_at desc`,
       patientId,
     ),
-    all(
-      `select b.*,p.name patient_name from bills b join patients p on p.id=b.patient_id
-        where b.patient_id=? order by b.created_at desc`,
-      patientId,
-    ),
+    // One patient's bills, in full: every line and every payment against them.
+    readInvoices('b.patient_id = ?', [patientId]),
     all(
       `select f.*,p.name patient_name,s.name doctor_name from follow_ups f
          join patients p on p.id=f.patient_id join staff s on s.id=f.doctor_id
@@ -1176,12 +1412,7 @@ export async function readPatientRecord(
       notMeasuredNote: text(r.not_measured_note),
       recordedBy: text(r.recorded_by_name), recordedAt: text(r.recorded_at),
     })),
-    bills: bills.map((r) => ({
-      id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name),
-      label: text(r.label), amount: num(r.amount), status: text(r.status) as 'unpaid' | 'paid',
-      paymentMethod: optional(r.payment_method) as 'cash' | 'upi' | 'card' | undefined,
-      createdAt: text(r.created_at), paidAt: optional(r.paid_at),
-    })),
+    invoices: bills,
     draft,
     templates: templateViews,
     phrases: phrases.map((r) => ({

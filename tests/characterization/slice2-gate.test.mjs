@@ -92,7 +92,7 @@ describe('private server-side consultation drafts', () => {
     const { publisher, doctor, pharmacy, patientId, medicineId } = await clinic()
 
     await as(publisher, 'save_consultation_draft', clinicalPayload(patientId, medicineId, {
-      diagnosis: '', consultationFee: 0,
+      diagnosis: '', feeWaived: true, feeReason: 'Not what this test is about',
     }))
 
     const ownerRecord = await snapshot.readPatientRecord(patientId, publisher.id)
@@ -109,7 +109,7 @@ describe('private server-side consultation drafts', () => {
     assert.equal((await snapshot.readPatientRecord(patientId, publisher.id)).draft?.stale, true)
 
     await as(publisher, 'save_consultation_draft', clinicalPayload(patientId, medicineId, {
-      diagnosis: 'Changed but still unsigned', consultationFee: 0,
+      diagnosis: 'Changed but still unsigned', feeWaived: true, feeReason: 'Not what this test is about',
     }))
     assert.equal(await scalar('select count(*)::int from jmc.consultation_drafts'), 1)
     assert.equal(await scalar('select count(*)::int from jmc.consultation_draft_lines'), 1)
@@ -236,7 +236,7 @@ describe('the approved clinical vocabulary', () => {
   test('a superseded release leaves new suggestions without touching signed history', async () => {
     const { publisher, patientId, medicineId } = await clinic()
     await as(publisher, 'sign_consultation', clinicalPayload(patientId, medicineId, {
-      advice: 'Drink plenty of fluids', consultationFee: 0,
+      advice: 'Drink plenty of fluids', feeWaived: true, feeReason: 'Not what this test is about',
     }))
 
     await rows(`update jmc.clinical_vocabulary_releases set retired_at=now() where version='en-2026.09'`)
@@ -254,7 +254,7 @@ describe('the approved clinical vocabulary', () => {
 describe('doctor-owned and clinic-approved templates', () => {
   test('admin is not clinical authority; clinic templates are versioned and immutable', async () => {
     const { publisher, doctor, admin, patientId, medicineId } = await clinic()
-    const base = clinicalPayload(patientId, medicineId, { title: 'Fever plan', consultationFee: 0 })
+    const base = clinicalPayload(patientId, medicineId, { title: 'Fever plan', feeWaived: true, feeReason: 'Not what this test is about' })
 
     await as(doctor, 'save_clinical_template', { ...base, scope: 'personal' })
     assert.equal((await snapshot.readPatientRecord(patientId, doctor.id)).templates.length, 1)
@@ -308,7 +308,7 @@ describe('signing, exact medicine identity, follow-up and paper', () => {
     })
     const appointmentId = String(await scalar('select id from jmc.appointments'))
     const payload = clinicalPayload(patientId, medicineId, {
-      appointmentId, consultationFee: 0,
+      appointmentId, feeWaived: true, feeReason: 'Not what this test is about',
     })
 
     const results = await Promise.allSettled([

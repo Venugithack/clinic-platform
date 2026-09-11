@@ -51,7 +51,7 @@ async function everyRole() {
 }
 
 describe('the snapshot is scoped by role, at the query rather than after it', () => {
-  test('the pharmacy counter receives patient ids and no patient details', async () => {
+  test('the pharmacy counter receives a name and a phone, and nothing clinical', async () => {
     const staff = await everyRole()
 
     const counter = await snapshot.readSnapshot(sessionFor(staff.pharmacy))
@@ -59,15 +59,33 @@ describe('the snapshot is scoped by role, at the query rather than after it', ()
     assert.equal(counter.patients.length, 1, 'the count still has to be right — Overview prints it')
     const [patient] = counter.patients
     assert.ok(patient.id)
-    assert.equal(patient.name, '', 'no name reaches the counter')
-    assert.equal(patient.phone, '', 'no phone number reaches the counter')
-    assert.equal(patient.address, '', 'no address reaches the counter')
 
-    // Worth recording rather than asserting away: `sex` is typed
-    // 'female' | 'male' | 'other' and arrives as the empty string, which the
-    // mapper reaches by an `as` cast. The scoping is right; the type is a
-    // promise the code does not keep.
-    assert.equal(patient.sex, '')
+    /*
+     * Slice 4 widened this by exactly two columns, and the reason is worth
+     * recording because it reverses what this test used to assert.
+     *
+     * The counter had bare ids: enough to count, nothing to read. That held
+     * while the counter only dispensed. Slice 4 gives it pay-later, which
+     * means attaching a sale to a registered patient — and a first-time walk-in
+     * with no prior bill was unattachable, which is the one case pay-later
+     * exists for. It was also inconsistent rather than protective: the same
+     * snapshot already shipped `patientName` on every prescription and every
+     * bill the counter can see.
+     *
+     * So: name and phone, which is what finding the right person needs. Age,
+     * sex, address and consent stay behind the care register, and the clinical
+     * record was never here at all.
+     */
+    assert.equal(patient.name, 'Kamala Test')
+    assert.equal(patient.phone, '+915550000001')
+    assert.equal(patient.age, 0, 'age is not the counter\'s business')
+    assert.equal(patient.sex, '', 'nor is sex')
+    assert.equal(patient.address, '', 'nor is the address')
+    assert.equal(patient.whatsappConsent, false)
+
+    // And the clinical record is still empty for the counter, scoped at the
+    // query rather than filtered afterwards.
+    assert.deepEqual(counter.encounters, [])
   })
 
   test('doctor, nurse and admin all receive the care register in full', async () => {
@@ -147,7 +165,7 @@ describe('the snapshot is scoped by role, at the query rather than after it', ()
 describe('who may do what', () => {
   const forbidden = [
     ['doctor', 'dispense_rx', 'the doctor cannot dispense'],
-    ['doctor', 'pay_bill', 'the doctor cannot collect payment'],
+    ['doctor', 'take_payment', 'the doctor cannot collect payment'],
     ['nurse', 'save_consultation', 'the nurse cannot sign a consultation'],
     ['nurse', 'add_medicine', 'the nurse cannot change the formulary'],
     ['pharmacy', 'create_patient', 'the counter cannot register a patient'],
@@ -190,7 +208,7 @@ describe('who may do what', () => {
     })
 
     await as(staff.doctor, 'save_consultation', {
-      patientId: walkIn, appointmentId, diagnosis: 'Viral fever', consultationFee: 0,
+      patientId: walkIn, appointmentId, diagnosis: 'Viral fever',
     })
 
     assert.equal(await scalar('select status from jmc.appointments where id=$1', [appointmentId]), 'done')
@@ -209,7 +227,7 @@ describe('who may do what', () => {
     // and the cash drawer are somebody else's job, and the capability matrix
     // in PRODUCT_UX_PLAN.md §5.5 says so.
     await assert.rejects(as(staff.doctor, 'dispense_rx', { prescriptionId: 'x' }), /role cannot perform/)
-    await assert.rejects(as(staff.doctor, 'pay_bill', { billId: 'x' }), /role cannot perform/)
+    await assert.rejects(as(staff.doctor, 'take_payment', { invoiceId: 'x' }), /role cannot perform/)
   })
 
   test('the nurse and admin can still start a visit', async () => {
@@ -240,11 +258,11 @@ describe('who may do what', () => {
     // Authority follows the clinical role, not the level of access. An admin
     // account must not be a way around a prescriber's registration.
     await assert.rejects(
-      as(staff.admin, 'save_consultation', { patientId: staff.patientId, diagnosis: 'Fever', consultationFee: 0 }),
+      as(staff.admin, 'save_consultation', { patientId: staff.patientId, diagnosis: 'Fever' }),
       /role cannot perform/,
     )
     await as(staff.adminDoctor, 'save_consultation', {
-      patientId: staff.patientId, diagnosis: 'Fever', consultationFee: 0,
+      patientId: staff.patientId, diagnosis: 'Fever',
     })
   })
 })

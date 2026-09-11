@@ -76,7 +76,8 @@ try {
       timing: 'after_food', durationValue: 3, durationUnit: 'day',
       instructions: 'After food', quantity: 6,
     }],
-    consultationFee: 0,
+    feeWaived: true,
+    feeReason: 'Not what this driver is about',
   }
 
   await run(staff.doctor, 'save_consultation_draft', clinical)

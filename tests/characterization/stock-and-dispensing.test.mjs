@@ -75,6 +75,38 @@ async function addBatch(medicineId, { batchNumber, expiry, quantity, sellingPric
   return String(batch.id)
 }
 
+/**
+ * A counter sale, paid in full.
+ *
+ * Slice 4 requires it: policy register 46 says an anonymous sale is paid at the
+ * time, and the command refuses one that is not. So the amount is computed
+ * from the shelf the same way FEFO will price it — earliest expiry first, at
+ * each batch's own selling price — and handed over as cash.
+ *
+ * Working it out here rather than passing a magic number keeps these tests
+ * about stock, which is what the file is for.
+ */
+async function sell(staff, medicineId, quantity, extra = {}) {
+  const batches = await rows(
+    `select available_quantity, selling_price from jmc.batch_availability
+      where medicine_id=$1 and pickable order by expiry, id`,
+    [medicineId],
+  )
+  let left = quantity
+  let total = 0
+  for (const batch of batches) {
+    if (left === 0) break
+    const take = Math.min(Number(batch.available_quantity), left)
+    total += take * Number(batch.selling_price)
+    left -= take
+  }
+  return as(staff, 'otc_sale', {
+    lines: [{ medicineId, quantity }],
+    parts: total > 0 ? [{ method: 'cash', amount: total.toFixed(2) }] : [],
+    ...extra,
+  })
+}
+
 /** What the ledger says this batch holds, independent of the cached column. */
 async function ledgerBalance(batchId) {
   return Number(
@@ -111,7 +143,7 @@ describe('the stock ledger', () => {
     })
     const [batch] = await rows('select id from jmc.batches where medicine_id=$1', [medicineId])
 
-    await as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 6 }], paymentMethod: 'cash' })
+    await sell(pharmacy, medicineId, 6)
 
     assert.equal(await cachedBalance(batch.id), 34)
     assert.equal(await ledgerBalance(batch.id), 34, 'the ledger and the cached balance must agree')
@@ -125,8 +157,8 @@ describe('the stock ledger', () => {
     })
 
     await assert.rejects(
-      as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 6 }], paymentMethod: 'cash' }),
-      /Only 5 unit\(s\) are available/,
+      sell(pharmacy, medicineId, 6),
+      /Only 5 unit\(s\) can be supplied/,
     )
 
     // And nothing partial was left behind: no sale, no movement beyond opening.
@@ -145,7 +177,7 @@ describe('FEFO allocation', () => {
     const late = await addBatch(medicineId, { batchNumber: 'LATE', expiry: await clinicDate(400), quantity: 50, sellingPrice: 4 })
     const early = await addBatch(medicineId, { batchNumber: 'EARLY', expiry: await clinicDate(30), quantity: 20, sellingPrice: 2 })
 
-    await as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 25 }], paymentMethod: 'cash' })
+    await sell(pharmacy, medicineId, 25)
 
     assert.equal(await cachedBalance(early), 0, 'the earliest-expiry batch is emptied first')
     assert.equal(await cachedBalance(late), 45, 'the remainder comes from the later batch')
@@ -166,7 +198,7 @@ describe('FEFO allocation', () => {
     await addBatch(medicineId, { batchNumber: 'EARLY', expiry: await clinicDate(30), quantity: 20, sellingPrice: 2 })
     await addBatch(medicineId, { batchNumber: 'LATE', expiry: await clinicDate(400), quantity: 50, sellingPrice: 4 })
 
-    await as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 25 }], paymentMethod: 'cash' })
+    await sell(pharmacy, medicineId, 25)
 
     // 20 at 2 plus 5 at 4.
     assert.equal(Number(await scalar('select total from jmc.otc_sales')), 60)
@@ -180,11 +212,11 @@ describe('FEFO allocation', () => {
 
     // 100 expired units are on the shelf and none of them count.
     await assert.rejects(
-      as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 11 }], paymentMethod: 'cash' }),
-      /Only 10 unit\(s\) are available/,
+      sell(pharmacy, medicineId, 11),
+      /Only 10 unit\(s\) can be supplied/,
     )
 
-    await as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' })
+    await sell(pharmacy, medicineId, 10)
     assert.equal(await cachedBalance(expired), 100, 'the expired batch is untouched')
     assert.equal(await cachedBalance(good), 0)
   })
@@ -198,7 +230,7 @@ describe('FEFO allocation', () => {
     const medicineId = await addMedicine(admin, { initialQuantity: 0 })
     await addBatch(medicineId, { batchNumber: 'TODAY', expiry: await clinicDate(0), quantity: 10 })
 
-    await as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 3 }], paymentMethod: 'cash' })
+    await sell(pharmacy, medicineId, 3)
     assert.equal(Number(await scalar('select count(*)::int from jmc.otc_sales')), 1)
   })
 
@@ -211,15 +243,15 @@ describe('FEFO allocation', () => {
     })
 
     await assert.rejects(
-      as(pharmacy, 'otc_sale', { lines: [{ medicineId, quantity: 1 }], paymentMethod: 'cash' }),
-      /Only medicines marked OTC/,
+      sell(pharmacy, medicineId, 1),
+      /is not an over-the-counter medicine/,
     )
   })
 })
 
-describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it partial', () => {
+describe('dispensing a prescription', () => {
   /** A patient with a signed prescription for `quantity` of `medicineId`. */
-  async function prescribe(doctor, medicineId, quantity, { consultationFee = 0 } = {}) {
+  async function prescribe(doctor, medicineId, quantity, { fee = {} } = {}) {
     await as(doctor, 'create_patient', { name: 'Test Patient', age: 40, sex: 'female', phone: '+915550000001' })
     const patientId = String(await scalar('select id from jmc.patients limit 1'))
     await as(doctor, 'save_consultation', {
@@ -227,7 +259,9 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
       diagnosis: 'Fever',
       notes: '',
       advice: 'Rest',
-      consultationFee,
+      feeWaived: true,
+      feeReason: 'Not what this test is about',
+      ...fee,
       prescriptionItems: [
         { medicineId, medicineName: 'Paracetamol 500 mg', dosage: '1-0-1', instructions: 'After food', quantity },
       ],
@@ -269,7 +303,7 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
     assert.equal(items[0].quantity, 10)
   })
 
-  test('dispensing takes the whole prescription and accepts no quantity', async () => {
+  test('dispensing everything left moves the whole quantity and charges for it', async () => {
     const { admin, doctor, pharmacy } = await clinic()
     const medicineId = await addMedicine(admin, {
       initialQuantity: 100, batchNumber: 'PCM-A', expiry: await clinicDate(400),
@@ -277,17 +311,26 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
     })
     const { prescriptionId } = await prescribe(doctor, medicineId, 10)
 
-    // The command's whole payload is a prescription id. There is no way to
-    // say "give six now" — that is exactly what Slice 4 adds.
+    // Omitting `lines` still means "everything that can be supplied", which is
+    // the one-tap case the counter needs. What changed in Slice 4 is that
+    // saying "give six" is now possible at all — and that the ten tablets
+    // handed over reach the bill.
     await as(pharmacy, 'dispense_rx', { prescriptionId })
 
     const [batch] = await rows('select id, available_quantity from jmc.batches')
     assert.equal(Number(batch.available_quantity), 90)
     assert.equal(await ledgerBalance(batch.id), 90)
     assert.ok(await scalar('select dispensed_at from jmc.prescriptions where id=$1', [prescriptionId]))
+
+    // ₹30 a tablet, ten tablets. Before Slice 4 this was zero: dispensing
+    // moved stock and charged for nothing.
+    assert.equal(
+      String(await scalar(`select amount from jmc.invoice_lines where source='prescription'`)),
+      '300.00',
+    )
   })
 
-  test('dispensing twice is refused by the single dispensed_at timestamp', async () => {
+  test('a retried hand-over is one hand-over', async () => {
     const { admin, doctor, pharmacy } = await clinic()
     const medicineId = await addMedicine(admin, {
       initialQuantity: 100, batchNumber: 'PCM-A', expiry: await clinicDate(400),
@@ -295,12 +338,27 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
     })
     const { prescriptionId } = await prescribe(doctor, medicineId, 10)
 
-    await as(pharmacy, 'dispense_rx', { prescriptionId })
-    await assert.rejects(as(pharmacy, 'dispense_rx', { prescriptionId }), /already dispensed/)
+    /*
+     * `dispensed_at` used to carry this on its own, which worked only while a
+     * prescription was handed over once and entirely. Partial supply removes
+     * that: two taps five seconds apart are two perfectly legitimate partial
+     * dispenses, and only the key can tell them apart from one tap the network
+     * repeated.
+     */
+    const key = 'retry-the-same-hand-over'
+    const first = await as(pharmacy, 'dispense_rx', { prescriptionId, idempotencyKey: key })
+    const again = await as(pharmacy, 'dispense_rx', { prescriptionId, idempotencyKey: key })
 
-    // Stock moved exactly once. This is the property Slice 4 has to preserve
-    // through an idempotency key once "dispensed" stops being one boolean.
+    assert.equal(again.data.duplicate, true)
+    assert.equal(again.data.dispenseNumber, first.data.dispenseNumber)
     assert.equal(Number(await scalar('select available_quantity from jmc.batches')), 90)
+    assert.equal(await scalar('select count(*)::int from jmc.dispenses'), 1)
+
+    // And with nothing left, a genuinely new hand-over has nothing to do.
+    await assert.rejects(
+      as(pharmacy, 'dispense_rx', { prescriptionId }),
+      /nothing left to hand over/,
+    )
   })
 
   test('an out-of-stock line rolls the whole dispense back, stock and status together', async () => {
@@ -311,7 +369,7 @@ describe('dispensing a prescription — all-or-nothing today; Slice 4 makes it p
     })
     const { prescriptionId } = await prescribe(doctor, medicineId, 10)
 
-    await assert.rejects(as(pharmacy, 'dispense_rx', { prescriptionId }), /Only 4 unit\(s\) are available/)
+    await assert.rejects(as(pharmacy, 'dispense_rx', { prescriptionId }), /Only 4 unit\(s\) can be supplied/)
 
     // The refusal is complete. An earlier version of this code did not await
     // allocateStock, so the prescription was marked dispensed, nothing left the

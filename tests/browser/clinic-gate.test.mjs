@@ -348,7 +348,19 @@ describe('the doctor finishes one visit without rebuilding the case', () => {
     assert.match(opened, /previous visit/i)
     assert.match(opened, /before \/ after images/i)
     assert.match(opened, /private image storage is not enabled yet/i)
-    assert.match(opened, /fee ₹200 goes to pharmacy/i)
+    /*
+     * The fee the CLINIC charges, and where it is collected.
+     *
+     * This read `fee ₹200 goes to pharmacy` until Slice 4, and both halves of
+     * that were wrong in the same way: the figure came from a literal in the
+     * doctor's form rather than from clinic settings, so it agreed with the
+     * configured fee only by coincidence. The screen now states the configured
+     * figure and says the counter collects it whether or not any medicine is
+     * bought, which is policy register 17.
+     */
+    assert.match(opened, /the clinic charges ₹300\.00/i)
+    assert.match(opened, /₹300\.00 goes to pharmacy/i)
+    assert.match(opened, /waive it/i)
 
     // Typing narrows the clinic vocabulary; choosing the suggestion is a tap,
     // not another round of typing on the tablet keyboard.

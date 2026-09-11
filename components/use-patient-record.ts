@@ -8,7 +8,7 @@ const EMPTY: Omit<PatientRecordView, 'patientId'> = {
   encounters: [],
   prescriptions: [],
   vitals: [],
-  bills: [],
+  invoices: [],
   templates: [],
   phrases: [],
   phrasePreferences: [],
@@ -24,6 +24,12 @@ const EMPTY: Omit<PatientRecordView, 'patientId'> = {
  * vital sign and bill in the clinic's whole life, shipped to every tablet on
  * every tap. That is fine on the first day and unusable by the second year, and
  * there is no moment in between where anybody notices it break.
+ *
+ * Slice 4 renamed `bills` to `invoices`, which is not a rename of a word: a
+ * bill used to be one row with one amount and a paid flag, and an invoice is a
+ * header with immutable charge lines and payment allocations hanging off it.
+ * The old shape could not say what was charged, what was paid, and what is
+ * still due at the same time.
  *
  * `loading` is deliberately separate from empty. A patient with no history and
  * a patient whose history has not arrived look identical otherwise, and the

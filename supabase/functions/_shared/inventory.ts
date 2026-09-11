@@ -29,6 +29,7 @@ import {
   requireChoice, requireRole, sequence, value, type Payload,
 } from './command-input.ts'
 import { money, parseMoney, proRata, rupees, sum as sumMoney, times } from './money.ts'
+import { runCounterCommand } from './counter.ts'
 import {
   baseQuantityOf, buildLadder, decompose, describeEntry, describeLadder,
   ladderFromRows, levelNamed, plural, type Ladder, type Level, type LevelInput, type PackageEntry,
@@ -37,7 +38,7 @@ import {
 /** Today in the clinic, not in Greenwich. Same expression `commands.ts` uses. */
 const CLINIC_TODAY = `(now() at time zone 'Asia/Kolkata')::date`
 
-type Bucket = 'available' | 'quarantine' | 'blocked'
+export type Bucket = 'available' | 'quarantine' | 'blocked'
 
 const BUCKET_COLUMN: Record<Bucket, string> = {
   available: 'available_quantity',
@@ -70,7 +71,7 @@ async function ladderOf(packageVersionId: string): Promise<Ladder> {
   return ladderRows(version.base_unit, packageVersionId)
 }
 
-async function ladderRows(baseUnit: string, packageVersionId: string): Promise<Ladder> {
+export async function ladderRows(baseUnit: string, packageVersionId: string): Promise<Ladder> {
   const rows = await db.prepare(
     `select level_name,level_type,child_count,base_factor,depth,receivable,sellable,breakable,
             minimum_sale_multiple,mrp_basis,barcode_hint,
@@ -141,7 +142,7 @@ export function ladderOfBatch(batch: { package_snapshot: unknown; base_unit: str
  * Forcing the parameter to text first hands Postgres the characters and lets
  * it parse them, which is what was meant.
  */
-async function moveStock(options: {
+export async function moveStock(options: {
   batchId: string
   medicineId: string
   bucket: Bucket
@@ -193,7 +194,7 @@ async function moveStock(options: {
   return movementId
 }
 
-function packageEntries(raw: unknown, label: string): PackageEntry[] {
+export function packageEntries(raw: unknown, label: string): PackageEntry[] {
   if (!Array.isArray(raw)) return []
   return raw.map((item) => {
     const row = item as Payload
@@ -1469,8 +1470,14 @@ export async function runInventoryCommand(session: SessionView, action: string, 
       return { message: 'Opening count abandoned. Nothing was posted; the counts are kept.' }
     }
 
+    /*
+     * The counter's own commands — dispensing, OTC, billing and payment — live
+     * in counter.ts for the same reason these live here: they are a third of
+     * the command surface, they share almost nothing with the formulary, and a
+     * file every slice edits is a file every slice conflicts in.
+     */
     default:
-      throw new Error('Unknown action.')
+      return runCounterCommand(session, action, payload)
   }
 }
 

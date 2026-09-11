@@ -64,8 +64,74 @@ export async function emptyClinic(connection) {
 
   await connection.unsafe(`truncate ${tables.join(', ')} restart identity cascade`)
 
-  await connection`insert into jmc.clinical_vocabulary_releases ${connection(releases)}`
-  if (released.length > 0) await connection`insert into jmc.clinical_phrases ${connection(released)}`
+  /*
+   * Restored to the state the MIGRATION installed, not to the state the last
+   * test left.
+   *
+   * `retired_at` and `active` are cleared on the way back in, and that is the
+   * whole point. A test that publishes a new clinic vocabulary retires the
+   * approved release; a test that withdraws a phrase deactivates it. Carrying
+   * those across verbatim made them permanent: the release retired once by the
+   * Slice 2 gate stayed retired for every file that ran afterwards, and every
+   * one of them then saw an empty vocabulary — which is not a failure anybody
+   * would read as cross-file contamination, because the query returns zero
+   * rows rather than an error.
+   *
+   * Measured: after one such run, `clinical_phrases` held all eighty rows and
+   * the doctor's suggestions were empty, because the release they belong to
+   * had `retired_at` set.
+   */
+  await connection`insert into jmc.clinical_vocabulary_releases ${
+    connection(releases.map((release) => ({ ...release, retired_at: null })))
+  }`
+  if (released.length > 0) {
+    await connection`insert into jmc.clinical_phrases ${
+      connection(released.map((phrase) => ({ ...phrase, active: 1, retired_at: null })))
+    }`
+  }
+
+  /*
+   * The two singleton rows the application assumes exist, put back here rather
+   * than in `resetClinic`.
+   *
+   * `clinic_revision` without a row answers "unchanged" to every snapshot poll
+   * for ever. `clinic_settings` without one is a clinic whose consultation fee
+   * is nothing — which, from Slice 4, means `sign_consultation` reads the
+   * default as ₹0 and then refuses the doctor's ₹300 as an unexplained
+   * override. Both used to be restored only by `resetClinic`, so the Slice 1
+   * gate, which empties the clinic on its own connection, met exactly that.
+   */
+  await connection.unsafe(`
+    insert into jmc.clinic_revision (id, revision, changed_at)
+    values (1, 0, to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+    on conflict (id) do update set revision = 0
+  `)
+  await connection.unsafe(`
+    insert into jmc.clinic_settings (id, updated_at)
+    values (1, to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+    on conflict (id) do nothing
+  `)
+
+  /*
+   * `truncate ... restart identity` only rewinds sequences OWNED by a
+   * truncated column. These are free-standing — the command layer calls
+   * nextval on them directly — so they have to be rewound by name, or document
+   * numbers climb across files and an assertion on 'OTC-0001' passes once.
+   *
+   * Here rather than in `resetClinic`, because the Slice 1 gate empties the
+   * clinic on its own connection and then reseeds the fixtures: with the
+   * sequence left where the previous file put it, the fixture prescriptions
+   * came out numbered 4, 5 and 6 and the fixtures' own consistency check
+   * caught the contradiction.
+   */
+  for (const seq of [
+    'appointment_token_seq', 'otc_receipt_seq', 'purchase_order_seq',
+    'supplier_return_seq', 'stock_take_seq', 'prescription_number_seq',
+    'goods_receipt_seq', 'opening_count_seq',
+    'dispense_seq', 'invoice_seq', 'receipt_seq',
+  ]) {
+    await connection.unsafe(`select setval('jmc.${seq}', 1, false)`)
+  }
 }
 
 /**
@@ -80,28 +146,6 @@ export async function emptyClinic(connection) {
 export async function resetClinic() {
   await emptyClinic(admin)
 
-  await admin.unsafe(`
-    insert into jmc.clinic_revision (id, revision, changed_at)
-    values (1, 0, to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-    on conflict (id) do update set revision = 0
-  `)
-  await admin.unsafe(`
-    insert into jmc.clinic_settings (id, updated_at)
-    values (1, to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-    on conflict (id) do nothing
-  `)
-
-  // `truncate ... restart identity` only rewinds sequences OWNED by a truncated
-  // column. These five are free-standing — commands.ts calls nextval on them
-  // directly — so they have to be rewound by name or document numbers keep
-  // climbing across tests and an assertion on 'OTC-0001' passes once.
-  for (const seq of [
-    'appointment_token_seq', 'otc_receipt_seq', 'purchase_order_seq',
-    'supplier_return_seq', 'stock_take_seq', 'prescription_number_seq',
-    'goods_receipt_seq', 'opening_count_seq',
-  ]) {
-    await admin.unsafe(`select setval('jmc.${seq}', 1, false)`)
-  }
 }
 
 /** Close the reset connection. Call from an `after()` hook. */

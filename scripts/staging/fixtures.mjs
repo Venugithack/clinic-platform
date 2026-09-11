@@ -653,12 +653,38 @@ export const FIXTURE_PRESCRIPTIONS = {
   dispensedLastWeek: { id: uid('a8', 3), encounter: 'lastWeek', patient: 'hypertensive', dispensed: true },
 }
 
-export const FIXTURE_BILLS = {
-  paidCashToday: { id: uid('a9', 1), patient: 'tamilScript', amount: 200, status: 'paid', method: 'cash' },
-  unpaidToday: { id: uid('a9', 2), patient: 'longName', amount: 200, status: 'unpaid', method: null },
-  paidUpiLastWeek: { id: uid('a9', 3), patient: 'hypertensive', amount: 200, status: 'paid', method: 'upi' },
-  /** Two days old and still owed. Somebody has to chase this. */
-  unpaidSince: { id: uid('a9', 4), patient: 'diabetic', amount: 200, status: 'unpaid', method: null },
+/**
+ * Five invoices, chosen so every payment state the counter can show exists.
+ *
+ * Slice 4 replaced the single `bills` row — amount, status and method in one
+ * place — with an invoice, its immutable lines, and payments allocated against
+ * it. Part paid and pay-later are the two states the old shape could not
+ * express at all, so both are here; a fixture set where every bill is either
+ * unpaid or paid would never exercise the arithmetic that matters.
+ */
+export const FIXTURE_INVOICES = {
+  paidCashToday: {
+    id: uid('a9', 1), number: 'INV-000001', patient: 'tamilScript', encounter: 'fever',
+    amount: 300, paid: 300, method: 'cash', createdDaysAgo: 0, createdTime: '09:20', paidTime: '09:35',
+  },
+  unpaidToday: {
+    id: uid('a9', 2), number: 'INV-000002', patient: 'longName', encounter: 'acidity',
+    amount: 300, paid: 0, method: null, createdDaysAgo: 0, createdTime: '10:05', paidTime: null,
+  },
+  paidUpiLastWeek: {
+    id: uid('a9', 3), number: 'INV-000003', patient: 'hypertensive', encounter: 'lastWeek',
+    amount: 300, paid: 300, method: 'upi', createdDaysAgo: 9, createdTime: '10:35', paidTime: '10:50',
+  },
+  /** Two days old and still owed in full. Somebody has to chase this. */
+  unpaidSince: {
+    id: uid('a9', 4), number: 'INV-000004', patient: 'diabetic', encounter: 'adviceOnly',
+    amount: 300, paid: 0, method: null, createdDaysAgo: 2, createdTime: '11:15', paidTime: null,
+  },
+  /** Part paid: ₹100 of ₹300 in cash, the rest owed. */
+  partPaidYesterday: {
+    id: uid('a9', 5), number: 'INV-000005', patient: 'elderly', encounter: null,
+    amount: 300, paid: 100, method: 'cash', createdDaysAgo: 1, createdTime: '16:40', paidTime: '16:45',
+  },
 }
 
 export const FIXTURE_SALES = {
@@ -1562,6 +1588,12 @@ export async function seedClinic(sql, options = {}) {
           doctor_id: staffId('doctor'),
           items_json: JSON.stringify(items),
           signed_at: clock.at(-encounter.daysAgo, encounter.time),
+          // Seven calendar days from signing — the clinic's default remainder
+          // validity (policy register 18). The one signed today is therefore
+          // still supplyable and the ones from last week are not, which is the
+          // distinction the counter has to enforce.
+          valid_until: clock.day(-encounter.daysAgo + 7),
+          supply_in_parts: true,
           // Undispensed means NULL, not an empty string. `dispense_rx` tests
           // the column for truthiness and '' would read as "already done".
           dispensed_at: prescription.dispensed ? clock.at(-encounter.daysAgo, '10:55') : null,
@@ -1649,24 +1681,72 @@ export async function seedClinic(sql, options = {}) {
       last_used_at: clock.at(row.days, '11:40'),
     })))}`
 
-    await tx`insert into jmc.bills ${tx([
-      { key: 'paidCashToday', createdDaysAgo: 0, createdTime: '09:20', paidTime: '09:35' },
-      { key: 'unpaidToday', createdDaysAgo: 0, createdTime: '10:05', paidTime: null },
-      { key: 'paidUpiLastWeek', createdDaysAgo: 9, createdTime: '10:35', paidTime: '10:50' },
-      { key: 'unpaidSince', createdDaysAgo: 2, createdTime: '11:15', paidTime: null },
-    ].map((entry) => {
-      const bill = FIXTURE_BILLS[entry.key]
-      return {
-        id: bill.id,
-        patient_id: patientId(bill.patient),
-        label: 'Consultation',
-        amount: money(bill.amount),
-        status: bill.status,
-        payment_method: bill.method,
-        created_at: clock.at(-entry.createdDaysAgo, entry.createdTime),
-        paid_at: entry.paidTime ? clock.at(-entry.createdDaysAgo, entry.paidTime) : null,
-      }
-    }))}`
+    /*
+     * Invoices, their lines, and the payments allocated against them.
+     *
+     * Written in that order because the balance views derive everything from
+     * it: no invoice carries a paid flag, and "part paid" is two numbers not
+     * agreeing rather than a word somebody typed.
+     */
+    const invoices = Object.values(FIXTURE_INVOICES)
+
+    await tx`insert into jmc.invoices ${tx(
+      invoices.map((invoice) => ({
+        id: invoice.id,
+        invoice_number: invoice.number,
+        patient_id: patientId(invoice.patient),
+        encounter_id: invoice.encounter ? FIXTURE_ENCOUNTERS[invoice.encounter].id : null,
+        status: 'open',
+        created_by: staffId('doctor'),
+        created_at: clock.at(-invoice.createdDaysAgo, invoice.createdTime),
+      })),
+    )}`
+
+    await tx`insert into jmc.invoice_lines ${tx(
+      invoices.map((invoice) => ({
+        id: `${invoice.id}-line`,
+        invoice_id: invoice.id,
+        line_number: 1,
+        // A consultation fee is authorized by the encounter it came from, and
+        // its source key is what stops a retry charging twice.
+        source: invoice.encounter ? 'consultation_fee' : 'adjustment',
+        encounter_id: invoice.encounter ? FIXTURE_ENCOUNTERS[invoice.encounter].id : null,
+        description: 'Consultation',
+        quantity: 1,
+        unit_amount: money(invoice.amount),
+        amount: money(invoice.amount),
+        source_key: invoice.encounter
+          ? `consultation:${FIXTURE_ENCOUNTERS[invoice.encounter].id}`
+          : `fixture:${invoice.id}`,
+      })),
+    )}`
+
+    const settled = invoices.filter((invoice) => invoice.paid > 0)
+    await tx`insert into jmc.payments ${tx(
+      settled.map((invoice, index) => ({
+        id: `${invoice.id}-pay`,
+        receipt_number: `RCP-${String(index + 1).padStart(6, '0')}`,
+        kind: 'payment',
+        patient_id: patientId(invoice.patient),
+        method: invoice.method,
+        reference: invoice.method === 'upi' ? 'UPI-FIXTURE-0001' : '',
+        amount: money(invoice.paid),
+        status: 'received',
+        idempotency_key: `fixture:${invoice.id}`,
+        received_by: staffId('pharmacist'),
+        received_at: clock.at(-invoice.createdDaysAgo, invoice.paidTime),
+      })),
+    )}`
+
+    await tx`insert into jmc.payment_allocations ${tx(
+      settled.map((invoice) => ({
+        id: `${invoice.id}-alloc`,
+        payment_id: `${invoice.id}-pay`,
+        invoice_id: invoice.id,
+        amount: money(invoice.paid),
+        created_at: clock.at(-invoice.createdDaysAgo, invoice.paidTime),
+      })),
+    )}`
 
     await tx`insert into jmc.beds ${tx([
       { key: 'occupied', status: 'occupied', patient: 'elderly', admitted: '11:30', notes: 'Observation after IV fluids.' },
@@ -1715,10 +1795,57 @@ export async function seedClinic(sql, options = {}) {
         total: saleTotals[entry.key],
         payment_method: sale.method,
         lines_json: JSON.stringify(lines),
+        status: 'completed',
+        idempotency_key: `fixture:${sale.id}`,
         created_by: staffId(entry.by),
         created_at: clock.at(-entry.daysAgo, entry.time),
       }
     }))}`
+
+    /*
+     * The same three sales again as rows.
+     *
+     * Slice 4 moved counter sales out of `lines_json` and into `otc_lines` and
+     * `otc_allocations`, so a return has somewhere to point and a query has
+     * something to read. The JSON stays as it is, because that is what the
+     * migration's backfill reads on the clinic's own database — and because two
+     * representations that disagree is a bug the fixtures should be able to
+     * catch rather than avoid.
+     */
+    const otcLines = []
+    const otcAllocations = []
+    for (const key of ['yesterdayCash', 'todayCash', 'todayUpi']) {
+      const sale = FIXTURE_SALES[key]
+      SALE_LINES[key].forEach((line, index) => {
+        const batch = BATCH_PLAN[line.batch]
+        const medicine = FIXTURE_MEDICINES[batch.medicine]
+        const lineId = `${sale.id}-l${index + 1}`
+        otcLines.push({
+          id: lineId,
+          otc_sale_id: sale.id,
+          line_number: index + 1,
+          medicine_id: medicine.id,
+          package_level_name: medicine.unit,
+          package_count: line.quantity,
+          quantity: line.quantity,
+          unit_amount: money(batch.sellingPrice),
+          amount: money(line.quantity * batch.sellingPrice),
+        })
+        otcAllocations.push({
+          id: `${lineId}-a1`,
+          otc_line_id: lineId,
+          batch_id: batch.id,
+          quantity: line.quantity,
+          unit_amount: money(batch.sellingPrice),
+          // These fixture sales predate the ledger rows being linked, so the
+          // movement is left unmatched rather than guessed at — exactly what
+          // the migration does for a sale it cannot match.
+          stock_movement_id: null,
+        })
+      })
+    }
+    await tx`insert into jmc.otc_lines ${tx(otcLines)}`
+    await tx`insert into jmc.otc_allocations ${tx(otcAllocations)}`
 
     // -- ordering ----------------------------------------------------------
     await tx`insert into jmc.purchase_orders ${tx([
@@ -1933,7 +2060,8 @@ export async function seedClinic(sql, options = {}) {
         drug_licence_number = 'TN-CH-20B-FIXTURE-0001',
         doctor_registration_number = 'TNMC-FIXTURE-58421',
         gstin = '33ZZZZZ0000Z1Z0',
-        consultation_fee = 200,
+        -- The owner's initial default (policy register 15).
+        consultation_fee = 300,
         footer_note = 'Medicines are exchanged only against this bill and within seven days. Clinic hours 9 am to 1 pm and 5 pm to 8 pm.',
         updated_at = ${clock.at(-30, '20:00')},
         updated_by = ${staffId('doctor')}
@@ -1973,7 +2101,7 @@ export async function seedClinic(sql, options = {}) {
       { n: 3, by: 'nurse', action: 'vitals.recorded', type: 'vitals', id: uid('b1', 1), summary: 'Recorded patient vitals', daysAgo: 0, time: '08:55' },
       { n: 4, by: 'doctor', action: 'encounter.completed', type: 'encounter', id: FIXTURE_ENCOUNTERS.fever.id, summary: `Consultation saved for ${FIXTURE_PATIENTS.tamilScript.id}`, daysAgo: 0, time: '09:05' },
       { n: 5, by: 'pharmacist', action: 'prescription.dispensed', type: 'prescription', id: FIXTURE_PRESCRIPTIONS.dispensedToday.id, summary: 'Dispensed 2 item(s)', daysAgo: 0, time: '09:40' },
-      { n: 6, by: 'manager', action: 'bill.paid', type: 'bill', id: FIXTURE_BILLS.paidCashToday.id, summary: 'Payment collected by cash', daysAgo: 0, time: '09:35' },
+      { n: 6, by: 'manager', action: 'bill.paid', type: 'bill', id: FIXTURE_INVOICES.paidCashToday.id, summary: 'Payment collected by cash', daysAgo: 0, time: '09:35' },
       { n: 7, by: 'pharmacist', action: 'otc.sale', type: 'otc_sale', id: FIXTURE_SALES.todayCash.id, summary: `OTC-0002 collected ₹${saleTotals.todayCash.toFixed(2)}`, daysAgo: 0, time: '10:30' },
       { n: 8, by: 'relief', action: 'otc.sale', type: 'otc_sale', id: FIXTURE_SALES.todayUpi.id, summary: `OTC-0003 collected ₹${saleTotals.todayUpi.toFixed(2)}`, daysAgo: 0, time: '12:15' },
       { n: 9, by: 'pharmacist', action: 'stock.written_off', type: 'batch', id: BATCH_PLAN.cetirizineExpired.id, summary: 'Wrote off 40 from batch CTZ-2401F (expiry) at ₹440.00', daysAgo: 5, time: '19:10' },
@@ -2012,7 +2140,14 @@ export async function seedClinic(sql, options = {}) {
              setval('jmc.purchase_order_seq',    ${Object.keys(FIXTURE_ORDERS).length + 1}, false),
              setval('jmc.supplier_return_seq',   2, false),
              setval('jmc.stock_take_seq',        2, false),
-             setval('jmc.prescription_number_seq', ${Object.keys(FIXTURE_PRESCRIPTIONS).length + 1}, false)`)
+             setval('jmc.prescription_number_seq', ${Object.keys(FIXTURE_PRESCRIPTIONS).length + 1}, false),
+             -- Slice 4. The fixtures hand-write INV-000001..5 and RCP-000001..3,
+             -- so the next document the application mints has to start above
+             -- them: a receipt number already on a printed slip must never be
+             -- issued twice.
+             setval('jmc.invoice_seq', ${Object.keys(FIXTURE_INVOICES).length + 1}, false),
+             setval('jmc.receipt_seq', ${Object.values(FIXTURE_INVOICES).filter((invoice) => invoice.paid > 0).length + 1}, false),
+             setval('jmc.dispense_seq', 1, false)`)
 
     if (verify) await assertConsistent(tx)
   })
@@ -2090,7 +2225,7 @@ async function assertConsistent(tx) {
   //    they are cheap to re-assert; `variance` is deliberately absent because
   //    a till that is short is supposed to be negative.
   const negative = await tx`
-    select 'bills.amount' as column_name, count(*)::int as bad from jmc.bills where amount < 0
+    select 'invoice_lines.amount' as column_name, count(*)::int as bad from jmc.invoice_lines where amount < 0
     union all select 'batches.mrp', count(*)::int from jmc.batches where mrp < 0
     union all select 'batches.purchase_price', count(*)::int from jmc.batches where purchase_price < 0
     union all select 'batches.selling_price', count(*)::int from jmc.batches where selling_price < 0
@@ -2140,7 +2275,7 @@ async function assertConsistent(tx) {
     movements: Object.values(BATCH_PLAN).reduce((sum, b) => sum + b.movements.length, 0),
     appointments: Object.keys(FIXTURE_APPOINTMENTS).length,
     prescriptions: Object.keys(FIXTURE_PRESCRIPTIONS).length,
-    bills: Object.keys(FIXTURE_BILLS).length,
+    invoices: Object.keys(FIXTURE_INVOICES).length,
   }
   for (const [name, count] of Object.entries(expected)) {
     if (present[name] !== count) {
@@ -2165,7 +2300,7 @@ async function counts(client) {
            (select count(*) from jmc.stock_movements)::int as movements,
            (select count(*) from jmc.appointments)::int as appointments,
            (select count(*) from jmc.prescriptions)::int as prescriptions,
-           (select count(*) from jmc.bills)::int as bills`
+           (select count(*) from jmc.invoices)::int as invoices`
   return row
 }
 
@@ -2174,6 +2309,6 @@ function summarise(row) {
     `${row.staff} staff, ${row.patients} patients, ${row.suppliers} suppliers, ` +
     `${row.medicines} medicines, ${row.packages} packages, ${row.batches} batches, ` +
     `${row.movements} stock movements, ` +
-    `${row.appointments} appointments today, ${row.prescriptions} prescriptions, ${row.bills} bills`
+    `${row.appointments} appointments today, ${row.prescriptions} prescriptions, ${row.invoices} invoices`
   )
 }

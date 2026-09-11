@@ -42,12 +42,34 @@ import { stagingUrlFromEnv } from './guard.mjs'
 const MIGRATIONS = join(process.cwd(), 'supabase', 'migrations')
 const STUBS = join(process.cwd(), 'scripts', 'staging', 'legacy-stubs.sql')
 
-/** The migrations under rehearsal. Everything else builds the "before". */
+/**
+ * The migrations under rehearsal. Everything else builds the "before".
+ *
+ * Every slice from 2 onwards, because each one builds on the last: Slice 3's
+ * package tables hang off `medicines`, and Slice 4's supply view reads Slice
+ * 2.1's `prescription_lines_effective`. Applying them as part of the "before"
+ * would mean rehearsing them against a schema that does not yet exist.
+ */
 const SLICE2 = [
   '20260911045325_slice2_doctor_nurse_workspaces.sql',
   '20260911120000_slice2_clinical_vocabulary.sql',
   '20260911190000_slice2_1_unresolved_prescription_history.sql',
   '20260911210000_slice2_1_1_resolution_scope.sql',
+  '20260912000000_slice3_identity_packages_stock.sql',
+  '20260913000000_slice4_dispensing_billing_payments.sql',
+]
+
+/**
+ * The ones whose backfills are re-applied, to prove running them twice over
+ * rows they have already processed changes nothing. See the note at the
+ * re-application step for why this is not the whole list.
+ */
+const BACKFILLS = [
+  '20260911045325_slice2_doctor_nurse_workspaces.sql',
+  '20260911120000_slice2_clinical_vocabulary.sql',
+  '20260911190000_slice2_1_unresolved_prescription_history.sql',
+  '20260911210000_slice2_1_1_resolution_scope.sql',
+  '20260913000000_slice4_dispensing_billing_payments.sql',
 ]
 
 const ok = (label) => console.log(`  ok   ${label}`)
@@ -252,11 +274,33 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     assert.equal(releases, 1)
     ok('the approved vocabulary release installed over an existing clinic')
 
-    // ── re-application ─────────────────────────────────────────────────────
-    // `supabase db push` applies each file once and wraps it in a transaction,
-    // so this should never happen. docs/STAGING.md §3.1 is about what happens
-    // when a migration is applied by some other route anyway.
-    for (const file of SLICE2) {
+    /*
+     * ── re-application ─────────────────────────────────────────────────────
+     *
+     * `supabase db push` applies each file once and wraps it in a transaction,
+     * so this should never happen. docs/STAGING.md §3.1 is about what happens
+     * when a migration is applied by some other route anyway.
+     *
+     * What is re-applied is the set of BACKFILLS, which is what this rehearsal
+     * is for: every one of them must be safe to run twice over rows it has
+     * already processed.
+     *
+     * It is deliberately not the whole set, and that limit is worth stating
+     * rather than leaving as an omission. Slice 3 converts every money column
+     * from `real` to `numeric` and then, later in the same file, creates views
+     * over two of those columns. Re-applying it asks Postgres to alter a column
+     * a view already depends on, which it refuses — "cannot alter type of a
+     * column used by a view or rule" — even though the conversion itself would
+     * be a no-op. Slice 4 likewise empties `jmc.bills` rather than dropping it
+     * precisely so that Slice 3's conversion is not left naming a relation that
+     * has gone.
+     *
+     * So: a migration that changes a column type and then builds on it is
+     * applied once, like every migration in a real deployment. A backfill is
+     * applied twice here, because a backfill is the thing that can run twice by
+     * accident and do damage.
+     */
+    for (const file of BACKFILLS) {
       await sql.begin((tx) => tx.unsafe(readFileSync(join(MIGRATIONS, file), 'utf8')))
     }
     const [{ count: stillPhrases }] = await sql`select count(*)::int from jmc.clinical_phrases`

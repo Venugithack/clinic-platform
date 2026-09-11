@@ -36,6 +36,17 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
     { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
+    /*
+     * The counter, on the admin rail as well as the pharmacy one.
+     *
+     * `dispense_rx`, `otc_sale` and `take_payment` all authorize admin — the
+     * owner runs this clinic and stands at the counter when the pharmacist is
+     * away — and Slice 4's snapshot sends an admin the queue and the bills.
+     * Without this entry the data arrived and the station did not, so the one
+     * person who most needs to cover the counter was the one person with no
+     * way to reach it.
+     */
+    { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
     { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
     { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages' },
     { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received' },

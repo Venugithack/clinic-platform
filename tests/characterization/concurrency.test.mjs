@@ -46,6 +46,20 @@ async function stockedMedicine(admin, quantity) {
   return String(await scalar(`select id from jmc.medicines where code='PCM500'`))
 }
 
+/**
+ * A counter sale of `quantity`, paid in full in cash.
+ *
+ * Slice 4 requires the payment: policy register 46 says an anonymous sale is
+ * settled at the time. ₹30 a tablet throughout this file, so the amount is the
+ * quantity times thirty — written out rather than computed, because a test
+ * that derives its expectation from the code under test proves nothing.
+ */
+const sell = (staff, medicineId, quantity) =>
+  as(staff, 'otc_sale', {
+    lines: [{ medicineId, quantity }],
+    parts: [{ method: 'cash', amount: (quantity * 30).toFixed(2) }],
+  })
+
 /** Ledger truth, which is the only balance worth asserting on. */
 async function ledgerTotal() {
   return Number(await scalar('select coalesce(sum(quantity_delta),0)::int from jmc.stock_movements'))
@@ -57,8 +71,8 @@ describe('two counters, one batch', () => {
     const medicineId = await stockedMedicine(admin, 10)
 
     const both = await Promise.allSettled([
-      as(counterA, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' }),
-      as(counterB, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' }),
+      sell(counterA, medicineId, 10),
+      sell(counterB, medicineId, 10),
     ])
 
     const won = both.filter((r) => r.status === 'fulfilled')
@@ -78,8 +92,8 @@ describe('two counters, one batch', () => {
     const medicineId = await stockedMedicine(admin, 10)
 
     await Promise.allSettled([
-      as(counterA, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' }),
-      as(counterB, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' }),
+      sell(counterA, medicineId, 10),
+      sell(counterB, medicineId, 10),
     ])
 
     // One sale, one movement, and no orphaned receipt number in otc_sales.
@@ -92,8 +106,8 @@ describe('two counters, one batch', () => {
     const medicineId = await stockedMedicine(admin, 10)
 
     await Promise.allSettled([
-      as(counterA, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' }),
-      as(counterB, 'otc_sale', { lines: [{ medicineId, quantity: 10 }], paymentMethod: 'cash' }),
+      sell(counterA, medicineId, 10),
+      sell(counterB, medicineId, 10),
     ])
 
     // nextval() is outside the transaction on purpose: the rolled-back sale
@@ -115,7 +129,7 @@ describe('a prescription dispensed twice at once', () => {
     })
     const patientId = String(await scalar('select id from jmc.patients'))
     await as(staff.doctor, 'save_consultation', {
-      patientId, diagnosis: 'Fever', consultationFee: 0,
+      patientId, diagnosis: 'Fever', feeWaived: true, feeReason: 'Not what this test is about',
       prescriptionItems: [
         { medicineId, medicineName: 'Paracetamol 500 mg', dosage: '1-0-1', instructions: '', quantity: prescribed },
       ],
@@ -169,11 +183,16 @@ describe('a prescription dispensed twice at once', () => {
     assert.equal(won.length, 1, `exactly one submission may succeed, got ${won.length}`)
 
     // One rejection, and one a person at a counter can act on: the second
-    // pharmacist is told the prescription is already dispensed, not that
+    // pharmacist is told there is nothing left to hand over, not that
     // something went wrong with the database.
+    //
+    // The wording changed with Slice 4 and the property did not. "Already
+    // dispensed" was a statement about a boolean; "nothing left to hand over"
+    // is a statement about the quantity remaining, which is the thing that is
+    // actually true once a prescription can be supplied in parts.
     const lost = both.filter((result) => result.status === 'rejected')
     assert.equal(lost.length, 1)
-    assert.match(String(lost[0].reason.message), /already dispensed/)
+    assert.match(String(lost[0].reason.message), /nothing left to hand over/)
 
     // Exactly ten tablets, in the batch, in the ledger, and once in the
     // movement history — a losing transaction that rolled back must leave no
@@ -211,7 +230,7 @@ describe('a prescription dispensed twice at once', () => {
 
     // A pharmacist who saw the refusal and taps again does not get a second
     // supply out of it. The refusal is about the prescription, not the shelf.
-    await assert.rejects(as(counterB, 'dispense_rx', { prescriptionId }), /already dispensed/)
+    await assert.rejects(as(counterB, 'dispense_rx', { prescriptionId }), /nothing left to hand over/)
     assert.equal(Number(await scalar('select available_quantity from jmc.batches')), 90)
   })
 
@@ -219,7 +238,7 @@ describe('a prescription dispensed twice at once', () => {
     const { counterA, counterB, prescriptionId } = await signedPrescription({ stock: 100, prescribed: 10 })
 
     await as(counterA, 'dispense_rx', { prescriptionId })
-    await assert.rejects(as(counterB, 'dispense_rx', { prescriptionId }), /already dispensed/)
+    await assert.rejects(as(counterB, 'dispense_rx', { prescriptionId }), /nothing left to hand over/)
 
     assert.equal(Number(await scalar('select available_quantity from jmc.batches')), 90)
   })

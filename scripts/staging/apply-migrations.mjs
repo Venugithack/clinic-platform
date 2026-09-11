@@ -37,8 +37,18 @@ const MIGRATIONS = join(process.cwd(), 'supabase', 'migrations')
  */
 const STUBS = join(process.cwd(), 'scripts', 'staging', 'legacy-stubs.sql')
 
-/** Tables that must end up in `jmc`. If any is in `public`, search_path failed. */
-const CANARIES = ['staff', 'patients', 'prescriptions', 'bills', 'clinic_revision']
+/**
+ * Tables that must end up in `jmc`. If any is in `public`, search_path failed.
+ *
+ * `bills` was one of these and is not any more: Slice 4 replaced it with
+ * invoices, lines and payments, because one row carrying an amount, a status
+ * and a payment method cannot represent a part payment without destroying the
+ * amount it is a part of. `invoices` takes its place in the list — and it is
+ * one of the eight names that collide with the retired application in `public`
+ * only through its predecessor, so the check still covers the collision it was
+ * written for.
+ */
+const CANARIES = ['staff', 'patients', 'prescriptions', 'invoices', 'clinic_revision']
 
 export async function applyMigrations({ url = stagingUrlFromEnv({ what: 'apply-migrations' }), log = console.log } = {}) {
   const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} })

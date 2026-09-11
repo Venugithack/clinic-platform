@@ -1707,3 +1707,154 @@ now on `PackageLevelView` but the builder does not offer a field for it.
 - `medicines.schedule = 'unset'` is Unknown / pharmacist review required, and
   `schedule_verified_at` says whether anybody checked. Slice 4's anonymous OTC
   path refuses both.
+
+---
+
+## 9. Slice 4: dispensing, OTC, fees, billing and payments
+
+### 9.1 The three shapes that could not do the job
+
+| Was | Could not express |
+|---|---|
+| `prescriptions.dispensed_at`, one timestamp | "Ten prescribed, six handed over, four on Friday". The counter's only options were all of it or none. |
+| `bills(amount, status, payment_method)`, one row | A part payment, a split across cash and UPI, a running balance, a refund, a reversal. Each would have meant editing the amount, which destroys the thing it is a part of. |
+| Nothing | Medicine was never charged for. `dispense_rx` moved stock and created no bill line; the only bill the application could produce was the consultation fee, and that fee came from a literal `300` in the doctor's browser form. |
+
+What replaces them is three append-only chains, and every state a screen shows
+is derived from them by a view rather than stored:
+
+```text
+dispense -> dispense_lines -> dispense_allocations   what was handed over, from which batch
+invoice  -> invoice_lines                            what was charged, immutably
+payment  -> payment_allocations                      money in, and money back
+```
+
+| View | Answers |
+|---|---|
+| `prescription_line_supply` | prescribed, supplied, remaining, and one of `waiting` / `part_supplied` / `supplied` / `patient_declined` / `doctor_cancelled` / `needs_review` |
+| `invoice_balances` | total, paid, due, and `unpaid` / `part_paid` / `paid` / `void` |
+| `patient_balances` | what one patient owes across every bill |
+
+### 9.2 Confirm and hand over
+
+One transaction, in the order the brief sets out: authorize, enforce
+idempotency, lock the prescription, recheck what is left, recheck and allocate
+the batches, write the dispense and its allocations, write the negative stock
+movements, create the medicine bill lines, commit.
+
+Two things make it hold under two tablets:
+
+- **The prescription row lock.** Slice 2 added it to stop two counters
+  dispensing the whole prescription twice. Partial supply would have removed
+  that protection — two taps five seconds apart are two legitimate partial
+  dispenses — so the lock is now what makes the *recheck of the remainder*
+  mean something, and the idempotency key is what tells a retry from a second
+  hand-over.
+- **The allocation UPDATE carries the arithmetic.**
+  `set available_quantity = available_quantity - ? where id = ? and status =
+  'active' and available_quantity >= ?` takes the row lock and does the
+  subtraction in one statement, so a loser changes zero rows and retries
+  against what the batch actually holds. Candidates are taken in `(expiry, id)`
+  order everywhere, which is what stops two dispenses deadlocking.
+
+Remainder validity is policy register 18: `prescriptions.valid_until`, seven
+calendar days from signing by default, set by a trigger from `signed_at` rather
+than by a column default — a column default cannot see another column and would
+date every backfilled row from the day the migration ran. After it passes, the
+remainder needs a new or amended order; only a doctor may extend it.
+
+### 9.3 Substitution, and the narrow door
+
+Policy register 21 allows exactly one substitution: a genuinely **generic**
+order — the doctor chose an unbranded product — supplied with an in-stock brand
+whose ingredient(s), strength, form, route and release characteristics match
+exactly.
+
+"Exactly" is not a judgement made in the command. Both products must point at
+the **same `clinical_drugs` row**, which is what Slice 3's identity model was
+built for. A brand-specific order, a different strength, or either product
+being unlinked from a clinical drug are all refused, and the substitution that
+is allowed records the clinical drug that was signed beside the brand actually
+handed over, so it is visible rather than inferable.
+
+### 9.4 Patient Declined and Doctor Cancelled
+
+`prescription_line_outcomes`, one row per line, append-only, unique per line.
+Patient Declined is recorded at the counter by whoever was told; Doctor
+Cancelled only by a doctor. They are different facts about different people and
+"not supplied" is neither: a patient who declines an antibiotic is something the
+doctor should see next visit, and a doctor who withdraws one is an instruction
+to the pharmacy.
+
+Separate from `prescription_line_resolutions`, which Slice 2.1.1 restricted to
+lines signed unreadable. A resolution may not touch an ordinary line; an outcome
+may not be recorded twice.
+
+### 9.5 Money
+
+- **The fee comes from the clinic.** `clinic_settings.consultation_fee`
+  defaults to ₹300 (policy register 15) on the column as well as on the
+  existing row, so a new database starts at the owner's figure rather than at
+  zero. The doctor may override or waive it for one consultation **with a
+  reason**, and the encounter snapshots the amount charged, the default in
+  force at the time, the waiver flag, the reason, the actor and the time — so
+  "was this a discount?" is answerable a month later.
+- **A waiver is an explicit ₹0 line**, not an absent one (policy register 33).
+  An absent line cannot say who decided.
+- **At most one fee per encounter** is a unique index, not a promise:
+  `invoice_lines.source_key` is unique clinic-wide, and the key for a fee is
+  `consultation:<encounter id>`. A retry cannot produce a second fee line even
+  by creating a second invoice first.
+- **One visit, one bill.** The fee, the medicine handed over and anything
+  bought across the counter during the same encounter land on the same invoice
+  — policy register 48's unified checkout — while each line keeps its own
+  source, authorization and audit trail.
+- **Medicine is charged for what moved**, at the price of the batch it came
+  out of, snapshotted onto the allocation. A later supply of the remainder adds
+  only that later charge and never re-charges the visit.
+- **An invoice line never changes.** Only an `adjustment` line may be negative,
+  and that exception is the mechanism by which a bill comes down: a reversed
+  hand-over adds a credit line, so the original charge stays exactly as it was
+  printed.
+- **A refund and a reversal are different.** A refund is money going back and
+  reduces what has been paid; a reversal says the payment never arrived and
+  removes it from the arithmetic. The day book needs to tell them apart, and the
+  till's cash figure is now one query over `payments` rather than two over two
+  tables with different shapes.
+- **Anonymous sales are paid in full** (policy register 46), and an unreviewed
+  regulatory classification cannot leave the counter anonymously at all —
+  `schedule = 'unset'` or `schedule_verified_at is null` is refused. Pay-later
+  and part payment require a registered patient, because there has to be
+  somebody to owe it.
+
+### 9.6 What happened to `bills`
+
+Every row became an invoice with one line, and every paid one additionally a
+payment allocated in full to it. Ids are derived from the bill id, so the
+backfill is idempotent and a bill keeps a visible link to what it became.
+
+The table is then **emptied and left standing**, not dropped. One release of
+tombstone: anything still naming `jmc.bills` fails loudly on zero rows rather
+than silently on a missing relation, and Slice 3's money conversion — which
+includes `alter table jmc.bills` — does not end up naming a relation that has
+gone. A later migration removes it once the clinic has run a reconciliation
+period on invoices.
+
+One limit worth stating rather than leaving as an omission: **the migration set
+is applied once, as `supabase db push` applies it.** Slice 3 converts money
+columns and then builds views over two of them, so re-applying it asks Postgres
+to alter a column a view already depends on. `npm run staging:rehearse` now
+re-applies only the **backfills**, which are the statements that can run twice
+by accident and do damage; the type conversions are applied once, like every
+migration in a real deployment.
+
+### 9.7 What the UI review found, and what changed because of it
+
+| Found | Fixed |
+|---|---|
+| `pharmacyCounter` was `pharmacy` only, while every counter command authorizes `admin`. An admin opening Counter saw an empty queue — and the rail offered no Counter station at all. | Both widened. The owner covers the counter when the pharmacist is away. |
+| The counter received bare patient ids, so a first-time walk-in could not be attached to a pay-later sale — the one case pay-later exists for. It was also inconsistent rather than protective: prescriptions and bills already carried `patientName`. | Name and phone for the counter; age, sex, address and consent stay behind the care register. |
+| `invoices` was not role-gated, so a doctor-only session received every open bill and its payment history. | Gated to the roles that handle money. |
+| A bill raised last week and settled today left the snapshot, so today's takings lost a payment the till still counted. The two then disagreed by exactly that amount. | The day's window includes any bill paid against today. |
+| `otcSales.lineCount` read `json_array_length(lines_json)`, which the new sale writes as `'[]'`; `payment_method` was a column that could say only one thing after split payment existed. | Both derived from `otc_lines` and the payments allocated to the sale's bill. `split` is a real answer, and so is nothing at all. |
+| The flat-quantity path on `otc_sale` skipped every package rule, so a sealed bottle configured not-sellable-loose could be sold loose by sending a number instead of a level. | The rule belongs to the package and is asked of the package wherever one exists. |

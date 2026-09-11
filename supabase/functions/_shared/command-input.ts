@@ -105,7 +105,23 @@ const SERIES = {
   // Slice 3.
   GRN: 'goods_receipt_seq',
   OC: 'opening_count_seq',
+  // Slice 4.
+  DSP: 'dispense_seq',
+  INV: 'invoice_seq',
+  RCP: 'receipt_seq',
 } as const
+
+/**
+ * How wide each series is printed.
+ *
+ * A floor rather than a cap: the series is allowed to outgrow it, and
+ * INV-1000000 is still readable where a wrapped number would not be. Six for
+ * anything a patient keeps — a prescription, a bill, a receipt — because those
+ * are the ones somebody reads back over a telephone.
+ */
+const WIDTH: Partial<Record<keyof typeof SERIES, number>> = {
+  RX: 6, INV: 6, RCP: 6, DSP: 6,
+}
 
 export async function sequence(prefix: keyof typeof SERIES) {
   // A bigint arrives as a string, and padStart wants one anyway. Four digits is
@@ -114,5 +130,5 @@ export async function sequence(prefix: keyof typeof SERIES) {
   const row = (await db
     .prepare(`select nextval('jmc.${SERIES[prefix]}') as value`)
     .get()) as { value: string | number }
-  return `${prefix}-${String(row.value).padStart(prefix === 'RX' ? 6 : 4, '0')}`
+  return `${prefix}-${String(row.value).padStart(WIDTH[prefix] ?? 4, '0')}`
 }
