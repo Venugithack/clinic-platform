@@ -347,7 +347,13 @@ describe('the doctor finishes one visit without rebuilding the case', () => {
     const opened = workText()
     assert.match(opened, /previous visit/i)
     assert.match(opened, /before \/ after images/i)
-    assert.match(opened, /private image storage is not enabled yet/i)
+    /*
+     * Slice 5 turned this on, so the sentence changed from a promise into a
+     * card. What the sidebar now says is where to find it; the card itself is
+     * covered by tests/browser/slice5-images.test.mjs.
+     */
+    assert.match(opened, /consent, capture and comparison/i)
+    assert.match(opened, /clinical images/i)
     /*
      * The fee the CLINIC charges, and where it is collected.
      *

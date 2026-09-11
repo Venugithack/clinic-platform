@@ -104,3 +104,30 @@ export async function edgeGet(name, path, token) {
   }))
   return { status: response.status, body: await response.json() }
 }
+
+/**
+ * Any request to one of those handlers, with the response left unparsed.
+ *
+ * The images endpoint answers with JSON for a refusal and with image bytes for
+ * a success, so a helper that always calls `.json()` cannot test it — and the
+ * content type is part of what has to be right.
+ */
+export async function edgeRequest(name, path, { method = 'GET', token, body, headers = {} } = {}) {
+  const handler = await edgeFunction(name)
+  const response = await handler(new Request(`http://staging/functions/v1/${name}${path}`, {
+    method,
+    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
+    body,
+  }))
+  const contentType = response.headers.get('content-type') ?? ''
+  return {
+    status: response.status,
+    contentType,
+    cacheControl: response.headers.get('cache-control') ?? '',
+    disposition: response.headers.get('content-disposition') ?? '',
+    body: contentType.includes('application/json') ? await response.json() : null,
+    bytes: contentType.includes('application/json')
+      ? null
+      : new Uint8Array(await response.arrayBuffer()),
+  }
+}

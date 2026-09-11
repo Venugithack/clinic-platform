@@ -30,7 +30,8 @@
  * database URL goes through the same guard as everything else in this folder.
  */
 import { createServer } from 'node:http'
-import { readdirSync } from 'node:fs'
+import { mkdtempSync, readdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { requireStagingUrl } from './guard.mjs'
@@ -44,6 +45,25 @@ const url = requireStagingUrl(
 )
 process.env.SUPABASE_DB_URL = url
 process.env.CLINIC_SESSION_SECRET ??= 'staging-only-session-secret-not-a-real-one'
+
+/*
+ * Where clinical photographs go when there is no Supabase.
+ *
+ * A directory under the system temp, created here, so driving the application
+ * by hand or through the browser suite exercises the real capture path — the
+ * consent check, the access rules, the audit, the checksum — against real
+ * bytes. It is NOT a test of Supabase's bucket policy, which is a deployment
+ * check; see docs/STAGING.md.
+ *
+ * `storage.ts` has no default for this on purpose: unset means "storage is not
+ * configured", which the screen says out loud, rather than a photograph
+ * quietly written somewhere plausible and gone at the next restart.
+ */
+if (!process.env.CLINIC_IMAGE_ROOT && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  const root = mkdtempSync(join(tmpdir(), 'jmc-staging-images-'))
+  process.env.CLINIC_IMAGE_ROOT = root
+  console.log(`  clinical images -> ${root}`)
+}
 
 /**
  * `Deno.serve`, replaced. The real one starts listening; this one hands the

@@ -1858,3 +1858,89 @@ migration in a real deployment.
 | A bill raised last week and settled today left the snapshot, so today's takings lost a payment the till still counted. The two then disagreed by exactly that amount. | The day's window includes any bill paid against today. |
 | `otcSales.lineCount` read `json_array_length(lines_json)`, which the new sale writes as `'[]'`; `payment_method` was a column that could say only one thing after split payment existed. | Both derived from `otc_lines` and the payments allocated to the sale's bill. `split` is a real answer, and so is nothing at all. |
 | The flat-quantity path on `otc_sale` skipped every package rule, so a sealed bottle configured not-sellable-loose could be sold loose by sending a number instead of a level. | The rule belongs to the package and is asked of the package wherever one exists. |
+
+---
+
+## 10. Slice 5: clinical images
+
+The most dangerous feature in the application, and the one with the least
+forgiving failure mode: a stock figure that is wrong can be counted again, and
+a photograph shown to the wrong person cannot be un-shown.
+
+So the schema answers four questions with rows rather than conventions.
+
+| Question | Answered by |
+|---|---|
+| Was consent given? | `image_consents` — the consenting person, their relationship, the method, the purpose, the staff member and the time, recorded **before** capture. Withdrawal stops further capture and every export, and leaves what was already taken on the clinical record. |
+| Who may see it? | `mayAccessImage()`, in one place because it is asked from three. Doctor: always. Nurse: only while involved in that patient's care, derived by `nurse_care_involvement` from vitals taken, observations entered or a visit booked — work the nurse actually did, not a box somebody ticked. Pharmacist: none, refused at the endpoint before any query runs. Admin: metadata and audit, and image content only through an `image_access_grants` row from a doctor, with a reason and an expiry that arrives on its own. |
+| What happened to it? | `image_access_events` — every view, thumbnail, export, print **and refusal**, append-only. The interesting number in an access log is how often somebody was turned away. |
+| Was it right? | The original is immutable: `protect_clinical_image()` refuses every change to the description as well as to the bytes, because re-pointing `patient_id` moves a photograph to another person with nothing in the record to say so. A wrong one is marked Captured in error with an actor, a time and a reason, and cannot be brought back. Crops and annotations are `image_derivatives`, stored as parameters so they can be regenerated from the original and never mistaken for it. |
+
+### 10.1 Where the bytes are, and where they are not
+
+`storage_key` names an object in private storage. There is no public bucket, no
+signed URL and no durable link. In the clinic that is Supabase Storage reached
+with the service role key **from inside the Edge Function**, which is the only
+place that key exists; in staging it is a directory named by
+`CLINIC_IMAGE_ROOT`, which has no default — unset means "storage is not
+configured", which the screen says out loud, rather than a photograph quietly
+written somewhere plausible and gone at the next restart.
+
+The bytes travel only through `supabase/functions/images/index.ts`, which
+authorizes every request. A browser cannot put an `Authorization` header on an
+`<img src>`, so the alternative would be a session token in a URL — and that
+lives in the history, in the referrer of anything the page links to, and in
+every screenshot of the address bar. Instead:
+
+- `GET /images?action=ticket&imageId=…` returns an HMAC over **one image id,
+  one actor, one action and an expiry sixty seconds out**.
+- `GET /images?imageId=…&ticket=…` returns the bytes, checked twice: the
+  session says who this is, and the ticket says they were allowed this image
+  for this purpose within the last minute.
+- The response carries `Cache-Control: no-store, private`, because a clinical
+  photograph in a shared tablet's disk cache outlives the session that fetched
+  it.
+- The panel turns the response into a `blob:` URL that lives in the tab and is
+  revoked when the panel unmounts. A browser journey asserts that no image on
+  the page is drawn from anything naming the image endpoint.
+
+A ticket cannot be replayed against a different image, cannot be used by
+anybody else, and is worth nothing once the session behind it is revoked —
+which is the lost-tablet case in policy register 30, and is tested as one.
+
+### 10.2 The guards against the wrong patient
+
+1. Capture is only from an open patient.
+2. If an encounter is named, it must belong to that patient — two tablets with
+   two open Consults is exactly how a photograph of this patient is filed
+   against that patient's visit, and the check costs one query.
+3. The consent must belong to that patient. Another patient's consent is not
+   this patient's consent.
+4. The image row is written **after** the bytes are in storage, never before:
+   a row written first says a photograph exists when it does not, and the
+   screen would show a broken image beside a patient's name for ever.
+5. On the way out, the stored bytes are hashed and compared to the checksum on
+   the row. An object that no longer hashes to what was stored is not shown at
+   all.
+
+### 10.3 Retention is a queue, not a timer
+
+`image_retention_queue` lists images three years after the patient's **last
+relevant clinical contact** — the latest of their encounters, vitals and images,
+not the photograph's own age, because a photograph from year one of a course of
+treatment that is still running has not aged out.
+
+Nothing is purged automatically. An admin records `keep`, `legal_hold` or
+`delete`; a deletion requires explicit confirmation, removes the bytes, and
+leaves the row and the decision behind with `purged_at` set. The purge happens
+outside the transaction on purpose: storage has no rollback, so the decision is
+committed first and a failed purge leaves a queue entry rather than a silent
+loss.
+
+### 10.4 What staging can and cannot say about this
+
+It exercises consent, the access rules, the audit, the checksum, the ticket and
+the wrong-patient guards against real bytes. It says nothing about Supabase's
+own bucket policy — that the bucket is private, that anonymous reads are
+refused, that the service key is not exposed — which is a deployment check and
+is recorded in §12 of `docs/STAGING.md` as one.

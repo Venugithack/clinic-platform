@@ -26,6 +26,7 @@ import {
 } from './command-input.ts'
 import { money, parseMoney, proRata, rupees, sum as sumMoney, times } from './money.ts'
 import { ladderRows, moveStock, packageEntries } from './inventory.ts'
+import { runImageCommand } from './images.ts'
 import { baseQuantityOf, levelNamed, plural } from './packages.ts'
 
 const CLINIC_TODAY = `(now() at time zone 'Asia/Kolkata')::date`
@@ -1236,7 +1237,12 @@ export async function runCounterCommand(session: SessionView, action: string, pa
       return { message: 'Bill voided. It keeps its number and stays on the record.' }
     }
 
+    /*
+     * Clinical images are in images.ts — the one part of this application
+     * where the authorization rule is the feature, and where it therefore
+     * belongs in a file of its own.
+     */
     default:
-      throw new Error('Unknown action.')
+      return runImageCommand(session, action, payload)
   }
 }

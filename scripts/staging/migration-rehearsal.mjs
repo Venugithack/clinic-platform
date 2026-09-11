@@ -57,6 +57,7 @@ const SLICE2 = [
   '20260911210000_slice2_1_1_resolution_scope.sql',
   '20260912000000_slice3_identity_packages_stock.sql',
   '20260913000000_slice4_dispensing_billing_payments.sql',
+  '20260914000000_slice5_clinical_images.sql',
 ]
 
 /**

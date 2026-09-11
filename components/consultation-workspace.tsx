@@ -13,6 +13,7 @@ import type {
 import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
 import { usePatientRecord } from './use-patient-record'
 import { ClinicLetterhead, Stack } from './shared-panels'
+import { ImagesPanel } from './images-panel'
 import {
   ActionButton,
   Badge,
@@ -931,10 +932,24 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
             <CardBody className="space-y-4 py-4">
               <div><p className="eyebrow">Previous visit</p>{loading ? <p className="mt-1 text-[13px] text-ink-2">Reading patient record…</p> : previous ? <><p className="mt-1 font-mono text-[11px] text-ink-2">{formatDate(previous.createdAt)} · {previous.doctorName}</p><p className="mt-1 text-[14px] font-semibold">{previous.diagnosis}</p>{previous.complaint ? <p className="mt-1 text-[12px]">{previous.complaint}</p> : null}{previous.advice ? <p className="mt-1 text-[12px] text-ink-2">{previous.advice}</p> : null}<Button className="mt-3" size="sm" onClick={() => { setSheet({ ...EMPTY_SHEET, complaint: previous.complaint, examination: previous.examination, diagnosis: previous.diagnosis, diagnosisStatus: previous.diagnosisStatus === 'unspecified' ? 'provisional' : previous.diagnosisStatus, aetiology: previous.aetiology, aetiologyCertainty: previous.aetiologyCertainty, notes: previous.notes, advice: previous.advice }); setItems(previousPrescription?.items.map(restoredLine) ?? []) }}>Repeat as editable draft</Button></> : <p className="mt-1 text-[13px] text-ink-2">First recorded visit.</p>}</div>
               <div className="border-t border-rule pt-3"><p className="eyebrow">Last prescribed medicines</p>{previousPrescription?.items.length ? <ul className="mt-2 space-y-2">{previousPrescription.items.map((item, index) => <li key={`${item.medicineId}-${index}`} className="text-[12px]"><b>{item.medicineName}</b><span className="block text-ink-2">{item.dosage || item.instructions || 'Directions not recorded'}</span></li>)}</ul> : <p className="mt-1 text-[13px] text-ink-2">None in the record.</p>}</div>
-              <div className="border-t border-rule pt-3"><p className="eyebrow">Before / after images</p><p className="mt-1 text-[13px] text-ink-2">{record.imageSeriesStatus === 'not_enabled' ? 'Private image storage is not enabled yet. Slice 5 will add consent, capture and paired comparison.' : record.imageSeriesStatus === 'available' ? 'Image series available.' : 'No image series.'}</p></div>
+              <div className="border-t border-rule pt-3"><p className="eyebrow">Before / after images</p><p className="mt-1 text-[13px] text-ink-2">Consent, capture and comparison are on the Images card below.</p></div>
               <div className="border-t border-rule pt-3"><p className="eyebrow">Open follow-ups</p>{record.followUps.filter((item) => item.status === 'open').length ? <ul className="mt-2 space-y-2">{record.followUps.filter((item) => item.status === 'open').map((item) => <li key={item.id} className="text-[12px]"><b>{item.dueDate}</b> · {item.note || 'Review due'}</li>)}</ul> : <p className="mt-1 text-[13px] text-ink-2">None due.</p>}</div>
             </CardBody>
           </Card>
+          {/*
+            * Clinical photographs, beside the consultation rather than inside
+            * it. The doctor is already on the right patient, which is the
+            * first guard against the wrong-patient attachment — and the
+            * encounter is passed through so a photograph taken during a visit
+            * is filed against that visit.
+            */}
+          <ImagesPanel
+            patientId={patientId}
+            patientName={patient?.name ?? 'this patient'}
+            run={run}
+            canCapture
+          />
+
           <Disclosure label="Work on another patient" hint="Queue call-in is the normal route">
             <Field label="Patient"><Select value={patientId} onChange={(event) => select(event.target.value)}>{data.patients.map((item) => <option key={item.id} value={item.id}>{item.name}, {item.age}</option>)}</Select></Field>
           </Disclosure>
