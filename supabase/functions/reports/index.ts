@@ -338,18 +338,37 @@ const REPORTS: Record<string, Report> = {
     }),
   },
 
-  /** Who owes the clinic what, and what they have paid so far. */
+  /**
+   * Who owes the clinic what, and what they have paid so far.
+   *
+   * Two of these columns are not a debt. An over-refunded bill inflates
+   * `outstanding` — `due` is the total minus a negative `paid`, so it is larger
+   * than the bill — and the person reading this list to decide who to ask for
+   * money must be able to see that one of the figures is the clinic's own
+   * mistake rather than the patient's. Hence `over_refunded_invoices` and
+   * `over_refunded_amount` on the row, and the two changes below.
+   *
+   * The list no longer selects on `outstanding <> 0` alone. A patient who
+   * overpaid one bill and is over-refunded on another nets to zero, and so does
+   * an over-refund on a bill that was later voided — the money columns exclude
+   * voided bills, the over-refund count deliberately does not. Either would
+   * have dropped off the list entirely, which is the one thing that must not
+   * happen to it. The order puts them first for the same reason: a descending
+   * `outstanding` is a list of people to chase, and these are not that.
+   * `financial_review` is where they are actually worked (policy register 52).
+   */
   patient_dues: {
     roles: ['admin', 'pharmacy'],
     run: async () => ({
       rows: await all(`
         select b.patient_id, b.name as patient, pt.phone, b.billed, b.paid, b.outstanding,
                b.open_invoices, b.oldest_due_at,
-               (${CLINIC_TODAY} - b.oldest_due_at::date) as days_outstanding
+               (${CLINIC_TODAY} - b.oldest_due_at::date) as days_outstanding,
+               b.over_refunded_invoices, b.over_refunded_amount
           from jmc.patient_balances b
           join jmc.patients pt on pt.id = b.patient_id
-         where b.outstanding <> 0
-         order by b.outstanding desc`),
+         where b.outstanding <> 0 or b.over_refunded_invoices > 0
+         order by (b.over_refunded_invoices > 0) desc, b.outstanding desc`),
       repayments: await all(`
         select y.received_at, p.name as patient, y.receipt_number, y.kind, y.method, y.amount
           from jmc.payments y
@@ -400,6 +419,63 @@ const REPORTS: Record<string, Report> = {
           left join jmc.staff a on a.id = v.approved_by
          where v.movement_type like 'adjust%' or v.reverses_movement_id is not null
          order by v.created_at desc limit 200`),
+    }),
+  },
+
+  /**
+   * The bills where more has gone back out than ever came in.
+   *
+   * `reversals` above is the three ordinary ways money moves backwards, each of
+   * which lands somewhere sensible. This is the case that does not: an invoice
+   * whose net allocated payment is BELOW zero — a refund that stands and a
+   * receipt that turned out never to have settled, two real events that
+   * disagree. Nothing at the counter resolves it. Voiding it is refused while
+   * the balance is negative, and taking payment against it would charge the
+   * patient for the clinic's own error, which is why this report is admin only:
+   * it is the accountant's work, not the counter's (policy register 49–52).
+   *
+   * The documents travel with the queue rather than being left to a second
+   * lookup. "Which receipts?" is the first question anybody asks of one of
+   * these, and an exception that cannot answer it sends the reader back to the
+   * database to find out — which is how an exception stops being looked at.
+   */
+  financial_review: {
+    roles: ['admin'],
+    run: async () => ({
+      queue: await all(`
+        select q.invoice_number, q.patient_name as patient, q.status, q.created_at,
+               q.total, q.paid, q.over_refunded_by, q.due, q.void_reason,
+               q.receipts_in, q.receipts_out, q.receipts_reversed, q.documents
+          from jmc.financial_review_queue q
+         order by q.over_refunded_by desc, q.created_at limit 500`),
+      /*
+       * One row per linked document, not one string per bill.
+       *
+       * `amount` is what this receipt put against THIS invoice — a receipt
+       * split across two bills appears once per bill, for its share — because
+       * the figure that made the balance negative is the allocation, not the
+       * receipt total. Reversed receipts stay in the list with their status and
+       * reason: a reversal is most of the story of how the bill got here.
+       */
+      documents: await all(`
+        select y.receipt_number, y.received_at, y.kind, y.method, y.reference,
+               a.amount, y.status, y.reversal_reason, y.note,
+               s.name as received_by, q.invoice_number,
+               coalesce(p.name, 'Anonymous') as patient
+          from jmc.financial_review_queue q
+          join jmc.payment_allocations a on a.invoice_id = q.invoice_id
+          join jmc.payments y on y.id = a.payment_id
+          join jmc.staff s on s.id = y.received_by
+          left join jmc.patients p on p.id = y.patient_id
+         order by q.over_refunded_by desc, y.received_at, y.receipt_number
+         limit 1000`),
+      patients: await all(`
+        select b.name as patient, pt.phone, b.billed, b.paid, b.outstanding,
+               b.over_refunded_invoices, b.over_refunded_amount
+          from jmc.patient_balances b
+          join jmc.patients pt on pt.id = b.patient_id
+         where b.over_refunded_invoices > 0
+         order by b.over_refunded_amount desc, b.name limit 500`),
     }),
   },
 

@@ -654,13 +654,19 @@ export const FIXTURE_PRESCRIPTIONS = {
 }
 
 /**
- * Five invoices, chosen so every payment state the counter can show exists.
+ * Six invoices, chosen so every payment state the counter can show exists.
  *
  * Slice 4 replaced the single `bills` row — amount, status and method in one
  * place — with an invoice, its immutable lines, and payments allocated against
  * it. Part paid and pay-later are the two states the old shape could not
  * express at all, so both are here; a fixture set where every bill is either
  * unpaid or paid would never exercise the arithmetic that matters.
+ *
+ * The sixth is the one nobody wants and everybody has: a bill more money has
+ * left than ever entered. It cannot be built through the commands — every path
+ * that would create one now refuses — so it is written here directly, which is
+ * exactly how it arrives in real life too. Without it the over-refunded screens
+ * are unreachable by hand and the sentence above this one is false.
  */
 export const FIXTURE_INVOICES = {
   paidCashToday: {
@@ -684,6 +690,25 @@ export const FIXTURE_INVOICES = {
   partPaidYesterday: {
     id: uid('a9', 5), number: 'INV-000005', patient: 'elderly', encounter: null,
     amount: 300, paid: 100, method: 'cash', createdDaysAgo: 1, createdTime: '16:40', paidTime: '16:45',
+  },
+  /*
+   * Over-refunded, in the one order that produces it.
+   *
+   * ₹300 taken by card. ₹40 given back — the wrong strength, and a partial
+   * refund at the counter. Then the card turns out never to have settled, and
+   * the ₹300 receipt is reversed. The reversal says the money never arrived;
+   * the refund says ₹40 went back out. Both are true, both stay, and the bill
+   * is left at minus forty rupees paid with ₹340 apparently "due" — a figure
+   * that is the clinic's error and not the patient's debt.
+   *
+   * `reversedPayment` and `refund` below are what make the three events.
+   */
+  overRefunded: {
+    id: uid('a9', 6), number: 'INV-000006', patient: 'student', encounter: null,
+    amount: 300, paid: 300, method: 'card', createdDaysAgo: 5, createdTime: '12:10', paidTime: '12:15',
+    reversedPayment: 'Card settlement failed at the bank; the receipt printed before it was known.',
+    refund: 40, refundTime: '12:40',
+    refundReason: 'Wrong strength returned unopened; part of the payment given back at the counter.',
   },
 }
 
@@ -1722,6 +1747,14 @@ export async function seedClinic(sql, options = {}) {
     )}`
 
     const settled = invoices.filter((invoice) => invoice.paid > 0)
+    const refunded = invoices.filter((invoice) => invoice.refund)
+
+    /*
+     * A reversed receipt keeps its number and its row. It is not deleted and
+     * its allocation is not detached — `invoice_balances` simply stops
+     * counting a payment whose status says the money never arrived, which is
+     * the whole reason the status exists.
+     */
     await tx`insert into jmc.payments ${tx(
       settled.map((invoice, index) => ({
         id: `${invoice.id}-pay`,
@@ -1731,10 +1764,15 @@ export async function seedClinic(sql, options = {}) {
         method: invoice.method,
         reference: invoice.method === 'upi' ? 'UPI-FIXTURE-0001' : '',
         amount: money(invoice.paid),
-        status: 'received',
+        status: invoice.reversedPayment ? 'reversed' : 'received',
         idempotency_key: `fixture:${invoice.id}`,
         received_by: staffId('pharmacist'),
         received_at: clock.at(-invoice.createdDaysAgo, invoice.paidTime),
+        reversed_by: invoice.reversedPayment ? staffId('manager') : null,
+        reversed_at: invoice.reversedPayment
+          ? clock.at(-invoice.createdDaysAgo, '17:05')
+          : null,
+        reversal_reason: invoice.reversedPayment ?? '',
       })),
     )}`
 
@@ -1747,6 +1785,38 @@ export async function seedClinic(sql, options = {}) {
         created_at: clock.at(-invoice.createdDaysAgo, invoice.paidTime),
       })),
     )}`
+
+    // Money that went back out. It is a payment row with a direction, not a
+    // negative amount, so that a figure never means two things depending on
+    // where it is read.
+    if (refunded.length > 0) {
+      await tx`insert into jmc.payments ${tx(
+        refunded.map((invoice, index) => ({
+          id: `${invoice.id}-refund`,
+          receipt_number: `RCP-${String(settled.length + index + 1).padStart(6, '0')}`,
+          kind: 'refund',
+          patient_id: patientId(invoice.patient),
+          method: invoice.method,
+          reference: '',
+          amount: money(invoice.refund),
+          status: 'received',
+          idempotency_key: `fixture:${invoice.id}:refund`,
+          note: invoice.refundReason ?? '',
+          received_by: staffId('pharmacist'),
+          received_at: clock.at(-invoice.createdDaysAgo, invoice.refundTime),
+        })),
+      )}`
+
+      await tx`insert into jmc.payment_allocations ${tx(
+        refunded.map((invoice) => ({
+          id: `${invoice.id}-refund-alloc`,
+          payment_id: `${invoice.id}-refund`,
+          invoice_id: invoice.id,
+          amount: money(invoice.refund),
+          created_at: clock.at(-invoice.createdDaysAgo, invoice.refundTime),
+        })),
+      )}`
+    }
 
     await tx`insert into jmc.beds ${tx([
       { key: 'occupied', status: 'occupied', patient: 'elderly', admitted: '11:30', notes: 'Observation after IV fluids.' },
@@ -2141,12 +2211,16 @@ export async function seedClinic(sql, options = {}) {
              setval('jmc.supplier_return_seq',   2, false),
              setval('jmc.stock_take_seq',        2, false),
              setval('jmc.prescription_number_seq', ${Object.keys(FIXTURE_PRESCRIPTIONS).length + 1}, false),
-             -- Slice 4. The fixtures hand-write INV-000001..5 and RCP-000001..3,
-             -- so the next document the application mints has to start above
-             -- them: a receipt number already on a printed slip must never be
-             -- issued twice.
+             -- Slice 4. The fixtures hand-write every invoice and receipt
+             -- number above, so the next document the application mints has to
+             -- start above them: a receipt number already on a printed slip
+             -- must never be issued twice. A refund takes a receipt number of
+             -- its own, so it is counted here too.
              setval('jmc.invoice_seq', ${Object.keys(FIXTURE_INVOICES).length + 1}, false),
-             setval('jmc.receipt_seq', ${Object.values(FIXTURE_INVOICES).filter((invoice) => invoice.paid > 0).length + 1}, false),
+             setval('jmc.receipt_seq', ${
+               Object.values(FIXTURE_INVOICES).filter((invoice) => invoice.paid > 0).length +
+               Object.values(FIXTURE_INVOICES).filter((invoice) => invoice.refund).length + 1
+             }, false),
              setval('jmc.dispense_seq', 1, false)`)
 
     if (verify) await assertConsistent(tx)
@@ -2250,6 +2324,11 @@ async function assertConsistent(tx) {
     ['supplier_return_seq', 'supplier_returns', 'note_number'],
     ['stock_take_seq', 'stock_takes', 'reference'],
     ['prescription_number_seq', 'prescriptions', 'prescription_number'],
+    // Both are hand-written above, and a refund takes a receipt number of its
+    // own — so the receipt arithmetic is no longer "one per settled invoice"
+    // and is worth asserting rather than assuming.
+    ['invoice_seq', 'invoices', 'invoice_number'],
+    ['receipt_seq', 'payments', 'receipt_number'],
   ]
   for (const [sequence, table, column] of series) {
     const [row] = await tx.unsafe(`

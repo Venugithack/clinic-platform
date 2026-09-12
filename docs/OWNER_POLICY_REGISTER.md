@@ -184,7 +184,34 @@ authorized quantity.
 
 ---
 
-## H. Remaining facts, evidence, and hardware validation
+## H. Voiding, refunds, reversals, and the over-refunded bill
+
+Recorded 12 September 2026, after the administrator-corrections work met a bill
+against which more money had gone back out than ever came in.
+
+| # | Question | Approved policy | Status |
+|---:|---|---|---|
+| 49 | When may a bill be voided? | Only when the net allocated payment against it is exactly ₹0. Above zero, the payment is refunded or reversed first — voiding a bill that has been paid against loses track of money the clinic is holding. Below zero, voiding is refused outright; see item 50. | Approved |
+| 50 | What happens when more has gone back out than ever came in? | The bill takes an explicit over-refunded state, and every screen that meets one says the same words: *Over-refunded — financial correction required*. Nothing is changed, no correction is attempted, and the bill goes to the admin/accountant review queue. | Approved |
+| 51 | How is a receipt reversed when it is allocated to more than one bill, and what if the refund was the error? | Reversing a receipt calculates the result for **every** invoice it is allocated to and refuses atomically if any of them would fall below zero, naming the refunds that have to be reversed first. An erroneous refund is reversed first; the original payment may then be reversed, and that reversal lands on zero. There is no partial reversal — a receipt is one event and it either happened or it did not. | Approved |
+| 52 | What if both the incoming payment and the outgoing refund genuinely happened? | Both events are retained. The case goes to the admin/accountant review queue and a person decides what to do about the money. No automatic balancing transaction is invented. | Approved |
+| 53 | May anything be removed to tidy one of these away? | No. No payment, refund, allocation, invoice line or document number is silently erased, mutated or detached. A reversed or refunded receipt keeps its number and its place in the series, as item 24 requires of every cancelled document. | Approved |
+| 54 | How is a balance that may be negative read? | Derived balances are read with signed exact-money parsing. A ledger figure that can legitimately be below zero is never read by the validator that checks what a person typed at a counter, because that validator rejects negatives — and its refusal is a complaint about an input, printed at somebody who did not type one. | Approved |
+| 55 | Is an over-refunded bill simply unpaid? | No. It is its own derived state, and it is tested before voided so that a voided over-refund cannot hide behind the void. An unpaid bill is resolved by taking payment; this one is not, and filing the two in the same queue is how it comes to be ignored. | Approved |
+| 56 | How is an over-refunded bill finally cleared? | Any recovery from the patient, or any write-off, requires accountant approval and is recorded as an append-only event like every other correction. | Partial — the approval rule is decided; the recovery/write-off workflow itself is neither designed nor built, and no command in this release closes a row on the review queue |
+| 57 | What is the tax treatment where GST applies? | Where GST applies, the credit/debit-note behaviour of a refund that exceeds the payment it reverses must be validated by the clinic accountant before production. | Evidence — clinic accountant's confirmation pending; nothing in this release issues, reverses or adjusts a tax document |
+
+An over-refund is not a mess to be swept up. It is two true statements about
+real money — a refund went out, and the receipt it was taken against turned out
+never to have settled — and the clinic is genuinely down the difference. What
+the system owes is that a new one cannot be created silently, an old one cannot
+hide behind a void, and neither can be mistaken for an ordinary debt. What to do
+about the money is the accountant's, and items 56 and 57 say plainly that nobody
+has answered that yet.
+
+---
+
+## I. Remaining facts, evidence, and hardware validation
 
 All known owner-policy choices are now answered. The following cannot be
 invented by recommendation and remain clinic setup/acceptance tasks:
@@ -201,14 +228,23 @@ invented by recommendation and remain clinic setup/acceptance tasks:
    infer or automatically grant the role.
 5. Test the actual A4 and 80 mm printers, including margins, long medicine
    names, page breaks, duplicate/reprint marking, and offline/retry behavior.
+6. The clinic accountant must define how an over-refunded bill is finally
+   cleared (item 56): who approves a recovery or a write-off, what document it
+   produces, and how it is recorded. Until then a bill stays on the financial
+   review queue and no command in the application closes it.
+7. The clinic accountant must confirm the GST treatment of a refund that
+   exceeds the payment it reverses (item 57): whether a credit or debit note is
+   required, against which original document, and in whose name.
 
 Items 1–3 gate Slice 3 production acceptance. Item 4 gates the PIN-reset
-appointment. Item 5 gates print rollout. They do not block schema/UI work with
-guarded staging fixtures.
+appointment. Item 5 gates print rollout. Items 6 and 7 gate *clearing* an
+over-refunded bill in production; they do not block the review queue itself,
+which only reports what the ledger already says. None of them block schema/UI
+work with guarded staging fixtures.
 
 ---
 
-## I. Standing safe defaults
+## J. Standing safe defaults
 
 - No automatic diagnosis, cause, medicine, or dose selection.
 - No automatic substitution.
@@ -222,10 +258,13 @@ guarded staging fixtures.
 - No automatic WhatsApp delivery.
 - No silent edit/delete of signed clinical, stock, payment, receipt, or image
   history.
+- No automatic balancing entry for an over-refunded bill. Both events stand,
+  the bill goes to the review queue, and the correction is an accountant's
+  decision rather than one the system makes for them.
 
 ---
 
-## J. Policy rationale references
+## K. Policy rationale references
 
 - CDSCO, [Drugs Rules, 1945](https://cdsco.gov.in/opencms/resources/UploadCDSCOWeb/2022/drug_rules/Drugs%20Rules%201945_2024%2009.pdf), Rule 65: scheduled prescription dispensing, repeat directions, substitution restrictions, records, expiry segregation, and registered-pharmacist supervision of supply outside the manufacturer's container.
 - Pharmacy Council of India, [FAQ on registered-pharmacist responsibility](https://pci.gov.in/en/faqs/), including dispensing only the medicine prescribed and not substituting the prescription.

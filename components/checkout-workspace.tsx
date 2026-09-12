@@ -170,13 +170,25 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
   const sellableCount = data.medicines.filter(
     (medicine) => medicine.active && medicine.saleClass === 'otc',
   ).length
-  const owing = data.invoices.filter((invoice) => invoice.status !== 'void' && invoice.due > 0)
+  /*
+   * What this counter can actually collect.
+   *
+   * An over-refunded bill has a `due` bigger than its own total — money that
+   * has already left the drawer twice, not money anybody is going to hand
+   * over. Counting it here would send a pharmacist looking for a patient who
+   * owes nothing, so it is held out of the figure and named separately.
+   */
+  const live = data.invoices.filter((invoice) => invoice.status !== 'void')
+  const underReview = live.filter((invoice) => invoice.paymentState === 'over_refunded')
+  const owing = live.filter(
+    (invoice) => invoice.due > 0 && invoice.paymentState !== 'over_refunded',
+  )
   const owed = owing.reduce((total, invoice) => total + invoice.due, 0)
 
   const counts: Record<Station, string> = {
     prescriptions: `${queue.length} waiting`,
     sale: `${sellableCount} sellable over the counter`,
-    checkout: `${owing.length} ${owing.length === 1 ? 'bill' : 'bills'} · ${money(owed)} due`,
+    checkout: `${owing.length} ${owing.length === 1 ? 'bill' : 'bills'} · ${money(owed)} due${underReview.length > 0 ? ` · ${underReview.length} under review` : ''}`,
   }
 
   /** Move to the bill a hand-over or a sale just raised, with it already open. */
@@ -190,7 +202,7 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
       <PageHeader
         eyebrow="Pharmacy counter"
         title="Counter"
-        sub={`${queue.length} prescriptions waiting · ${money(owed)} due across ${owing.length} ${owing.length === 1 ? 'bill' : 'bills'}`}
+        sub={`${queue.length} prescriptions waiting · ${money(owed)} due across ${owing.length} ${owing.length === 1 ? 'bill' : 'bills'}${underReview.length > 0 ? ` · ${underReview.length} ${underReview.length === 1 ? 'bill is' : 'bills are'} over-refunded and with the administrator` : ''}`}
       />
 
       <div
@@ -1445,10 +1457,22 @@ function CheckoutStation({
   } | null>(null)
   const [later, setLater] = useState<string | null>(null)
 
+  /*
+   * Three lists, not two.
+   *
+   * An over-refunded bill would otherwise fall into Due now — its `due` is
+   * larger than its total — and the counter would open a payment form the
+   * server refuses. It is neither owed nor settled, so it gets its own list
+   * and its own explanation, and it is never what this screen opens by
+   * default: the work at this counter is the bills above it.
+   */
   const live = data.invoices.filter((invoice) => invoice.status !== 'void')
-  const owing = live.filter((invoice) => invoice.due > 0)
-  const settled = live.filter((invoice) => invoice.due <= 0)
-  const invoice = live.find((item) => item.id === invoiceId) ?? owing[0] ?? settled[0]
+  const underReview = live.filter((invoice) => invoice.paymentState === 'over_refunded')
+  const collectable = live.filter((invoice) => invoice.paymentState !== 'over_refunded')
+  const owing = collectable.filter((invoice) => invoice.due > 0)
+  const settled = collectable.filter((invoice) => invoice.due <= 0)
+  const invoice =
+    live.find((item) => item.id === invoiceId) ?? owing[0] ?? settled[0] ?? underReview[0]
 
   if (!invoice) {
     return (
@@ -1587,6 +1611,25 @@ function CheckoutStation({
               ))}
             </div>
           ) : null}
+
+          {/* Listed rather than hidden: a pharmacist who remembers raising the
+              bill should find it here, reading why it is not in Due now. */}
+          {underReview.length > 0 ? (
+            <div className="space-y-2 pt-2">
+              <SectionHeader
+                title="With the administrator"
+                sub={`${underReview.length} over-refunded · nothing to collect`}
+              />
+              {underReview.map((row) => (
+                <InvoiceButton
+                  key={row.id}
+                  invoice={row}
+                  open={row.id === invoice.id}
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
+          ) : null}
         </aside>
 
         <div className="min-w-0">
@@ -1601,13 +1644,43 @@ function CheckoutStation({
 
               <div className="grid grid-cols-3 gap-3">
                 <Figure label="Total" value={money(invoice.total)} />
-                <Figure label="Paid" value={money(invoice.paid)} />
-                <Figure label="Due" value={money(invoice.due)} strong />
+                <Figure
+                  label="Paid"
+                  value={money(invoice.paid)}
+                  note={
+                    invoice.paymentState === 'over_refunded'
+                      ? 'Below nothing: more went back out than came in.'
+                      : undefined
+                  }
+                />
+                {/* The Due figure is the biggest thing on this card, and on an
+                    over-refunded bill it is the one that is most misread. It
+                    does not travel without the words. */}
+                <Figure
+                  label="Due"
+                  value={money(invoice.due)}
+                  strong
+                  note={
+                    invoice.paymentState === 'over_refunded'
+                      ? 'The over-refund, not money owed.'
+                      : undefined
+                  }
+                />
               </div>
 
               {invoice.payments.length > 0 ? <InvoicePayments invoice={invoice} /> : null}
 
-              {invoice.due > 0 ? (
+              {invoice.paymentState === 'over_refunded' ? (
+                <Notice tone="bad">
+                  This bill is over-refunded: {money(-invoice.paid)} more has gone back out than
+                  ever came in. Nothing can be taken against it here, and taking money would not
+                  put it right — the pharmacy cannot settle this one. It is with the administrator
+                  and the clinic&rsquo;s accountant, who correct it between them.{' '}
+                  {invoice.patientName
+                    ? `${invoice.patientName} owes the clinic nothing on it.`
+                    : 'Nobody owes the clinic anything on it.'}
+                </Notice>
+              ) : invoice.due > 0 ? (
                 <div className="space-y-4 border-t-2 border-ink pt-4" data-print="hide">
                   <PaymentParts
                     parts={parts}

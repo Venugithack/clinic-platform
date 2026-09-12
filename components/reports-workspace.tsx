@@ -349,6 +349,33 @@ const REPORTS: ReportSpec[] = [
     ],
   },
   {
+    id: 'financial_review',
+    title: 'Financial review',
+    question:
+      'Bills that more money has left than ever entered. These are exceptions waiting on the accountant, not bills to chase — nobody on them owes the clinic anything.',
+    dated: false,
+    sections: [
+      {
+        key: 'queue',
+        title: 'Over-refunded bills',
+        note: 'Usually a refund, and then the reversal of the payment that refund answered. The due figure on one of these is the over-refund itself.',
+        ranged: false,
+      },
+      {
+        key: 'documents',
+        title: 'The receipts, refunds and reversals behind them',
+        note: 'One row each, so the sequence that produced the exception can be read straight through before anybody decides what to do about it.',
+        ranged: false,
+      },
+      {
+        key: 'patients',
+        title: 'Patients carrying an over-refund',
+        note: 'Their outstanding figure in Patient dues includes this money. It is not a debt and none of them should be asked for it.',
+        ranged: false,
+      },
+    ],
+  },
+  {
     id: 'follow_ups',
     title: 'Follow-ups',
     question: 'Who the doctor asked to come back, when they are due, and who is already overdue.',

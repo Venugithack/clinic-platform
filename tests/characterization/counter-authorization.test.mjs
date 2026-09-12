@@ -287,14 +287,41 @@ describe('an administrator corrects what a pharmacist did', () => {
     })
     assert.equal(String(await paid(invoiceId)), '60.00', 'a refund reduces what has been paid')
 
-    // 2. Reverse the payment entirely — a different statement from refunding.
+    /*
+     * 2. Reverse the payment entirely — a different statement from refunding.
+     *
+     * Not in that order, though. The ₹40 refund stands against this bill, so
+     * reversing the ₹100 receipt would leave forty rupees of the clinic's money
+     * out against a bill nobody ever paid. That is not a correction an
+     * administrator makes, it is an accounting exception somebody investigates,
+     * and the command refuses it rather than creating one. Policy register 51:
+     * the erroneous refund goes back first, and the reversal then lands on
+     * nothing.
+     */
     const paymentId = String(await scalar(
       `select id from jmc.payments where kind='payment' order by received_at desc limit 1`,
     ))
+    await assert.rejects(
+      as(clinic.admin, 'reverse_payment', {
+        paymentId, reason: 'The UPI failed after the receipt printed',
+      }),
+      /would be ₹40\.00 over-refunded.*Reverse the refund first/s,
+    )
+    assert.equal(String(await paid(invoiceId)), '60.00', 'and nothing was reversed')
+
+    const refundId = String(await scalar(
+      `select id from jmc.payments where kind='refund' order by received_at desc limit 1`,
+    ))
+    await as(clinic.admin, 'reverse_payment', {
+      paymentId: refundId, reason: 'The refund was keyed against the wrong bill',
+    })
     await as(clinic.admin, 'reverse_payment', {
       paymentId, reason: 'The UPI failed after the receipt printed',
     })
-    assert.equal(String(await paid(invoiceId)), '-40.00', 'the refund stands; the payment does not')
+    assert.equal(
+      String(await paid(invoiceId)), '0.00',
+      'both receipts stay on the record as reversed, and net nothing was paid',
+    )
 
     // 3. Reverse the hand-over, which puts the medicine back on the ledger.
     const dispenseId = String(await scalar(
@@ -313,31 +340,29 @@ describe('an administrator corrects what a pharmacist did', () => {
     )
 
     /*
-     * 4. Void a bill.
+     * 4. Void the bill — this one, which is the point of doing it here.
      *
-     * A DIFFERENT bill, raised clean and never paid against, and the reason is
-     * worth writing down. `void_invoice` refuses a bill that has been paid
-     * against — rightly, because voiding it would lose the money — and it
-     * makes that check by parsing `paid` as an amount in rupees. After the
-     * refund and reversal above, this bill's `paid` is -40.00, which is a
-     * state the ledger models on purpose and which `parseMoney` rejects as a
-     * negative amount. So voiding a bill with a credit balance currently fails
-     * saying "amount paid cannot be negative", which is true but is not the
-     * sentence anybody needs.
-     *
-     * Not fixed here, and deliberately: what *should* happen when somebody
-     * voids a bill the clinic owes money against is an accounting decision,
-     * not a coding one, and this commit is a role-policy correction. Recorded
-     * in the report instead.
+     * Voiding is allowed at exactly zero and nowhere else. Above zero the
+     * money would be lost track of, so it says to refund it first. Below zero
+     * more has gone out than came in, which is not a bill that can be tidied
+     * away at all: voiding it would close the only record of where the money
+     * went, so it says Over-refunded — financial correction required and sends
+     * it to the review queue. After the refund and both reversals this bill
+     * stands at exactly nothing, which is the one case that may be closed.
      */
-    await waitingPrescription()
-    const cleanInvoiceId = await unpaidInvoice()
     await as(clinic.admin, 'void_invoice', {
-      invoiceId: cleanInvoiceId, reason: 'Raised against the wrong visit',
+      invoiceId, reason: 'Raised against the wrong visit',
     })
     assert.equal(
-      String(await scalar('select status from jmc.invoices where id = $1', [cleanInvoiceId])),
+      String(await scalar('select status from jmc.invoices where id = $1', [invoiceId])),
       'void',
+    )
+    assert.match(
+      String(await scalar(
+        'select invoice_number from jmc.invoice_balances where id = $1', [invoiceId],
+      )),
+      /^INV-\d{6}$/,
+      'and it keeps its number',
     )
 
     // 5. And take part in an authorised counter return.

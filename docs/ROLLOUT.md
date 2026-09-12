@@ -21,7 +21,7 @@ Read §1 before doing anything else.
 | Pushed | **No.** Nothing in this programme has left this machine. |
 | Deployed | **No.** No migration has been applied to the clinic, no function deployed, no secret changed. |
 | Verified | On guarded local staging: a disposable PostgreSQL 17, synthetic fixtures, and the real code. |
-| Not verified | Anything that needs the clinic's own data, a real printer, real tablets on clinic Wi-Fi, Supabase's Storage bucket policy, or a CI runner. §7 lists every one. |
+| Not verified | Anything that needs the clinic's own data, a real printer, real tablets on clinic Wi-Fi, Supabase's Storage bucket policy, a CI runner, or the clinic accountant — the recovery/write-off workflow for an over-refunded bill and the GST credit/debit-note treatment are theirs to settle and neither has been read by one. §7 lists every one. |
 
 Applied migrations are immutable. Everything here is forward-only.
 
@@ -106,17 +106,24 @@ Five migrations, in this order, each once:
 20260912000000_slice3_identity_packages_stock.sql
 20260913000000_slice4_dispensing_billing_payments.sql
 20260914000000_slice5_clinical_images.sql
+20260915000000_financial_edge_states.sql
 ```
 
 (Slice 2 and 2.1 are already in the set; if the clinic is behind, apply from
 wherever it actually is.)
 
-**Every one must run inside a transaction.** Each begins `set local search_path
-= jmc`, and `SET LOCAL` outside a transaction block does nothing at all —
-Postgres warns and then creates the tables in `public`, where the retired
-application lives and eight table names collide exactly. `supabase db push`
-wraps each file; nothing else is guaranteed to. `docs/STAGING.md` §3.1 is the
-long version.
+**Every one must run inside a transaction**, so that a file which fails halfway
+leaves nothing behind.
+
+None of these five relies on `set local search_path = jmc`, and that is
+deliberate: every object in them is written `jmc.`-qualified instead. The
+clinic's *earlier* migrations do begin with that line, and it is the reason the
+transaction rule was written down in the first place — `SET LOCAL` outside a
+transaction block does nothing at all, and Postgres warns and then creates the
+tables in `public`, where the retired application lives and eight table names
+collide exactly. `supabase db push` wraps each file; nothing else is guaranteed
+to. If the clinic is behind far enough to be applying any of the pre-Slice-2
+files, that trap is live. `docs/STAGING.md` §3.1 is the long version.
 
 ```bash
 # Rehearse against a restored copy first. Not optional.
@@ -137,6 +144,7 @@ supabase functions deploy      # command, snapshot, login, logout, register,
 | Slice 3 | Converts **every money column** from `real` to `numeric(12,2)`, rounding to the paisa. Gives every batch and medicine a base unit, taken from the `unit` column that quantity was always counted in. Adds no package to any existing batch — inventing one would be a guess frozen onto the batch. |
 | Slice 4 | Gives every prescription a `valid_until` of signing + 7 days. Moves every `bills` row into an invoice, a line and (where paid) a payment; **empties `jmc.bills` and leaves it standing** as a tombstone. Sets the clinic consultation fee to ₹300 only where none is configured. Builds `otc_lines` from `lines_json`. |
 | Slice 5 | Nothing. New tables only. |
+| Financial edge states | **Nothing, and that is the point.** Views only: `invoice_balances` and `patient_balances` are replaced and `financial_review_queue` is created. No table, column, constraint or row is touched. Any over-refunded bill it puts on the queue was already over-refunded before it ran; what changes is that the application can now say so. |
 
 The `valid_until` backfill deserves a sentence: every existing prescription is
 long past signing + 7, so on the morning after the migration the pharmacy
@@ -185,9 +193,16 @@ reconcile daily **before** cutover. Every figure below has a report behind it.
 | Cash, UPI and card | `payments` + Day book | The drawer and the UPI statement |
 | Patient dues | `patient_dues` | The credit register |
 | Outstanding prescriptions | `outstanding_prescriptions` | What is waiting behind the counter |
+| Over-refunded bills | `financial_review` | The refund receipts and the drawer/UPI statement they went out on. Not a counter's to clear: the admin or accountant, and §8 |
 
 A day that does not reconcile is a day to stop and find out why, not a day to
 carry forward.
+
+The last line is the exception to that instruction, and only that far: a row on
+`financial_review` is not a day's reconciliation failure to be chased before
+closing. It is a bill against which more went out than came in, it may well be
+older than the system, and it stops being the counter's business the moment it
+appears. Note it, carry the day forward, and give it to whoever keeps the books.
 
 ---
 
@@ -213,6 +228,20 @@ select count(*) from (
   select encounter_id from jmc.invoice_lines
    where source = 'consultation_fee' group by 1 having count(*) > 1) d;       -- 0
 
+-- No bill has had more money taken back out of it than ever went in. `paid`
+-- below zero and a `due` larger than the bill are the same fact said twice; a
+-- non-zero here is not a migration failure but history, and it is the one line
+-- in this list nobody at the counter can clear — voiding such a bill is
+-- refused, and taking payment against it would charge the patient for the
+-- clinic's own error. Every one of them, with the receipts behind it, is in
+-- jmc.financial_review_queue, which is what the admin `financial_review`
+-- report reads. It goes to the accountant (policy register 52, 56, 57).
+-- The two figures are the same count asked two ways; they must agree.
+select
+  (select count(*) from jmc.invoice_balances
+    where paid < 0 or due > total)              as over_refunded,
+  (select count(*) from jmc.financial_review_queue) as on_the_review_queue;  -- 0, 0
+
 -- No document number was issued twice.
 select count(*) from (
   select invoice_number from jmc.invoices group by 1 having count(*) > 1) d;  -- 0
@@ -230,11 +259,13 @@ select count(*) from information_schema.role_table_grants
 
 | | Why not | Who closes it |
 |---|---|---|
-| Real supplier invoices and GRNs | None supplied. Receiving is built against synthetic examples. | Clinic — policy register H.1 |
-| Real package examples, including a changed pack size and real barcodes | None supplied. | Clinic — H.2 |
-| The classification of the clinic's actual medicines, and the controlled-drug register | Cannot be invented. | Pharmacist — H.3 |
-| Dr. Jayamurugan's production admin role | Nothing here queries production. | Owner — H.4 |
-| A4 and 80 mm printing: margins, long medicine names, page breaks, reprint marking | No printer here. Print layout is checked only in a browser. | Clinic — H.5 |
+| Real supplier invoices and GRNs | None supplied. Receiving is built against synthetic examples. | Clinic — policy register I.1 |
+| Real package examples, including a changed pack size and real barcodes | None supplied. | Clinic — I.2 |
+| The classification of the clinic's actual medicines, and the controlled-drug register | Cannot be invented. | Pharmacist — I.3 |
+| Dr. Jayamurugan's production admin role | Nothing here queries production. | Owner — I.4 |
+| A4 and 80 mm printing: margins, long medicine names, page breaks, reprint marking | No printer here. Print layout is checked only in a browser. | Clinic — I.5 |
+| How an over-refunded bill is finally cleared | The recovery/write-off workflow is neither designed nor built. `financial_review` reports the queue; no command in the application closes a row on it, and none invents a balancing entry. | Clinic accountant — I.6, policy item 56 |
+| The GST treatment of a refund that exceeds the payment it reverses | Whether a credit or debit note is required, against which original document, and in whose name. Nothing in this release issues, reverses or adjusts a tax document, and no accountant has read any of it. | Clinic accountant — I.7, policy item 57 |
 | Supabase Storage bucket policy: private, anonymous reads refused, service key not exposed | Staging writes to a directory; it exercises this application's rules, not Supabase's. | Deployment |
 | The deployed database role's attributes | §7.4 of `SCHEMA_AND_TYPES.md`. The application is tested against the pessimistic case — `NOSUPERUSER NOBYPASSRLS` — so it works either way, but what the role actually is has never been read. | Deployment |
 | **That a stored R2 backup can actually be recovered** | Neither the staging drill nor the nightly CI job downloads the encrypted object, decrypts it with the age identity, and restores it — both take a *fresh* dump and restore that. The dump-and-restore path is proven; the archive is not. **Production must not go live before this is done once, by hand.** | Deployment |
@@ -286,6 +317,32 @@ line, a refund, a reversal, another resolution. Every one of them is a command
 the application already has, and every one leaves both the mistake and the
 correction on the record. If you find yourself reaching for `UPDATE`, the
 trigger will stop you, and it is right to.
+
+**A bill says `over_refunded`.** More money has gone back out on it than ever
+came in — classically a refund that stands and a receipt that turned out never
+to have settled — and it is the one wrongness on this page that the application
+will not let you correct. Voiding it is refused: a void would close the only
+record of where the money went. Taking payment against it is refused too, since
+`due` on such a bill is larger than the bill and collecting it would charge the
+patient for the clinic's own error. Both refusals say the same thing —
+*Over-refunded — financial correction required* — and neither changes anything.
+
+So do not invent a balancing entry. There is no adjustment line, no ₹0
+"correcting" receipt and no write-off command for this, deliberately: both
+events are real, both stay, and inventing a third to make the arithmetic look
+tidy destroys the only evidence of what happened. Open `financial_review`
+(admin), which lists every such bill worst first with all its receipts, and
+give it to the admin or accountant. Clearing it — recovery, or a write-off, and
+the GST treatment if GST applies — is theirs and is not yet decided: policy
+register 56 and 57, §7 above.
+
+One case is worth recognising, because it is the one that can be undone: if the
+bill went negative because a receipt was reversed *after* a refund was taken
+against it, the refund should have been reversed first. Reversing a receipt now
+refuses when it would take any of its bills below zero and names the refunds to
+reverse first, so this cannot be created going forward — but a bill that
+acquired it before the migration, or carried it across from the old data, is
+still on the queue and still the accountant's.
 
 **Somebody lost a tablet.** Admin → Staff → revoke that person's sessions and
 reset their PIN. Image tickets die with the session; patient data is

@@ -880,10 +880,17 @@ export async function readSnapshot(
    * clauses drop it — and today's takings lose a payment that the till's own
    * server-side figure still counts. The two then disagree by exactly that
    * amount, every time somebody settles an old balance.
+   *
+   * The fourth clause is the over-refunded one, and it is here because the
+   * first three can all miss it: a bill voided years ago with money still out
+   * against it fails the `status <> 'void'` test, and one whose lines add to
+   * nothing has no `due` to speak of. An exception that only appears when the
+   * other clauses happen to catch it is an exception nobody finds.
    */
   const invoices: InvoiceView[] = cashDrawer
     ? await readInvoices(
       `(b.due > 0 and b.status <> 'void')
+       or b.payment_state = 'over_refunded'
        or b.created_at >= ${CLINIC_DAY_START}::timestamptz
        or exists (
          select 1 from payment_allocations pa
@@ -893,9 +900,18 @@ export async function readSnapshot(
     )
     : []
 
+  /*
+   * `outstanding <> 0` used to be the whole test, which reads a patient whose
+   * bills happen to net to zero across an over-refund as having nothing to
+   * discuss. The second clause keeps them on the list, and the sort puts the
+   * exceptions at the top rather than at the far end of a descending column of
+   * ordinary dues.
+   */
   const patientBalances: PatientBalanceView[] = cashDrawer
     ? (await all(
-      `select * from patient_balances where outstanding <> 0 order by outstanding desc`,
+      `select * from patient_balances
+        where outstanding <> 0 or over_refunded_invoices > 0
+        order by over_refunded_invoices > 0 desc, outstanding desc`,
     )).map((row) => ({
       patientId: text(row.patient_id),
       patientName: text(row.name),
@@ -904,6 +920,8 @@ export async function readSnapshot(
       outstanding: num(row.outstanding),
       openInvoices: num(row.open_invoices),
       oldestDueAt: optional(row.oldest_due_at),
+      overRefundedInvoices: num(row.over_refunded_invoices),
+      overRefundedAmount: num(row.over_refunded_amount),
     }))
     : []
 

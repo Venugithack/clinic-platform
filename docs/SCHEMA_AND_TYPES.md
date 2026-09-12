@@ -1732,8 +1732,9 @@ payment  -> payment_allocations                      money in, and money back
 | View | Answers |
 |---|---|
 | `prescription_line_supply` | prescribed, supplied, remaining, and one of `waiting` / `part_supplied` / `supplied` / `patient_declined` / `doctor_cancelled` / `needs_review` |
-| `invoice_balances` | total, paid, due, and `unpaid` / `part_paid` / `paid` / `void` |
-| `patient_balances` | what one patient owes across every bill |
+| `invoice_balances` | total, paid, due, and `unpaid` / `part_paid` / `paid` / `void` / `over_refunded` — the last is tested *first*, ahead of `void`, so a voided over-refund cannot hide behind the void |
+| `patient_balances` | what one patient owes across every bill, plus `over_refunded_invoices` and `over_refunded_amount` — how much of that figure is the clinic's own error rather than the patient's debt |
+| `financial_review_queue` | one row per over-refunded bill, with every receipt, refund and reversal allocated to it, and by how much it is out |
 
 ### 9.2 Confirm and hand over
 
@@ -1821,6 +1822,22 @@ may not be recorded twice.
   removes it from the arithmetic. The day book needs to tell them apart, and the
   till's cash figure is now one query over `payments` rather than two over two
   tables with different shapes.
+- **Which is how `paid` gets below zero.** Take ₹100, refund ₹40, then reverse
+  the ₹100 because the card never actually settled. The refund stands — money
+  really did go out — and the payment is gone from the arithmetic, so the bill
+  has *minus forty rupees* paid against it and a `due` larger than its own
+  total. That is what the events say, and neither view flattens it into
+  something more comfortable: `invoice_balances` calls it `over_refunded` and
+  tests for it before `void`, `patient_balances` counts it separately from the
+  debt it is inflating, and `financial_review_queue` is the list of them with
+  their receipts attached. Going forward it can only be created deliberately:
+  `void_invoice` refuses a bill whose balance is negative, `refund_payment`
+  locks the invoice before reading `paid` so two simultaneous refunds cannot
+  both think the money is there, and `reverse_payment` computes the result for
+  every invoice the receipt touches and refuses atomically if any would go
+  below zero — naming the refunds to reverse first. Derived balances are read
+  with `parseBalance`, which is signed, and never with `parseMoney`, which is
+  for what a person typed at a counter. Policy register 49–55; §12.5.
 - **Anonymous sales are paid in full** (policy register 46), and an unreviewed
   regulatory classification cannot leave the counter anonymously at all —
   `schedule = 'unset'` or `schedule_verified_at is null` is refused. Pay-later
@@ -1965,7 +1982,7 @@ cases in `command`. Three reasons, in order of how much they matter:
    that runs every few seconds — `CLAUDE_IMPLEMENTATION_BRIEF.md` §3 says so
    in as many words, and it is why `ledger`, `receipts` and the image list are
    also on demand.
-2. **The role gate is per report, not per function.** Fourteen reports with
+2. **The role gate is per report, not per function.** Fifteen reports with
    four different audiences:
 
    | Report | admin | doctor | nurse | pharmacy |
@@ -1982,6 +1999,7 @@ cases in `command`. Three reasons, in order of how much they matter:
    | `payments` | ● | | | ● |
    | `patient_dues` | ● | | | ● |
    | `reversals` | ● | | | |
+   | `financial_review` | ● | | | |
    | `follow_ups` | ● | ● | ● | |
    | `image_access` | ● | | | |
 
@@ -1991,6 +2009,12 @@ cases in `command`. Three reasons, in order of how much they matter:
    originally named the nurse, because the counter's gate did. The owner
    settled that on 12 September 2026 — see §11.5 — and both ends moved
    together.
+
+   `financial_review` is admin-only for a different reason from the rest of the
+   column. It is not that a pharmacist should not see an over-refunded bill; it
+   is that there is nothing a counter can do with one. Voiding it is refused,
+   and taking payment against it would charge the patient for the clinic's own
+   error. It is accountant's work, so it is on the accountant's desk (§12.5).
 
    `GET /reports?report=index` returns only the reports the caller may run, so
    the UI builds its menu from the server's answer rather than from a list in
@@ -2157,17 +2181,61 @@ against itself proves nothing:
   as a pharmacist and as an admin-only manager, and asserts the stations
   offered are exactly the ones that role's session may use.
 
-### 12.5 One defect found and deliberately not fixed
+### 12.5 One defect found, left alone, and then fixed
 
-Writing the administrator-corrections test surfaced an edge in `void_invoice`.
-It refuses a bill that has been paid against — correctly, since voiding it
-would lose the money — and it makes that check by parsing `paid` as an amount
-in rupees. A bill whose payment was reversed after a partial refund has a
-*negative* `paid`, which the ledger models on purpose and which `parseMoney`
-rejects. Voiding such a bill therefore fails with "amount paid cannot be
-negative": true, and not the sentence anybody needs.
+**This section used to say the defect below was deliberately not fixed. It has
+been fixed.** What follows is what it was, what was done about it, and the part
+that was never the code's to decide — which is the part still open.
 
-It is left alone. What *should* happen when somebody voids a bill the clinic
-owes money against is an accounting decision rather than a coding one, and this
-commit is a role-policy correction. The test documents the state it avoids and
-why.
+**What it was.** Writing the administrator-corrections test surfaced an edge in
+`void_invoice`. It refuses a bill that has been paid against — correctly, since
+voiding it would lose the money — and it made that check by parsing `paid` as
+an amount in rupees. A bill whose payment was reversed after a partial refund
+has a *negative* `paid`, which the ledger models on purpose and which
+`parseMoney` rejects. Voiding such a bill therefore failed with "amount paid
+cannot be negative": true, and not the sentence anybody needs, printed at an
+administrator who had not typed an amount at all. Worse than the wording, the
+same bill read as `unpaid` everywhere else — the same word as a bill printed
+five minutes ago — so nothing in the application would ever have shown it to
+anybody.
+
+**What the fix is.** Migration `20260915000000_financial_edge_states.sql`,
+which is forward-only and replaces three views without touching a single stored
+row:
+
+- `invoice_balances.payment_state` gains `over_refunded`, tested *before*
+  `void` so a voided over-refund cannot file itself under "closed".
+- `patient_balances` gains `over_refunded_invoices` and
+  `over_refunded_amount`, counted over exactly the invoices its money columns
+  already cover, so the two cannot disagree about which bills were included.
+- `financial_review_queue` is one row per over-refunded bill with every
+  receipt, refund and reversal allocated to it. It is derived, so nothing has
+  to be enqueued and nothing can be dequeued by forgetting.
+
+And in the commands:
+
+- `void_invoice` allows a void only at a net balance of exactly ₹0. Above zero,
+  refund first. Below zero it refuses with *Over-refunded — financial
+  correction required*, the same words on every screen, and changes nothing.
+- `reverse_payment` computes the result for **every** invoice the receipt is
+  allocated to and refuses atomically if any would go below zero, naming the
+  refunds to reverse first. A receipt is one event; there is no partial
+  reversal.
+- `parseBalance` in `money.ts` is the signed reader for derived balances.
+  `parseMoney` keeps its `min: 0` default and stays what it always was — the
+  reader for what a person typed at a counter.
+- `financial_review` in `reports/index.ts` is the admin-only report over the
+  queue, and `patient_dues` now carries the two new columns, surfaces
+  over-refunded patients instead of sorting them down a descending
+  `outstanding`, and no longer drops a patient whose bills happen to net to
+  zero across one.
+
+**What is still not the code's decision.** An over-refund is two real events —
+a refund that went out and a receipt that turned out never to have settled — and
+the clinic is genuinely down the difference. Nothing here invents a balancing
+entry for it, and no command in this release closes a row on the review queue.
+How the money is recovered or written off, who approves that, and what the GST
+credit/debit-note treatment is where GST applies are the clinic accountant's,
+and they are unanswered: policy register 56 and 57, and `ROLLOUT.md` §7. The
+code's job was to stop creating these silently and to stop hiding the ones that
+already exist. That much is done.

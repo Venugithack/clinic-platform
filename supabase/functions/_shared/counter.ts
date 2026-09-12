@@ -24,7 +24,7 @@ import {
   booleanValue, numberValue, optional, optionalDate, optionalPositiveInteger,
   requireChoice, requireRole, sequence, value, type Payload,
 } from './command-input.ts'
-import { money, parseMoney, proRata, rupees, sum as sumMoney, times } from './money.ts'
+import { money, parseBalance, parseMoney, proRata, rupees, sum as sumMoney, times } from './money.ts'
 import { ladderRows, moveStock, packageEntries } from './inventory.ts'
 import { runImageCommand } from './images.ts'
 import { baseQuantityOf, levelNamed, plural } from './packages.ts'
@@ -230,14 +230,73 @@ export async function addInvoiceLine(invoiceId: string, line: {
   )
 }
 
+/** What one bill adds up to. Every figure is derived; none is stored. */
+type Balance = {
+  invoiceNumber: string
+  patientId: string | null
+  status: string
+  paymentState: string
+  totalPaise: number
+  paidPaise: number
+  duePaise: number
+}
+
+/**
+ * Read that back out of the ledger.
+ *
+ * Every figure here is DERIVED, so every figure here is read with
+ * `parseBalance` rather than `parseMoney`. `paid` is the one that matters:
+ * refund ₹40 against a ₹100 receipt and then reverse the receipt and it is
+ * minus forty rupees, which the input validator refuses to read at all.
+ */
+async function balanceOf(invoiceId: string): Promise<Balance> {
+  const row = await db.prepare(
+    `select invoice_number, patient_id, total, paid, due, payment_state, status
+       from invoice_balances where id=?`,
+  ).get(invoiceId) as {
+    invoice_number: string; patient_id: string | null
+    total: string; paid: string; due: string; payment_state: string; status: string
+  } | undefined
+  if (!row) throw new Error('That bill was not found.')
+  return {
+    invoiceNumber: row.invoice_number,
+    patientId: row.patient_id,
+    status: row.status,
+    paymentState: row.payment_state,
+    totalPaise: parseBalance(row.total, 'bill total'),
+    paidPaise: parseBalance(row.paid, 'amount paid'),
+    duePaise: parseBalance(row.due, 'amount due'),
+  }
+}
+
+/**
+ * What an over-refunded bill says, wherever somebody meets one.
+ *
+ * Policy register 50 fixes the words, and they are the same words on every
+ * screen on purpose: this is not a bill in an unusual state, it is a bill that
+ * has stopped being a counter's business until somebody with the books open
+ * has looked at it.
+ */
+function overRefunded(balance: Balance): Error {
+  return new Error(
+    `Over-refunded — financial correction required. ` +
+    `${rupees(-balance.paidPaise)} more has gone back out on ${balance.invoiceNumber} than ever came in. ` +
+    `Nothing has been changed. It is on the financial review queue for the admin or accountant.`,
+  )
+}
+
 /** What is still owed on an invoice, in paise. */
 async function dueOn(invoiceId: string): Promise<number> {
-  const row = await db.prepare(
-    'select total, paid, due, payment_state, status from invoice_balances where id=?',
-  ).get(invoiceId) as { due: string; payment_state: string; status: string } | undefined
-  if (!row) throw new Error('That bill was not found.')
-  if (row.status === 'void') throw new Error('That bill has been voided.')
-  return parseMoney(row.due, 'amount due')
+  const balance = await balanceOf(invoiceId)
+  if (balance.status === 'void') throw new Error('That bill has been voided.')
+  /*
+   * `due` on an over-refunded bill is total MINUS a negative number, so it is
+   * bigger than the bill. Handing that figure to the counter would charge the
+   * patient for the clinic's own error, which is why this refuses rather than
+   * returning it.
+   */
+  if (balance.paidPaise < 0) throw overRefunded(balance)
+  return balance.duePaise
 }
 
 /**
@@ -730,7 +789,7 @@ export async function runCounterCommand(session: SessionView, action: string, pa
          * was changed.
          */
         for (const row of charged) {
-          const amountPaise = parseMoney(row.amount, 'charge')
+          const amountPaise = parseBalance(row.amount, 'charge')
           await addInvoiceLine(row.invoice_id, {
             source: 'adjustment',
             sourceKey: `dispense-reversal:${dispenseId}:${row.invoice_id}`,
@@ -1133,7 +1192,7 @@ export async function runCounterCommand(session: SessionView, action: string, pa
         takenPaise = sumMoney(parts.map((part) => part.amountPaise))
         if (takenPaise > due) {
           throw new Error(
-            due === 0
+            due <= 0
               ? `${invoice.invoice_number} is already settled.`
               : `${rupees(due)} is due on ${invoice.invoice_number} and ${rupees(takenPaise)} was offered.`,
           )
@@ -1172,25 +1231,88 @@ export async function runCounterCommand(session: SessionView, action: string, pa
       requireRole(session, 'admin')
       const paymentId = value(payload, 'paymentId')
       const reason = value(payload, 'reason')
+      let receiptNumber = ''
 
       await transaction(async () => {
         const payment = await db.prepare(
-          'select id,receipt_number,status,amount from payments where id=? for update',
+          'select id,receipt_number,kind,status,amount from payments where id=? for update',
         ).get(paymentId) as {
-          id: string; receipt_number: string; status: string; amount: string
+          id: string; receipt_number: string; kind: string; status: string; amount: string
         } | undefined
         if (!payment) throw new Error('That receipt was not found.')
         if (payment.status === 'reversed') throw new Error('That receipt is already reversed.')
+        receiptNumber = payment.receipt_number
+
+        /*
+         * ── WHAT THIS REVERSAL WOULD DO TO EVERY BILL IT TOUCHES ──────────
+         *
+         * A receipt can be split across more than one bill, and saying "the
+         * money never arrived" says it about all of them at once. So the
+         * question is not whether this receipt can be reversed but whether
+         * EVERY bill it is allocated to survives the arithmetic — and if one
+         * does not, none of it happens. There is no partial reversal: a
+         * receipt is one event and it either happened or it did not.
+         *
+         * The order matters as much as the check. Take ₹100, refund ₹40, then
+         * reverse the ₹100: what is left is a bill with minus forty rupees
+         * paid against it and two receipts that both describe real money.
+         * Nothing in the schema forbids it and no later screen can undo it,
+         * so it is forbidden here — reverse the ₹40 refund first (policy
+         * register 51) and the ₹100 reversal then lands on zero.
+         *
+         * Locks: the receipt, then its bills in id order, which is the order
+         * every other command in this file takes them in.
+         */
+        const links = await db.prepare(
+          'select invoice_id, amount from payment_allocations where payment_id=? order by invoice_id',
+        ).all(paymentId) as Array<{ invoice_id: string; amount: string }>
+
+        for (const link of links) {
+          await db.prepare('select id from invoices where id=? for update').get(link.invoice_id)
+        }
+
+        for (const link of links) {
+          const balance = await balanceOf(link.invoice_id)
+          // Stored, and constrained positive — an operator amount, not a
+          // derived one, so it is read by the reader that refuses negatives.
+          const allocated = parseMoney(link.amount, 'allocated amount')
+          // Reversing money IN takes it back out of what has been paid;
+          // reversing money OUT — an erroneous refund — puts it back.
+          const after = payment.kind === 'refund'
+            ? balance.paidPaise + allocated
+            : balance.paidPaise - allocated
+          if (after >= 0) continue
+
+          // The refunds that would have to go first — never including the
+          // receipt being reversed, which is the one thing that cannot be the
+          // answer to its own refusal.
+          const refunds = await db.prepare(
+            `select y.receipt_number
+               from payment_allocations a join payments y on y.id=a.payment_id
+              where a.invoice_id=? and y.kind='refund' and y.status='received' and y.id<>?
+              order by y.received_at, y.receipt_number`,
+          ).all(link.invoice_id, paymentId) as Array<{ receipt_number: string }>
+
+          throw new Error(
+            `${balance.invoiceNumber} would be ${rupees(-after)} over-refunded if ` +
+            `${payment.receipt_number} were reversed, so nothing has been reversed. ` +
+            (refunds.length > 0
+              ? `Reverse the refund${refunds.length > 1 ? 's' : ''} first ` +
+                `(${refunds.map((row) => row.receipt_number).join(', ')}), then this receipt.`
+              : `That bill is already under financial review.`),
+          )
+        }
 
         await db.prepare(
           `update payments set status='reversed', reversed_by=?, reversed_at=now(), reversal_reason=?
             where id=?`,
         ).run(session.staffId, reason, paymentId)
         await audit(session.staffId, 'payment.reversed', 'payment', paymentId,
-          `${payment.receipt_number} (${rupees(parseMoney(payment.amount, 'amount'))}) reversed: ${reason}`)
+          `${payment.receipt_number} (${payment.kind}, ` +
+          `${rupees(parseMoney(payment.amount, 'amount'))}) reversed: ${reason}`)
       })
       return {
-        message: 'Receipt reversed. It keeps its number and stays on the record as reversed.',
+        message: `${receiptNumber} reversed. It keeps its number and stays on the record as reversed.`,
       }
     }
 
@@ -1205,29 +1327,42 @@ export async function runCounterCommand(session: SessionView, action: string, pa
       let receipts: string[] = []
 
       await transaction(async () => {
-        const balance = await db.prepare(
-          'select invoice_number,patient_id,paid,status from invoice_balances where id=?',
-        ).get(invoiceId) as {
-          invoice_number: string; patient_id: string | null; paid: string; status: string
-        } | undefined
-        if (!balance) throw new Error('That bill was not found.')
+        /*
+         * The lock, taken before the balance is read.
+         *
+         * Two admins refunding ₹100 each on a ₹100 bill in the same second is
+         * the ordinary way an over-refund is created: both read `paid` as 100,
+         * both decide 100 is refundable, and the bill ends at minus a hundred.
+         * Locking the invoice row first — the same row `take_payment` and
+         * `void_invoice` lock, in the same place — makes the second one read
+         * the first one's refund and refuse.
+         */
+        const invoice = await db.prepare(
+          'select id from invoices where id=? for update',
+        ).get(invoiceId) as { id: string } | undefined
+        if (!invoice) throw new Error('That bill was not found.')
 
-        const paid = parseMoney(balance.paid, 'amount paid')
+        const balance = await balanceOf(invoiceId)
+        const paid = balance.paidPaise
+        if (paid < 0) throw overRefunded(balance)
+
         const refunding = sumMoney(parts.map((part) => part.amountPaise))
         if (refunding > paid) {
           throw new Error(
-            `${rupees(paid)} has been paid on ${balance.invoice_number}; ${rupees(refunding)} cannot be refunded.`,
+            paid === 0
+              ? `Nothing has been paid on ${balance.invoiceNumber}, so ${rupees(refunding)} cannot be refunded.`
+              : `${rupees(paid)} has been paid on ${balance.invoiceNumber}; ${rupees(refunding)} cannot be refunded.`,
           )
         }
 
         const result = await recordPayments({
-          invoiceId, patientId: balance.patient_id, parts, idempotencyKey,
+          invoiceId, patientId: balance.patientId, parts, idempotencyKey,
           actorId: session.staffId, kind: 'refund', note: reason,
         })
         receipts = result.receipts
 
         await audit(session.staffId, 'payment.refunded', 'invoice', invoiceId,
-          `${balance.invoice_number}: ${rupees(refunding)} refunded — ${reason}`)
+          `${balance.invoiceNumber}: ${rupees(refunding)} refunded — ${reason}`)
       })
       return { message: 'Refund recorded against the bill.', data: { receipts } }
     }
@@ -1245,14 +1380,38 @@ export async function runCounterCommand(session: SessionView, action: string, pa
       const reason = value(payload, 'reason')
 
       await transaction(async () => {
-        const balance = await db.prepare(
-          'select invoice_number,paid,status from invoice_balances where id=?',
-        ).get(invoiceId) as { invoice_number: string; paid: string; status: string } | undefined
-        if (!balance) throw new Error('That bill was not found.')
-        if (balance.status === 'void') throw new Error('That bill is already void.')
-        if (parseMoney(balance.paid, 'amount paid') > 0) {
+        // Locked before the balance is read, so a payment landing at the same
+        // moment is either included in the figure below or waits behind it.
+        const invoice = await db.prepare(
+          'select id,status from invoices where id=? for update',
+        ).get(invoiceId) as { id: string; status: string } | undefined
+        if (!invoice) throw new Error('That bill was not found.')
+        if (invoice.status === 'void') throw new Error('That bill is already void.')
+
+        /*
+         * ── THE ONLY BALANCE A BILL MAY BE VOIDED ON IS EXACTLY ZERO ───────
+         *
+         * Policy register 49. Three cases, and the middle one used to be the
+         * only one this command knew about:
+         *
+         *   ABOVE zero — money came in against it. Refund it first, or
+         *   voiding the bill loses track of money the clinic is holding.
+         *
+         *   EXACTLY zero — nothing came in, or everything that came in has
+         *   been refunded or reversed back to nothing. Void it.
+         *
+         *   BELOW zero — more went out than came in. This is not a bill that
+         *   can be tidied away; it is an accounting exception, and voiding it
+         *   would close the only record of where the money went. It used to
+         *   reach `parseMoney`, which refused it with "amount paid cannot be
+         *   negative" — a complaint about an input, printed at an admin who
+         *   had not typed one. Now it says what is actually wrong.
+         */
+        const balance = await balanceOf(invoiceId)
+        if (balance.paidPaise < 0) throw overRefunded(balance)
+        if (balance.paidPaise > 0) {
           throw new Error(
-            `${balance.invoice_number} has been paid against. Refund the payment first; voiding it would lose the money.`,
+            `${balance.invoiceNumber} has been paid against. Refund the payment first; voiding it would lose the money.`,
           )
         }
 
@@ -1260,7 +1419,7 @@ export async function runCounterCommand(session: SessionView, action: string, pa
           `update invoices set status='void', void_reason=?, voided_by=?, voided_at=now() where id=?`,
         ).run(reason, session.staffId, invoiceId)
         await audit(session.staffId, 'invoice.voided', 'invoice', invoiceId,
-          `${balance.invoice_number} voided: ${reason}`)
+          `${balance.invoiceNumber} voided: ${reason}`)
       })
       return { message: 'Bill voided. It keeps its number and stays on the record.' }
     }

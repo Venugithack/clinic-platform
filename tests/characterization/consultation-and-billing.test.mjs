@@ -536,15 +536,44 @@ describe('paying a bill', () => {
     assert.equal(afterRefund[0].due, '100.00')
     assert.equal(afterRefund[0].payment_state, 'part_paid')
 
-    // The reversal removes a payment from the arithmetic entirely, which is a
-    // different statement from refunding it: one says the money came back, the
-    // other says it never arrived.
+    /*
+     * The reversal removes a payment from the arithmetic entirely, which is a
+     * different statement from refunding it: one says the money came back, the
+     * other says it never arrived.
+     *
+     * Which is exactly why it cannot be said about the ₹300 while the ₹100
+     * refund stands against it. The refund would stand and the receipt would
+     * not, leaving a hundred rupees of the clinic's money out against a bill
+     * nobody ever paid — `over_refunded`, an accounting exception rather than
+     * a bill in an unusual state. So it is refused, and the refusal names the
+     * receipt that has to go back first (policy register 51).
+     */
     const paymentId = String(await scalar(
       `select id from jmc.payments where kind='payment' limit 1`,
     ))
+    const refundId = String(await scalar(
+      `select id from jmc.payments where kind='refund' limit 1`,
+    ))
+    await assert.rejects(
+      as(admin, 'reverse_payment', { paymentId, reason: 'The UPI failed after the receipt printed' }),
+      /would be ₹100\.00 over-refunded.*Reverse the refund first/s,
+    )
+    assert.equal(
+      (await rows('select paid from jmc.invoice_balances'))[0].paid, '200.00',
+      'and the refusal moved nothing',
+    )
+
+    // In the order it asked for, both stand and the bill lands on exactly
+    // nothing paid — which is not the same as never having been to the
+    // counter, because both receipts are still on the record.
+    await as(admin, 'reverse_payment', {
+      paymentId: refundId, reason: 'The refund was keyed against the wrong bill',
+    })
     await as(admin, 'reverse_payment', { paymentId, reason: 'The UPI failed after the receipt printed' })
-    const afterReversal = await rows('select paid, due from jmc.invoice_balances')
-    assert.equal(afterReversal[0].paid, '-100.00', 'the refund stands; the payment does not')
+    const afterReversal = await rows('select paid, due, payment_state from jmc.invoice_balances')
+    assert.equal(afterReversal[0].paid, '0.00', 'neither receipt counts for anything now')
+    assert.equal(afterReversal[0].due, '300.00')
+    assert.equal(afterReversal[0].payment_state, 'unpaid', 'so the fee is simply owed again')
 
     // Both keep their receipt numbers and stay on the record.
     assert.equal(await scalar('select count(*)::int from jmc.payments'), 2)

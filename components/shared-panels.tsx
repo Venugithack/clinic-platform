@@ -101,8 +101,18 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
    * left on it. `due` comes from the lines and the payment allocations every
    * time it is read, so a part-paid bill counts once and for what is actually
    * left on it.
+   *
+   * An over-refunded bill is not one of these, however much its `due` looks
+   * like one. Its `paid` is below zero, so its `due` is larger than its own
+   * total, and counting it here would put money the clinic has already sent
+   * back out into the figure for money the clinic is waiting to be given. It
+   * is held out and said separately.
    */
-  const owing = data.invoices.filter((item) => item.status !== 'void' && item.due > 0)
+  const liveInvoices = data.invoices.filter((item) => item.status !== 'void')
+  const overRefunded = liveInvoices.filter((item) => item.paymentState === 'over_refunded')
+  const owing = liveInvoices.filter(
+    (item) => item.due > 0 && item.paymentState !== 'over_refunded',
+  )
   const outstanding = owing.reduce((sum, item) => sum + item.due, 0)
   const occupied = data.beds.filter((item) => item.status === 'occupied')
   const attention = [...low].slice(0, 5)
@@ -142,7 +152,11 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
         <Stat
           label="Bills owing"
           value={owing.length}
-          note={`${money(outstanding)} still due`}
+          note={
+            overRefunded.length > 0
+              ? `${money(outstanding)} still due · ${overRefunded.length} over-refunded ${overRefunded.length === 1 ? 'bill is' : 'bills are'} left out and waiting on Billing`
+              : `${money(outstanding)} still due`
+          }
         />
         <Stat label="Low stock" value={low.length} note="At or below reorder level" />
       </div>
@@ -1119,11 +1133,19 @@ export const SOURCE_LABEL: Record<InvoiceLineView['source'], string> = {
   adjustment: 'Adjustment',
 }
 
+/*
+ * `over_refunded` takes `stop`, the same tone as `unpaid`, because the tone set
+ * says what kind of thing a state is and both of these are money the clinic
+ * has to do something about. It is the word that says which: a bill nobody has
+ * paid and a bill more money has left than ever entered are not the same
+ * problem, and only one of them is settled at a counter.
+ */
 const PAYMENT_STATE: Record<InvoiceView['paymentState'], { word: string; tone: Tone }> = {
   unpaid: { word: 'Unpaid', tone: 'stop' },
   part_paid: { word: 'Part paid', tone: 'attn' },
   paid: { word: 'Paid', tone: 'free' },
   void: { word: 'Void', tone: 'plain' },
+  over_refunded: { word: 'Over-refunded', tone: 'stop' },
 }
 
 /** The bill's state as a word. The tone repeats it; it never replaces it. */
@@ -1532,11 +1554,31 @@ export function InvoicePayments({
 export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const admin = data.session.roles.includes('admin')
   const live = data.invoices.filter((invoice) => invoice.status !== 'void')
-  const owing = live.filter((invoice) => invoice.due > 0)
+  /*
+   * The exception, held apart from the money the clinic is owed.
+   *
+   * An over-refunded bill has a `paid` below zero, so its `due` is bigger than
+   * its own total and it reads exactly like a large unpaid bill. It is not
+   * one: that figure is money the clinic has already sent back out twice over,
+   * and no payment closes it. Counting it as owing inflates the day's
+   * outstanding with money nobody is going to bring in. The magnitude is
+   * `-paid` — what went out beyond what ever came in.
+   */
+  const overRefunded = live.filter((invoice) => invoice.paymentState === 'over_refunded')
+  const overRefundedAmount = overRefunded.reduce((total, invoice) => total - invoice.paid, 0)
+  const owing = live.filter(
+    (invoice) => invoice.due > 0 && invoice.paymentState !== 'over_refunded',
+  )
   const voided = data.invoices.filter((invoice) => invoice.status === 'void')
   const outstanding = owing.reduce((total, invoice) => total + invoice.due, 0)
   const owedByPatients = data.patientBalances.reduce(
     (total, balance) => total + balance.outstanding,
+    0,
+  )
+  /* The same money seen from the patient's side: it sits inside `outstanding`
+     on their row, which is why the row has to say so. */
+  const overRefundedByPatients = data.patientBalances.reduce(
+    (total, balance) => total + balance.overRefundedAmount,
     0,
   )
 
@@ -1548,7 +1590,7 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
       <PageHeader
         eyebrow="Collected at the clinic"
         title="Billing"
-        sub={`${owing.length} bills owing · ${money(outstanding)} outstanding · ${data.patientBalances.length} patients carrying a balance`}
+        sub={`${owing.length} bills owing · ${money(outstanding)} outstanding · ${data.patientBalances.length} patients carrying a balance${overRefunded.length > 0 ? ` · ${overRefunded.length} under financial review` : ''}`}
         action={
           <Button onClick={() => window.print()} title="Opens this tablet's own print sheet">
             Print register
@@ -1556,16 +1598,39 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
         }
       />
 
+      {overRefunded.length > 0 ? (
+        <div data-print="hide">
+          <Notice tone="bad">
+            {overRefunded.length === 1
+              ? `One bill is over-refunded: ${money(overRefundedAmount)} more has gone back out on it than ever came in.`
+              : `${overRefunded.length} bills are over-refunded: ${money(overRefundedAmount)} more has gone back out on them than ever came in.`}{' '}
+            That is not money owed, so it is kept out of the figures beside this. Nothing can be
+            collected at the counter, and nothing on this screen closes an over-refunded bill: it
+            is settled by a correction an administrator and the clinic&rsquo;s accountant agree
+            between them. The register below marks{' '}
+            {overRefunded.length === 1 ? 'it' : 'each of them'} Over-refunded.
+          </Notice>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-print="hide">
         <Stat
           label="Bills owing"
           value={owing.length}
-          note={`${money(outstanding)} across every open bill`}
+          note={
+            overRefunded.length > 0
+              ? `${money(outstanding)} across every open bill, the over-refunded ones apart`
+              : `${money(outstanding)} across every open bill`
+          }
         />
         <Stat
           label="Patients carrying a balance"
           value={data.patientBalances.length}
-          note={`${money(owedByPatients)} owed to the clinic`}
+          note={
+            overRefundedByPatients > 0
+              ? `${money(owedByPatients)} against their names, of which ${money(overRefundedByPatients)} is over-refunded and not owed`
+              : `${money(owedByPatients)} owed to the clinic`
+          }
         />
         <Stat
           label="Bills voided"
@@ -1646,6 +1711,20 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
               </Notice>
             ) : null}
 
+            {/* Said before the figures, because Due below is larger than Total
+                and a reader who meets that without the sentence will read it
+                as a patient owing more than they were ever charged. */}
+            {open.paymentState === 'over_refunded' ? (
+              <Notice tone="bad">
+                {money(-open.paid)} more has gone back out on this bill than ever came in — usually
+                a refund, and then the reversal of the payment that refund answered. The Due figure
+                below is that money, not money the patient owes. Taking payment, refunding again
+                and voiding are all refused; this is settled by a correction an administrator and
+                the clinic&rsquo;s accountant agree, and the receipts below are the record of how
+                it got here.
+              </Notice>
+            ) : null}
+
             <InvoiceLines invoice={open} />
 
             <div className="grid grid-cols-3 gap-3">
@@ -1686,11 +1765,17 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                       lost.
                     </>
                   }
-                  disabled={open.status === 'void' || open.paid > 0}
+                  disabled={
+                    open.status === 'void' ||
+                    open.paid > 0 ||
+                    open.paymentState === 'over_refunded'
+                  }
                   disabledReason={
                     open.status === 'void'
                       ? 'This bill is already void.'
-                      : 'Money has been taken against this bill. Refund it first.'
+                      : open.paymentState === 'over_refunded'
+                        ? 'This bill is over-refunded and under financial review. It is settled by a correction the accountant approves, not by voiding.'
+                        : 'Money has been taken against this bill. Refund it first.'
                   }
                   onConfirm={(reason) => run('void_invoice', { invoiceId: open.id, reason })}
                 >
@@ -1712,7 +1797,11 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
       <Card data-print="sheet">
         <CardHeader
           title="Patient balances"
-          sub={`${data.patientBalances.length} carrying a balance · ${money(owedByPatients)} owed`}
+          sub={
+            overRefundedByPatients > 0
+              ? `${data.patientBalances.length} carrying a balance · ${money(owedByPatients)} against their names, ${money(overRefundedByPatients)} of it over-refunded rather than owed`
+              : `${data.patientBalances.length} carrying a balance · ${money(owedByPatients)} owed`
+          }
         />
         {data.patientBalances.length === 0 ? (
           <CardBody>
@@ -1736,7 +1825,21 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
             <TBody>
               {data.patientBalances.map((balance) => (
                 <TR key={balance.patientId}>
-                  <TD className="font-semibold">{balance.patientName}</TD>
+                  {/* Outstanding already carries the over-refund, which is how
+                      a person who owes the clinic nothing can appear on a dues
+                      list. The row has to say so where the name is read. */}
+                  <TD className="font-semibold">
+                    {balance.patientName}
+                    {balance.overRefundedInvoices > 0 ? (
+                      <span className="mt-0.5 block text-[11px] leading-snug font-normal text-stop">
+                        {balance.overRefundedInvoices === 1
+                          ? 'One bill over-refunded'
+                          : `${balance.overRefundedInvoices} bills over-refunded`}{' '}
+                        · {money(balance.overRefundedAmount)} of the outstanding figure is that,
+                        not money to ask for
+                      </span>
+                    ) : null}
+                  </TD>
                   <TD num>{money(balance.billed)}</TD>
                   <TD num>{money(balance.paid)}</TD>
                   <TD num>{money(balance.outstanding)}</TD>
@@ -1773,18 +1876,31 @@ function RefundAction({
 
   const typed = partsTotal(parts)
   const entered = partsPayload(parts)
+  /*
+   * The ceiling, in paise, and why the two branches above it come first.
+   *
+   * On an over-refunded bill `paid` is below zero, and "-₹40.00 has been paid;
+   * more than that cannot be refunded" is not a sentence anybody can act on —
+   * it invites a smaller refund, which is the opposite of what this bill
+   * needs. So an over-refunded bill and an unpaid one are each answered in
+   * their own words, and by the time the ceiling is read there is money here
+   * that genuinely came in.
+   */
+  const refundable = Math.round(invoice.paid * 100)
   const problem =
-    invoice.paid <= 0
-      ? 'Nothing has been paid on this bill, so nothing can be refunded.'
-      : typed === undefined
-        ? 'One of those amounts is not an amount in rupees.'
-        : entered.length === 0
-          ? 'Say how much is being refunded, and how.'
-          : typed > Math.round(invoice.paid * 100)
-            ? `${money(invoice.paid)} has been paid; more than that cannot be refunded.`
-            : reason.trim() === ''
-              ? 'Say why the money is going back.'
-              : undefined
+    invoice.paymentState === 'over_refunded'
+      ? 'More has already gone back out on this bill than ever came in. Another refund is refused; the accountant settles it.'
+      : invoice.paid <= 0
+        ? 'Nothing has been paid on this bill, so nothing can be refunded.'
+        : typed === undefined
+          ? 'One of those amounts is not an amount in rupees.'
+          : entered.length === 0
+            ? 'Say how much is being refunded, and how.'
+            : typed > refundable
+              ? `${money(invoice.paid)} has been paid; more than that cannot be refunded.`
+              : reason.trim() === ''
+                ? 'Say why the money is going back.'
+                : undefined
 
   async function commit() {
     const result = await run('refund_payment', {
@@ -1806,7 +1922,11 @@ function RefundAction({
         variant="danger"
         busy={busy}
         disabled={invoice.paid <= 0}
-        disabledReason="Nothing has been paid on this bill."
+        disabledReason={
+          invoice.paymentState === 'over_refunded'
+            ? 'More has already gone back out on this bill than came in. A further refund is refused; the accountant settles it.'
+            : 'Nothing has been paid on this bill.'
+        }
         onClick={() => setOpen(true)}
       >
         Refund money

@@ -31,7 +31,11 @@ const MAX_PAISE = 9_999_999_999_99
  * price is a typo or a unit confusion, and silently dropping it is how a
  * ₹1.005 becomes a rupee in one place and two in another.
  */
-export function parseMoney(input: unknown, label: string, { min = 0 }: { min?: number } = {}): Paise {
+export function parseMoney(
+  input: unknown,
+  label: string,
+  { min = 0, signed = false }: { min?: number; signed?: boolean } = {},
+): Paise {
   const raw = String(input ?? '').trim().replace(/^₹\s*/, '').replace(/,/g, '')
   if (raw === '') throw new Error(`${label} is required.`)
 
@@ -49,10 +53,34 @@ export function parseMoney(input: unknown, label: string, { min = 0 }: { min?: n
   if (!Number.isSafeInteger(paise) || Math.abs(paise) > MAX_PAISE) {
     throw new Error(`${label} is larger than this clinic's ledger can hold.`)
   }
-  if (paise < min * 100) {
+  if (!signed && paise < min * 100) {
     throw new Error(min === 0 ? `${label} cannot be negative.` : `${label} must be at least ₹${min}.`)
   }
   return paise
+}
+
+/**
+ * Read a DERIVED BALANCE back out of a `numeric` column. Signed.
+ *
+ * `parseMoney` defaults to `min: 0` because almost everything it reads is
+ * something a person typed at a counter, and a negative amount typed at a
+ * counter is a mistake. A balance computed by `jmc.invoice_balances` is not
+ * that. It is arithmetic over events, and arithmetic over events can come out
+ * below zero: refund ₹40 against a ₹100 payment and then reverse the payment,
+ * and what has been paid is minus forty rupees.
+ *
+ * Reading that with the input validator throws `amount paid cannot be
+ * negative` — which is a true sentence about an input and a useless one about
+ * a ledger. It is also worse than useless, because the throw happens inside
+ * the very command whose job is to tell the admin what is wrong with the bill,
+ * so the screen shows a parser complaint instead of the exception.
+ *
+ * So: amounts a person offers go through `parseMoney`, and amounts the ledger
+ * computed come back through here. The two are different questions and this is
+ * the line between them.
+ */
+export function parseBalance(input: unknown, label: string): Paise {
+  return parseMoney(input, label, { signed: true })
 }
 
 /** The same, but an absent value is allowed and comes back as undefined. */

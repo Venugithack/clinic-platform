@@ -336,6 +336,13 @@ export interface PaymentView {
  * `total`, `paid`, `due` and `paymentState` are derived from the lines and the
  * payment allocations every time they are read — `jmc.invoice_balances` — so
  * there is no status column that can disagree with the money.
+ *
+ * Which also means the arithmetic can land somewhere nobody intended.
+ * `over_refunded` is `paid` below zero: more money has gone back out than ever
+ * came in, usually a refund followed by the reversal of the payment it was
+ * refunding. It is not `unpaid` and taking payment will not resolve it — it is
+ * an accounting exception awaiting an admin or the clinic's accountant, and
+ * every screen that meets one says so rather than offering a counter action.
  */
 export interface InvoiceView {
   id: string
@@ -350,7 +357,7 @@ export interface InvoiceView {
   total: number
   paid: number
   due: number
-  paymentState: 'unpaid' | 'part_paid' | 'paid' | 'void'
+  paymentState: 'unpaid' | 'part_paid' | 'paid' | 'void' | 'over_refunded'
   lines: InvoiceLineView[]
   payments: PaymentView[]
 }
@@ -364,6 +371,14 @@ export interface PatientBalanceView {
   outstanding: number
   openInvoices: number
   oldestDueAt?: string
+  /**
+   * How many of this patient's bills are over-refunded, and by how much in
+   * total. `outstanding` already includes the money — an over-refunded bill
+   * has a `due` larger than its total — but without these a dues list reads
+   * as people to chase when one of the rows is a case to investigate.
+   */
+  overRefundedInvoices: number
+  overRefundedAmount: number
 }
 
 export interface BedView {

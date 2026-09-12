@@ -636,7 +636,20 @@ describe('numbers, retries and two counters at once', () => {
     await as(pharmacy, 'take_payment', { invoiceId: paidInvoice, parts: [{ method: 'cash', amount: 300 }] })
     await assert.rejects(
       as(admin, 'void_invoice', { invoiceId: paidInvoice, reason: 'Wrong patient' }),
-      /Refund the payment first/,
+      (error) => {
+        assert.match(error.message, /Refund the payment first/)
+        /*
+         * Two refusals, two different problems, and they must not be confused
+         * for one another. This bill is in credit to the CLINIC — ₹300 came in
+         * — and the instruction is to give it back. A bill in credit to the
+         * PATIENT is the other one: more went out than came in, nothing at a
+         * counter resolves it, and it says Over-refunded — financial
+         * correction required instead. An admin told to refund a payment that
+         * has already been refunded twice over would be sent round a loop.
+         */
+        assert.doesNotMatch(error.message, /Over-refunded/)
+        return true
+      },
     )
   })
 
