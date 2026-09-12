@@ -186,8 +186,14 @@ authorized quantity.
 
 ## H. Voiding, refunds, reversals, and the over-refunded bill
 
-Recorded 12 September 2026, after the administrator-corrections work met a bill
-against which more money had gone back out than ever came in.
+Items 49–57 were recorded on 12 September 2026, after the administrator-corrections
+work met a bill against which more money had gone back out than ever came in.
+
+Items 58–63 were recorded the same day, after the first attempt at enforcing
+those left two holes in it: the correction path *out* of an over-refund was
+refused by the rule meant to stop anybody entering one, and that same rule
+watched only one direction, so a cancelled bill could be walked back *up* into
+holding money. Neither reached the clinic.
 
 | # | Question | Approved policy | Status |
 |---:|---|---|---|
@@ -198,8 +204,14 @@ against which more money had gone back out than ever came in.
 | 53 | May anything be removed to tidy one of these away? | No. No payment, refund, allocation, invoice line or document number is silently erased, mutated or detached. A reversed or refunded receipt keeps its number and its place in the series, as item 24 requires of every cancelled document. | Approved |
 | 54 | How is a balance that may be negative read? | Derived balances are read with signed exact-money parsing. A ledger figure that can legitimately be below zero is never read by the validator that checks what a person typed at a counter, because that validator rejects negatives — and its refusal is a complaint about an input, printed at somebody who did not type one. | Approved |
 | 55 | Is an over-refunded bill simply unpaid? | No. It is its own derived state, and it is tested before voided so that a voided over-refund cannot hide behind the void. An unpaid bill is resolved by taking payment; this one is not, and filing the two in the same queue is how it comes to be ignored. | Approved |
-| 56 | How is an over-refunded bill finally cleared? | Any recovery from the patient, or any write-off, requires accountant approval and is recorded as an append-only event like every other correction. | Partial — the approval rule is decided; the recovery/write-off workflow itself is neither designed nor built, and no command in this release closes a row on the review queue |
+| 56 | How is an over-refunded bill finally cleared? | Any recovery from the patient, or any write-off, requires accountant approval and is recorded as an append-only event like every other correction. | Partial — the approval rule is decided; the recovery/write-off workflow itself is neither designed nor built, no command in this release closes a row on the review queue, and until it exists the reversals item 59 refuses on a voided bill have no approved way through either |
 | 57 | What is the tax treatment where GST applies? | Where GST applies, the credit/debit-note behaviour of a refund that exceeds the payment it reverses must be validated by the clinic accountant before production. | Evidence — clinic accountant's confirmation pending; nothing in this release issues, reverses or adjusts a tax document |
+| 58 | May the reversal of a refund be refused because the bill is still over-refunded afterwards? | No. Money going back OUT can only ever move a bill towards zero, so reversing an active refund is permitted even when the bill remains below zero after it. A bill at −₹80 carrying two ₹40 refunds is walked back one refund at a time and the first step lands on −₹40; refusing that step leaves the only exit from the state blocked by the rule that exists to stop anybody entering it. This is the correction path out of an over-refund and it stays open. | Approved |
+| 59 | What may be done to a bill after it has been voided? | Nothing that moves its balance. No receipt allocated to a voided bill may be reversed — refunds included — and no refund may be taken against one. A cancelled bill stays at net ₹0. This closes the case where ₹100 was taken, ₹100 refunded, the bill voided at zero and the refund then reversed, leaving a cancelled bill holding ₹100 of the patient's money and no screen that would ever mention it. Putting one right is the accountant-approved correction of item 56. | Partial — the refusal is decided and enforced; the correction that would lift it is item 56's workflow, which is neither designed nor built |
+| 60 | Does reversing an incoming payment stay refused when it would take a bill below zero? | Yes, unchanged from item 51. The result is computed for **every** invoice the receipt is allocated to, the whole reversal is refused atomically if any of them would fall below zero, and the refunds that have to be reversed first are named. Item 58's exception is for money going out and never for money coming in: reversing a payment is the one direction that can create an over-refund. | Approved |
+| 61 | How is a voided bill that is already off zero in the carried-over history reported? | As its own derived state, `void_with_balance` — status void and net allocated payment not ₹0, in **either** direction — tested before over-refunded, because of the two true things about a voided bill at −₹40 the one that tells somebody what to do is that it was cancelled with money still against it. Money held against a cancelled bill and money refunded past one are different errors; neither is hidden behind the word `void`, and both are carried on the financial review queue with their receipts. | Approved |
+| 62 | How do these refusals behave when two people act at once? | Row locks are taken in the order every other counter command takes them — the receipt, then its invoices in id order — and status and balance are read after the lock, so a void committing alongside a reversal is either already visible to it or waiting behind it. Every refusal is atomic and a refused command changes nothing at all: a receipt is one event and there is no partial reversal. | Approved |
+| 63 | Does anything invent a balancing entry to tidy one of these away? | No, and item 52 holds identically for the voided case. No adjustment line, no ₹0 correcting receipt, no netting the two directions off against each other, no automatic write-off. Both events stand, the bill is named on the review queue, and what happens to the money is item 56's. | Approved |
 
 An over-refund is not a mess to be swept up. It is two true statements about
 real money — a refund went out, and the receipt it was taken against turned out
@@ -208,6 +220,15 @@ the system owes is that a new one cannot be created silently, an old one cannot
 hide behind a void, and neither can be mistaken for an ordinary debt. What to do
 about the money is the accountant's, and items 56 and 57 say plainly that nobody
 has answered that yet.
+
+A cancelled bill that is not at zero is the same obligation read the other way.
+The document says nothing was owed and the ledger says money changed hands, and
+whichever direction it went in, that disagreement is not resolved by picking one
+of them. So it is refused rather than repaired: no receipt on it is reversed,
+nothing further is refunded against it, and it is named on the review queue in
+the direction it is actually out. The one refusal that is never added is the one
+that would close the way back — item 58 — because a rule that blocks the exit
+from a bad state is not caution, it is a trap.
 
 ---
 
@@ -231,16 +252,20 @@ invented by recommendation and remain clinic setup/acceptance tasks:
 6. The clinic accountant must define how an over-refunded bill is finally
    cleared (item 56): who approves a recovery or a write-off, what document it
    produces, and how it is recorded. Until then a bill stays on the financial
-   review queue and no command in the application closes it.
+   review queue and no command in the application closes it. The same missing
+   workflow is what item 59 refuses against — a receipt on a voided bill cannot
+   be reversed and nothing further can be refunded against one — so a cancelled
+   bill carried across off zero also waits on this.
 7. The clinic accountant must confirm the GST treatment of a refund that
    exceeds the payment it reverses (item 57): whether a credit or debit note is
    required, against which original document, and in whose name.
 
 Items 1–3 gate Slice 3 production acceptance. Item 4 gates the PIN-reset
-appointment. Item 5 gates print rollout. Items 6 and 7 gate *clearing* an
-over-refunded bill in production; they do not block the review queue itself,
-which only reports what the ledger already says. None of them block schema/UI
-work with guarded staging fixtures.
+appointment. Item 5 gates print rollout. Items 6 and 7 gate *clearing* a bill
+under financial review in production — over-refunded, or cancelled and not at
+zero; they do not block the review queue itself, which only reports what the
+ledger already says. None of them block schema/UI work with guarded staging
+fixtures.
 
 ---
 
@@ -258,9 +283,20 @@ work with guarded staging fixtures.
 - No automatic WhatsApp delivery.
 - No silent edit/delete of signed clinical, stock, payment, receipt, or image
   history.
-- No automatic balancing entry for an over-refunded bill. Both events stand,
-  the bill goes to the review queue, and the correction is an accountant's
-  decision rather than one the system makes for them.
+- No automatic balancing entry for an over-refunded bill, or for a cancelled
+  bill that is not at ₹0 in either direction. Both events stand, the bill goes
+  to the review queue, and the correction is an accountant's decision rather
+  than one the system makes for them.
+- No reversal of any receipt allocated to a voided bill, and no refund taken
+  against one, until an accountant-approved correction workflow exists. A
+  cancelled bill stays at net ₹0.
+- No voided bill left holding money quietly. A cancelled bill off zero is
+  detected and carried on the financial review queue whichever side of zero it
+  is on, and the word `void` is not allowed to stand in for the arithmetic.
+- No refusal of the reversal of a refund on the ground that the bill is still
+  below zero afterwards. That reversal only ever moves a bill towards zero and
+  it is the way back out; a rule that blocks the exit from a bad state is not a
+  safe default.
 
 ---
 

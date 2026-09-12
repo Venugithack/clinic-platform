@@ -337,12 +337,21 @@ export interface PaymentView {
  * payment allocations every time they are read — `jmc.invoice_balances` — so
  * there is no status column that can disagree with the money.
  *
- * Which also means the arithmetic can land somewhere nobody intended.
- * `over_refunded` is `paid` below zero: more money has gone back out than ever
- * came in, usually a refund followed by the reversal of the payment it was
- * refunding. It is not `unpaid` and taking payment will not resolve it — it is
- * an accounting exception awaiting an admin or the clinic's accountant, and
- * every screen that meets one says so rather than offering a counter action.
+ * Which also means the arithmetic can land somewhere nobody intended. Two
+ * states say so, and neither is resolved by anything a counter can do:
+ *
+ * `over_refunded` is `paid` below zero — more money has gone back out than
+ * ever came in, usually a refund followed by the reversal of the payment that
+ * refund answered. It is not `unpaid`, and taking payment will not close it.
+ *
+ * `void_with_balance` is a cancelled bill whose net payment is not zero, in
+ * EITHER direction: money still held against a bill nobody is charging for, or
+ * money refunded past one. Voiding now requires exactly zero and no receipt
+ * against a voided bill may be reversed, so this can only arrive from carried
+ * over history — which is precisely why it needs a name.
+ *
+ * Both are accounting exceptions awaiting an admin or the clinic's accountant,
+ * and every screen that meets one says so rather than offering an action.
  */
 export interface InvoiceView {
   id: string
@@ -357,7 +366,8 @@ export interface InvoiceView {
   total: number
   paid: number
   due: number
-  paymentState: 'unpaid' | 'part_paid' | 'paid' | 'void' | 'over_refunded'
+  paymentState:
+    | 'unpaid' | 'part_paid' | 'paid' | 'void' | 'over_refunded' | 'void_with_balance'
   lines: InvoiceLineView[]
   payments: PaymentView[]
 }
@@ -376,9 +386,27 @@ export interface PatientBalanceView {
    * total. `outstanding` already includes the money — an over-refunded bill
    * has a `due` larger than its total — but without these a dues list reads
    * as people to chase when one of the rows is a case to investigate.
+   *
+   * Counted on the money (`paid` below zero) rather than on the state word, so
+   * that a bill relabelled `void_with_balance` does not quietly drop out.
    */
   overRefundedInvoices: number
   overRefundedAmount: number
+  /**
+   * Cancelled bills that are not at zero, and the signed total of what sits
+   * against them — positive for money still held, negative for money refunded
+   * past the cancellation. These are NOT in `outstanding`: the money columns
+   * exclude voided bills, which is exactly how one could be carried across and
+   * never appear anywhere.
+   */
+  voidWithBalanceInvoices: number
+  voidWithBalanceAmount: number
+  /**
+   * How many of this patient's bills are on the financial review queue. The
+   * union of the two above, counted once — a voided bill that is also
+   * over-refunded is one case, not two.
+   */
+  underReviewInvoices: number
 }
 
 export interface BedView {

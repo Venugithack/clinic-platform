@@ -352,13 +352,13 @@ const REPORTS: ReportSpec[] = [
     id: 'financial_review',
     title: 'Financial review',
     question:
-      'Bills that more money has left than ever entered. These are exceptions waiting on the accountant, not bills to chase — nobody on them owes the clinic anything.',
+      'Bills the arithmetic has left somewhere nobody intended: bills more money has left than ever entered, and cancelled bills that still have money against them. These are exceptions waiting on the accountant, not bills to chase — nobody on them owes the clinic anything.',
     dated: false,
     sections: [
       {
         key: 'queue',
-        title: 'Over-refunded bills',
-        note: 'Usually a refund, and then the reversal of the payment that refund answered. The due figure on one of these is the over-refund itself.',
+        title: 'Bills under review',
+        note: 'An over-refunded bill is usually a refund and then the reversal of the payment that refund answered; the due figure on one of these is the over-refund itself. A cancelled bill with money on it — held against it, or gone back out past it — can only have come across with the old records: voiding now needs a bill at exactly nothing, and no receipt against a voided bill can be reversed.',
         ranged: false,
       },
       {
@@ -369,8 +369,8 @@ const REPORTS: ReportSpec[] = [
       },
       {
         key: 'patients',
-        title: 'Patients carrying an over-refund',
-        note: 'Their outstanding figure in Patient dues includes this money. It is not a debt and none of them should be asked for it.',
+        title: 'Patients with a bill under review',
+        note: 'An over-refund is inside their outstanding figure in Patient dues; money on a cancelled bill is in none of those figures, because voided bills are left out of them. Neither is a debt and none of them should be asked for it.',
         ranged: false,
       },
     ],

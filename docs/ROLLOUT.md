@@ -21,7 +21,7 @@ Read §1 before doing anything else.
 | Pushed | **No.** Nothing in this programme has left this machine. |
 | Deployed | **No.** No migration has been applied to the clinic, no function deployed, no secret changed. |
 | Verified | On guarded local staging: a disposable PostgreSQL 17, synthetic fixtures, and the real code. |
-| Not verified | Anything that needs the clinic's own data, a real printer, real tablets on clinic Wi-Fi, Supabase's Storage bucket policy, a CI runner, or the clinic accountant — the recovery/write-off workflow for an over-refunded bill and the GST credit/debit-note treatment are theirs to settle and neither has been read by one. §7 lists every one. |
+| Not verified | Anything that needs the clinic's own data, a real printer, real tablets on clinic Wi-Fi, Supabase's Storage bucket policy, a CI runner, or the clinic accountant — the recovery/write-off workflow for a bill under financial review (over-refunded, or cancelled and not at ₹0, which is also what the refusals on a voided bill wait for) and the GST credit/debit-note treatment are theirs to settle and neither has been read by one. §7 lists every one. |
 
 Applied migrations are immutable. Everything here is forward-only.
 
@@ -99,7 +99,7 @@ Write the answers down. §6 compares against them.
 
 ## 3. Applying it
 
-Five migrations, in this order, each once:
+Six migrations, in this order, each once:
 
 ```text
 20260911210000_slice2_1_1_resolution_scope.sql
@@ -107,6 +107,7 @@ Five migrations, in this order, each once:
 20260913000000_slice4_dispensing_billing_payments.sql
 20260914000000_slice5_clinical_images.sql
 20260915000000_financial_edge_states.sql
+20260916000000_void_balance_and_review_queue.sql
 ```
 
 (Slice 2 and 2.1 are already in the set; if the clinic is behind, apply from
@@ -115,7 +116,7 @@ wherever it actually is.)
 **Every one must run inside a transaction**, so that a file which fails halfway
 leaves nothing behind.
 
-None of these five relies on `set local search_path = jmc`, and that is
+None of these six relies on `set local search_path = jmc`, and that is
 deliberate: every object in them is written `jmc.`-qualified instead. The
 clinic's *earlier* migrations do begin with that line, and it is the reason the
 transaction rule was written down in the first place — `SET LOCAL` outside a
@@ -145,6 +146,7 @@ supabase functions deploy      # command, snapshot, login, logout, register,
 | Slice 4 | Gives every prescription a `valid_until` of signing + 7 days. Moves every `bills` row into an invoice, a line and (where paid) a payment; **empties `jmc.bills` and leaves it standing** as a tombstone. Sets the clinic consultation fee to ₹300 only where none is configured. Builds `otc_lines` from `lines_json`. |
 | Slice 5 | Nothing. New tables only. |
 | Financial edge states | **Nothing, and that is the point.** Views only: `invoice_balances` and `patient_balances` are replaced and `financial_review_queue` is created. No table, column, constraint or row is touched. Any over-refunded bill it puts on the queue was already over-refunded before it ran; what changes is that the application can now say so. |
+| Void balance and review queue | **Nothing either, and for the same reason.** Views only: `invoice_balances` and `patient_balances` are replaced again, and `financial_review_queue` is **dropped and rebuilt** — its `over_refunded_by` column is gone, replaced by `review_state`, a signed `paid` and `out_of_balance`. No table, column, constraint or row is touched. Any cancelled bill it puts on the queue was already off zero before it ran. The drop takes the view's grants with it, so the migration re-states the `revoke` rather than assuming it survived — §6's last query is the one that proves it did. |
 
 The `valid_until` backfill deserves a sentence: every existing prescription is
 long past signing + 7, so on the morning after the migration the pharmacy
@@ -193,16 +195,20 @@ reconcile daily **before** cutover. Every figure below has a report behind it.
 | Cash, UPI and card | `payments` + Day book | The drawer and the UPI statement |
 | Patient dues | `patient_dues` | The credit register |
 | Outstanding prescriptions | `outstanding_prescriptions` | What is waiting behind the counter |
-| Over-refunded bills | `financial_review` | The refund receipts and the drawer/UPI statement they went out on. Not a counter's to clear: the admin or accountant, and §8 |
+| Over-refunded bills | `financial_review`, rows reading `over_refunded` | The refund receipts and the drawer/UPI statement they went out on. Not a counter's to clear: the admin or accountant, and §8 |
+| Cancelled bills not at ₹0 | `financial_review`, rows reading `void_with_balance` | The void reason and every receipt behind the bill. `paid` is signed: above zero is money the clinic is holding against a bill it says was never owed, below zero is money refunded past one. Neither is a counter's to clear either |
 
 A day that does not reconcile is a day to stop and find out why, not a day to
 carry forward.
 
-The last line is the exception to that instruction, and only that far: a row on
-`financial_review` is not a day's reconciliation failure to be chased before
-closing. It is a bill against which more went out than came in, it may well be
-older than the system, and it stops being the counter's business the moment it
-appears. Note it, carry the day forward, and give it to whoever keeps the books.
+The last two lines are the exception to that instruction, and only that far: a
+row on `financial_review` is not a day's reconciliation failure to be chased
+before closing. It is a bill whose money does not agree with the document it is
+attached to — more went out than came in, or it was cancelled and did not land
+on zero — it may well be older than the system, and it stops being the counter's
+business the moment it appears. Note it, carry the day forward, and give it to
+whoever keeps the books. `review_state` on the row says which of the two it is,
+so nobody has to work it out from the sign of a number.
 
 ---
 
@@ -228,19 +234,40 @@ select count(*) from (
   select encounter_id from jmc.invoice_lines
    where source = 'consultation_fee' group by 1 having count(*) > 1) d;       -- 0
 
--- No bill has had more money taken back out of it than ever went in. `paid`
--- below zero and a `due` larger than the bill are the same fact said twice; a
--- non-zero here is not a migration failure but history, and it is the one line
--- in this list nobody at the counter can clear — voiding such a bill is
--- refused, and taking payment against it would charge the patient for the
--- clinic's own error. Every one of them, with the receipts behind it, is in
--- jmc.financial_review_queue, which is what the admin `financial_review`
--- report reads. It goes to the accountant (policy register 52, 56, 57).
--- The two figures are the same count asked two ways; they must agree.
+-- No bill has had more money taken back out of it than ever went in, and no
+-- cancelled bill is off zero. Two different wrongnesses, and four figures: one
+-- for each, then their union, then the queue that has to equal the union.
+--
+-- `paid` below zero and a `due` larger than the bill are the same fact said
+-- twice, which is why the first figure asks for both: if they ever disagreed
+-- the arithmetic in the view would be broken, not the data. The second is the
+-- voids that did not land on zero in EITHER direction — above zero is money
+-- held against a bill that says nothing was owed, below zero is money refunded
+-- past one — and since a void is only ever permitted at exactly ₹0, any of
+-- these came out of the carried-over history rather than out of this system.
+--
+-- A non-zero here is not a migration failure. It is history, and these are the
+-- lines in this list nobody at the counter can clear: voiding an over-refund is
+-- refused, taking payment against one would charge the patient for the clinic's
+-- own error, and on a cancelled bill both reversing one of its receipts and
+-- refunding the balance away are refused too. Every one of them, with the
+-- receipts behind it, is in jmc.financial_review_queue, which is what the admin
+-- `financial_review` report reads. It goes to the accountant (policy register
+-- 52 and 56–63).
+--
+-- The third figure is the queue's own membership test asked of the balances, so
+-- it and the queue must agree whatever they are. It is NOT the first two added
+-- together: a cancelled bill that is also over-refunded is in both of those and
+-- on the queue exactly once.
 select
   (select count(*) from jmc.invoice_balances
-    where paid < 0 or due > total)              as over_refunded,
-  (select count(*) from jmc.financial_review_queue) as on_the_review_queue;  -- 0, 0
+    where paid < 0 or due > total)                     as over_refunded,
+  (select count(*) from jmc.invoice_balances
+    where status = 'void' and paid <> 0)               as void_off_zero,
+  (select count(*) from jmc.invoice_balances
+    where paid < 0 or (status = 'void' and paid <> 0)) as under_review,
+  (select count(*) from jmc.financial_review_queue)    as on_the_review_queue;
+  -- 0, 0, 0, 0 — and under_review = on_the_review_queue even when they are not
 
 -- No document number was issued twice.
 select count(*) from (
@@ -264,7 +291,7 @@ select count(*) from information_schema.role_table_grants
 | The classification of the clinic's actual medicines, and the controlled-drug register | Cannot be invented. | Pharmacist — I.3 |
 | Dr. Jayamurugan's production admin role | Nothing here queries production. | Owner — I.4 |
 | A4 and 80 mm printing: margins, long medicine names, page breaks, reprint marking | No printer here. Print layout is checked only in a browser. | Clinic — I.5 |
-| How an over-refunded bill is finally cleared | The recovery/write-off workflow is neither designed nor built. `financial_review` reports the queue; no command in the application closes a row on it, and none invents a balancing entry. | Clinic accountant — I.6, policy item 56 |
+| How a bill under financial review is finally cleared — over-refunded, or cancelled and not at ₹0 | The recovery/write-off workflow is neither designed nor built. `financial_review` reports the queue; no command in the application closes a row on it, and none invents a balancing entry. The same missing workflow is what the refusals on a **voided** bill are waiting for: no receipt allocated to one may be reversed and nothing may be refunded against one, so a cancelled bill carried across off zero has no approved way forward at all until an accountant defines one. That is deliberate — every available repair would be a correction nobody has signed off — but it does mean the queue is a list with no exit in this release. | Clinic accountant — I.6, policy items 56 and 59 |
 | The GST treatment of a refund that exceeds the payment it reverses | Whether a credit or debit note is required, against which original document, and in whose name. Nothing in this release issues, reverses or adjusts a tax document, and no accountant has read any of it. | Clinic accountant — I.7, policy item 57 |
 | Supabase Storage bucket policy: private, anonymous reads refused, service key not exposed | Staging writes to a directory; it exercises this application's rules, not Supabase's. | Deployment |
 | The deployed database role's attributes | §7.4 of `SCHEMA_AND_TYPES.md`. The application is tested against the pessimistic case — `NOSUPERUSER NOBYPASSRLS` — so it works either way, but what the role actually is has never been read. | Deployment |
@@ -296,7 +323,7 @@ cutover, pull one object down by hand, decrypt it with the age identity, and
 restore it. That is the backup you will actually reach for.
 
 **A migration failed part-way.** It cannot have. Each runs in one transaction,
-so it either applied or it did not. Check which of the five are present
+so it either applied or it did not. Check which of the six are present
 (`select * from supabase_migrations.schema_migrations`) and fix forward.
 
 **The application is broken and the data is fine.** Roll back the functions,
@@ -320,11 +347,12 @@ trigger will stop you, and it is right to.
 
 **A bill says `over_refunded`.** More money has gone back out on it than ever
 came in — classically a refund that stands and a receipt that turned out never
-to have settled — and it is the one wrongness on this page that the application
-will not let you correct. Voiding it is refused: a void would close the only
-record of where the money went. Taking payment against it is refused too, since
-`due` on such a bill is larger than the bill and collecting it would charge the
-patient for the clinic's own error. Both refusals say the same thing —
+to have settled — and it is one of the two wrongnesses on this page that the
+application will not let you correct (the other is below, and both end up on the
+same queue). Voiding it is refused: a void would close the only record of where
+the money went. Taking payment against it is refused too, since `due` on such a
+bill is larger than the bill and collecting it would charge the patient for the
+clinic's own error. Both refusals say the same thing —
 *Over-refunded — financial correction required* — and neither changes anything.
 
 So do not invent a balancing entry. There is no adjustment line, no ₹0
@@ -343,6 +371,41 @@ refuses when it would take any of its bills below zero and names the refunds to
 reverse first, so this cannot be created going forward — but a bill that
 acquired it before the migration, or carried it across from the old data, is
 still on the queue and still the accountant's.
+
+Reversing a **refund** is never refused for this reason, and that is worth
+knowing before you conclude the bill is stuck. Money going back out only ever
+moves a bill towards zero, so a bill at −₹80 carrying two ₹40 refunds is walked
+back one refund at a time even though the first step lands on −₹40 and is still
+an over-refund. An earlier commit in this branch did refuse that step, which
+left the only way out of the state blocked by the rule meant to stop anybody
+entering it. It never reached the clinic — nothing here has — and policy
+register 58 settles it: the refusal is gone.
+
+**A bill says `void_with_balance`.** It was cancelled, and it is not at zero.
+`paid` is signed and says which way: above zero is money the clinic took and is
+still holding against a bill that says nothing was owed; below zero is money
+refunded past a cancelled bill. A void is permitted only at exactly ₹0, so this
+cannot be created here — every one of them came across with the history, and the
+reason it has a word at all is that `void` would otherwise have filed it under
+closed and nobody would have looked at it again.
+
+Both obvious repairs are refused, and it is worth knowing why before going to
+find the button. **Reversing one of its receipts** is refused, whichever
+direction that receipt went: the receipts behind a bill voided at zero net to
+nothing, so undoing any one of them is precisely what moves the bill off zero.
+That is how this state used to be reachable, not how it is escaped.
+**Refunding the balance away** is refused too, and that one looks much more like
+a repair — the clinic is holding ₹100 nobody owed, hand it back. But it is a
+correction posted against a cancelled document, and which document the money
+should go back on, whether it is a refund at all rather than a write-off, and
+what it does to a tax return where GST applies are the accountant's questions,
+not the counter's. Both refusals name the bill, change nothing, and say the bill
+is on the financial review queue.
+
+So the same instruction as above, for the same reason: open `financial_review`
+(admin), where these rows read `void_with_balance`, worst first with every
+receipt attached, and give it to whoever keeps the books. Clearing it needs item
+56's workflow, which does not exist: policy register 56, 59 and 61, and §7.
 
 **Somebody lost a tablet.** Admin → Staff → revoke that person's sessions and
 reset their PIN. Image tickets die with the session; patient data is

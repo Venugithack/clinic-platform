@@ -107,12 +107,16 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
    * total, and counting it here would put money the clinic has already sent
    * back out into the figure for money the clinic is waiting to be given. It
    * is held out and said separately.
+   *
+   * A cancelled bill with money still on it is held out by `status` before any
+   * of that, so it can never reach the owing figure — but it is counted over
+   * every bill rather than over the live ones, because a count that comes from
+   * `liveInvoices` would say nothing about it at all, on the one screen a
+   * doctor or nurse reads in the morning.
    */
   const liveInvoices = data.invoices.filter((item) => item.status !== 'void')
-  const overRefunded = liveInvoices.filter((item) => item.paymentState === 'over_refunded')
-  const owing = liveInvoices.filter(
-    (item) => item.due > 0 && item.paymentState !== 'over_refunded',
-  )
+  const underReview = data.invoices.filter(isUnderReview)
+  const owing = liveInvoices.filter((item) => item.due > 0 && !isUnderReview(item))
   const outstanding = owing.reduce((sum, item) => sum + item.due, 0)
   const occupied = data.beds.filter((item) => item.status === 'occupied')
   const attention = [...low].slice(0, 5)
@@ -153,8 +157,8 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
           label="Bills owing"
           value={owing.length}
           note={
-            overRefunded.length > 0
-              ? `${money(outstanding)} still due · ${overRefunded.length} over-refunded ${overRefunded.length === 1 ? 'bill is' : 'bills are'} left out and waiting on Billing`
+            underReview.length > 0
+              ? `${money(outstanding)} still due · ${underReview.length} ${underReview.length === 1 ? 'bill is' : 'bills are'} under review, left out of that figure and waiting on Billing`
               : `${money(outstanding)} still due`
           }
         />
@@ -1139,6 +1143,14 @@ export const SOURCE_LABEL: Record<InvoiceLineView['source'], string> = {
  * has to do something about. It is the word that says which: a bill nobody has
  * paid and a bill more money has left than ever entered are not the same
  * problem, and only one of them is settled at a counter.
+ *
+ * `void_with_balance` takes the same `stop` for the same reason, which means
+ * two states now share the strongest tone. That is the point of the tone: both
+ * are arithmetic nobody intended and both wait on the same two people, so a
+ * reader scanning the register sees one colour for "somebody has to look at
+ * this" and then reads the word for what it is. `void` keeps `plain` — a
+ * cancelled bill at nothing is a closed matter, and a cancelled bill with
+ * money on it is not, so they must not read alike from across the room.
  */
 const PAYMENT_STATE: Record<InvoiceView['paymentState'], { word: string; tone: Tone }> = {
   unpaid: { word: 'Unpaid', tone: 'stop' },
@@ -1146,6 +1158,37 @@ const PAYMENT_STATE: Record<InvoiceView['paymentState'], { word: string; tone: T
   paid: { word: 'Paid', tone: 'free' },
   void: { word: 'Void', tone: 'plain' },
   over_refunded: { word: 'Over-refunded', tone: 'stop' },
+  void_with_balance: { word: 'Void with money', tone: 'stop' },
+}
+
+/**
+ * Is this bill an accounting exception rather than a stage of collection?
+ *
+ * Both states say the arithmetic landed somewhere nobody intended, and neither
+ * is resolved by anything a counter or an admin button can do — they are
+ * settled by a correction an administrator and the clinic's accountant agree
+ * between them. A screen asking "may I offer an action on this bill?" asks
+ * this, rather than naming one of the two states: naming one is exactly how
+ * the first exception came to be handled on every screen and the second on
+ * none of them.
+ */
+export function isUnderReview(invoice: Pick<InvoiceView, 'paymentState'>): boolean {
+  return invoice.paymentState === 'over_refunded' || invoice.paymentState === 'void_with_balance'
+}
+
+/**
+ * The money left on a cancelled bill, said as what it actually is.
+ *
+ * The figure is signed on purpose: above zero is money the clinic still holds
+ * against a bill it is not charging anybody for, below zero is money that went
+ * back out past one. Those need opposite sentences, so the sign is read in one
+ * place rather than at each figure that prints it.
+ */
+export function voidBalanceWords(amount: number, count: number): string {
+  const bills = count === 1 ? 'a cancelled bill' : 'cancelled bills'
+  if (amount > 0) return `${money(amount)} is still held against ${bills}`
+  if (amount < 0) return `${money(-amount)} went back out past ${bills}`
+  return `money sits on both sides of zero against ${bills} and nets out to nothing`
 }
 
 /** The bill's state as a word. The tone repeats it; it never replaces it. */
@@ -1555,7 +1598,8 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
   const admin = data.session.roles.includes('admin')
   const live = data.invoices.filter((invoice) => invoice.status !== 'void')
   /*
-   * The exception, held apart from the money the clinic is owed.
+   * The two exceptions, held apart from the money the clinic is owed — and
+   * counted over every bill rather than over `live`.
    *
    * An over-refunded bill has a `paid` below zero, so its `due` is bigger than
    * its own total and it reads exactly like a large unpaid bill. It is not
@@ -1563,22 +1607,59 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
    * and no payment closes it. Counting it as owing inflates the day's
    * outstanding with money nobody is going to bring in. The magnitude is
    * `-paid` — what went out beyond what ever came in.
+   *
+   * A cancelled bill that is not at nothing has the opposite trouble. `live`
+   * drops every voided bill, which is right for what is owed and wrong for
+   * what needs looking at: counted that way the exception is nowhere on this
+   * screen at all — not in the header, not in the notice, not in a figure —
+   * and the only mark of it is a badge in the register that a reader has to
+   * happen upon. So both exceptions are counted out of `data.invoices`.
+   *
+   * The two states are exclusive, `void_with_balance` being decided first, so
+   * a bill is in one list or the other and the queue is the two added up.
    */
-  const overRefunded = live.filter((invoice) => invoice.paymentState === 'over_refunded')
+  const overRefunded = data.invoices.filter((invoice) => invoice.paymentState === 'over_refunded')
   const overRefundedAmount = overRefunded.reduce((total, invoice) => total - invoice.paid, 0)
-  const owing = live.filter(
-    (invoice) => invoice.due > 0 && invoice.paymentState !== 'over_refunded',
+  const voidWithBalance = data.invoices.filter(
+    (invoice) => invoice.paymentState === 'void_with_balance',
   )
+  /* Split by direction, because one of these is money the clinic is sitting on
+     and the other is money it has already let go, and a net figure across the
+     two would describe neither. */
+  const voidHeld = voidWithBalance.filter((invoice) => invoice.paid > 0)
+  const voidRefundedPast = voidWithBalance.filter((invoice) => invoice.paid < 0)
+  const voidHeldAmount = voidHeld.reduce((total, invoice) => total + invoice.paid, 0)
+  const voidRefundedPastAmount = voidRefundedPast.reduce((total, invoice) => total - invoice.paid, 0)
+  const underReviewCount = overRefunded.length + voidWithBalance.length
+  const bothKinds = overRefunded.length > 0 && voidWithBalance.length > 0
+  /* The words the register actually shows today, so the notice sends a reader
+     looking for a badge that is down there rather than one that is not. */
+  const reviewMarks = bothKinds
+    ? 'Over-refunded or Void with money'
+    : overRefunded.length > 0
+      ? 'Over-refunded'
+      : 'Void with money'
+  const owing = live.filter((invoice) => invoice.due > 0 && !isUnderReview(invoice))
   const voided = data.invoices.filter((invoice) => invoice.status === 'void')
   const outstanding = owing.reduce((total, invoice) => total + invoice.due, 0)
   const owedByPatients = data.patientBalances.reduce(
     (total, balance) => total + balance.outstanding,
     0,
   )
-  /* The same money seen from the patient's side: it sits inside `outstanding`
-     on their row, which is why the row has to say so. */
+  /* The same money seen from the patient's side: the over-refund sits inside
+     `outstanding` on their row, which is why the row has to say so. The money
+     on a cancelled bill does not — the view's money columns leave voided bills
+     out — so that one has to be said for the opposite reason. */
   const overRefundedByPatients = data.patientBalances.reduce(
     (total, balance) => total + balance.overRefundedAmount,
+    0,
+  )
+  const voidWithBalanceByPatients = data.patientBalances.reduce(
+    (total, balance) => total + balance.voidWithBalanceAmount,
+    0,
+  )
+  const voidWithBalanceBillsByPatients = data.patientBalances.reduce(
+    (total, balance) => total + balance.voidWithBalanceInvoices,
     0,
   )
 
@@ -1590,7 +1671,7 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
       <PageHeader
         eyebrow="Collected at the clinic"
         title="Billing"
-        sub={`${owing.length} bills owing · ${money(outstanding)} outstanding · ${data.patientBalances.length} patients carrying a balance${overRefunded.length > 0 ? ` · ${overRefunded.length} under financial review` : ''}`}
+        sub={`${owing.length} bills owing · ${money(outstanding)} outstanding · ${data.patientBalances.length} patients carrying a balance${underReviewCount > 0 ? ` · ${underReviewCount} under financial review` : ''}`}
         action={
           <Button onClick={() => window.print()} title="Opens this tablet's own print sheet">
             Print register
@@ -1598,17 +1679,44 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
         }
       />
 
-      {overRefunded.length > 0 ? (
+      {/* One notice, two kinds, each said in its own sentence. They share a
+          closing because they share an ending: neither is money owed and
+          neither is closed from this screen. */}
+      {underReviewCount > 0 ? (
         <div data-print="hide">
           <Notice tone="bad">
-            {overRefunded.length === 1
-              ? `One bill is over-refunded: ${money(overRefundedAmount)} more has gone back out on it than ever came in.`
-              : `${overRefunded.length} bills are over-refunded: ${money(overRefundedAmount)} more has gone back out on them than ever came in.`}{' '}
-            That is not money owed, so it is kept out of the figures beside this. Nothing can be
-            collected at the counter, and nothing on this screen closes an over-refunded bill: it
-            is settled by a correction an administrator and the clinic&rsquo;s accountant agree
-            between them. The register below marks{' '}
-            {overRefunded.length === 1 ? 'it' : 'each of them'} Over-refunded.
+            {overRefunded.length > 0 ? (
+              <>
+                {overRefunded.length === 1
+                  ? `One bill is over-refunded: ${money(overRefundedAmount)} more has gone back out on it than ever came in.`
+                  : `${overRefunded.length} bills are over-refunded: ${money(overRefundedAmount)} more has gone back out on them than ever came in.`}{' '}
+              </>
+            ) : null}
+            {voidWithBalance.length > 0 ? (
+              <>
+                {voidWithBalance.length === 1
+                  ? 'One cancelled bill is not at nothing.'
+                  : `${voidWithBalance.length} cancelled bills are not at nothing.`}{' '}
+                {voidHeld.length > 0
+                  ? `${money(voidHeldAmount)} is still held against ${voidHeld.length === 1 ? 'a bill' : 'bills'} nobody is being charged for. `
+                  : ''}
+                {voidRefundedPast.length > 0
+                  ? `${money(voidRefundedPastAmount)} went back out past ${voidRefundedPast.length === 1 ? 'a bill' : 'bills'} already cancelled. `
+                  : ''}
+                Voiding now needs a bill at exactly nothing, and no receipt against a voided bill
+                can be reversed, so {voidWithBalance.length === 1 ? 'this' : 'each of these'} came
+                across with the old records rather than happening here.{' '}
+              </>
+            ) : null}
+            {bothKinds
+              ? 'Neither kind is money owed, so both are kept out of the figures beside this.'
+              : underReviewCount === 1
+                ? 'That is not money owed, so it is kept out of the figures beside this.'
+                : 'None of that is money owed, so it is kept out of the figures beside this.'}{' '}
+            Nothing can be collected at the counter, and nothing on this screen closes a bill in
+            this state: it is settled by a correction an administrator and the clinic&rsquo;s
+            accountant agree between them. The register below marks{' '}
+            {underReviewCount === 1 ? 'it' : 'each of them'} {reviewMarks}.
           </Notice>
         </div>
       ) : null}
@@ -1618,8 +1726,8 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
           label="Bills owing"
           value={owing.length}
           note={
-            overRefunded.length > 0
-              ? `${money(outstanding)} across every open bill, the over-refunded ones apart`
+            underReviewCount > 0
+              ? `${money(outstanding)} across every open bill, the ${underReviewCount === 1 ? 'one' : underReviewCount} under review apart`
               : `${money(outstanding)} across every open bill`
           }
         />
@@ -1627,15 +1735,25 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
           label="Patients carrying a balance"
           value={data.patientBalances.length}
           note={
-            overRefundedByPatients > 0
-              ? `${money(owedByPatients)} against their names, of which ${money(overRefundedByPatients)} is over-refunded and not owed`
+            overRefundedByPatients > 0 || voidWithBalanceBillsByPatients > 0
+              ? `${money(owedByPatients)} against their names${overRefundedByPatients > 0 ? `, of which ${money(overRefundedByPatients)} is over-refunded and not owed` : ''}${
+                  voidWithBalanceBillsByPatients > 0
+                    ? `; ${voidBalanceWords(voidWithBalanceByPatients, voidWithBalanceBillsByPatients)}, outside this figure altogether`
+                    : ''
+                }`
               : `${money(owedByPatients)} owed to the clinic`
           }
         />
+        {/* Voided bills are ordinarily the quietest tile on this screen, which
+            is exactly why one with money still on it has to be named here. */}
         <Stat
           label="Bills voided"
           value={voided.length}
-          note="They keep their number and stay on the record"
+          note={
+            voidWithBalance.length > 0
+              ? `They keep their number and stay on the record · ${voidWithBalance.length === 1 ? 'one is not at nothing and is under review' : `${voidWithBalance.length} are not at nothing and are under review`}`
+              : 'They keep their number and stay on the record'
+          }
         />
       </div>
 
@@ -1725,6 +1843,23 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
               </Notice>
             ) : null}
 
+            {/* The other exception, and the one where Due is beside the point:
+                a cancelled bill charges nobody anything, so the figure to read
+                on this card is Paid. The sentence says which way it points. */}
+            {open.paymentState === 'void_with_balance' ? (
+              <Notice tone="bad">
+                {open.paid > 0
+                  ? `${money(open.paid)} is still held against this bill, and the bill was cancelled — so the clinic is holding money for something it is not charging anybody for.`
+                  : `${money(-open.paid)} went back out on this bill after it was cancelled — so money left the drawer against a bill that was already charging nobody anything.`}{' '}
+                Due below is not the story; nothing is owed on a cancelled bill. Voiding now needs a
+                bill at exactly nothing and no receipt against a voided bill can be reversed, so
+                this came across with the old records rather than happening here. Taking payment,
+                refunding and voiding again are all refused: an administrator and the clinic&rsquo;s
+                accountant settle it between them, and the receipts below are the record of how it
+                got here.
+              </Notice>
+            ) : null}
+
             <InvoiceLines invoice={open} />
 
             <div className="grid grid-cols-3 gap-3">
@@ -1765,17 +1900,19 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                       lost.
                     </>
                   }
-                  disabled={
-                    open.status === 'void' ||
-                    open.paid > 0 ||
-                    open.paymentState === 'over_refunded'
-                  }
+                  disabled={open.status === 'void' || open.paid > 0 || isUnderReview(open)}
+                  /* "Already void" is true of a void-with-balance bill and no
+                     use to the person reading it: it invites them to close the
+                     card on a bill that still needs somebody. It gets its own
+                     sentence, before the plain one. */
                   disabledReason={
-                    open.status === 'void'
-                      ? 'This bill is already void.'
-                      : open.paymentState === 'over_refunded'
-                        ? 'This bill is over-refunded and under financial review. It is settled by a correction the accountant approves, not by voiding.'
-                        : 'Money has been taken against this bill. Refund it first.'
+                    open.paymentState === 'void_with_balance'
+                      ? 'This bill is already void, and it still has money against it. That is under financial review — a correction the accountant approves, not a second void.'
+                      : open.status === 'void'
+                        ? 'This bill is already void.'
+                        : open.paymentState === 'over_refunded'
+                          ? 'This bill is over-refunded and under financial review. It is settled by a correction the accountant approves, not by voiding.'
+                          : 'Money has been taken against this bill. Refund it first.'
                   }
                   onConfirm={(reason) => run('void_invoice', { invoiceId: open.id, reason })}
                 >
@@ -1827,16 +1964,37 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                 <TR key={balance.patientId}>
                   {/* Outstanding already carries the over-refund, which is how
                       a person who owes the clinic nothing can appear on a dues
-                      list. The row has to say so where the name is read. */}
+                      list. The row has to say so where the name is read.
+                      The money on a cancelled bill is the opposite case and
+                      needs saying for the opposite reason: the view's money
+                      columns leave voided bills out, so that figure is in none
+                      of the numbers on this row and adding it would be wrong.
+                      It is stated, not added. */}
                   <TD className="font-semibold">
                     {balance.patientName}
-                    {balance.overRefundedInvoices > 0 ? (
+                    {balance.underReviewInvoices > 0 ? (
                       <span className="mt-0.5 block text-[11px] leading-snug font-normal text-stop">
-                        {balance.overRefundedInvoices === 1
-                          ? 'One bill over-refunded'
-                          : `${balance.overRefundedInvoices} bills over-refunded`}{' '}
-                        · {money(balance.overRefundedAmount)} of the outstanding figure is that,
-                        not money to ask for
+                        {balance.underReviewInvoices === 1
+                          ? 'One bill under review'
+                          : `${balance.underReviewInvoices} bills under review`}
+                        {balance.overRefundedInvoices > 0 ? (
+                          <>
+                            {' '}
+                            · {money(balance.overRefundedAmount)} over-refunded, inside the
+                            outstanding figure and not money to ask for
+                          </>
+                        ) : null}
+                        {balance.voidWithBalanceInvoices > 0 ? (
+                          <>
+                            {' '}
+                            ·{' '}
+                            {voidBalanceWords(
+                              balance.voidWithBalanceAmount,
+                              balance.voidWithBalanceInvoices,
+                            )}
+                            , which none of the figures on this row include
+                          </>
+                        ) : null}
                       </span>
                     ) : null}
                   </TD>
@@ -1877,30 +2035,34 @@ function RefundAction({
   const typed = partsTotal(parts)
   const entered = partsPayload(parts)
   /*
-   * The ceiling, in paise, and why the two branches above it come first.
+   * The ceiling, in paise, and why the branches above it come first.
    *
    * On an over-refunded bill `paid` is below zero, and "-₹40.00 has been paid;
    * more than that cannot be refunded" is not a sentence anybody can act on —
    * it invites a smaller refund, which is the opposite of what this bill
-   * needs. So an over-refunded bill and an unpaid one are each answered in
-   * their own words, and by the time the ceiling is read there is money here
-   * that genuinely came in.
+   * needs. A void-with-balance bill can be the other way about: its `paid` is
+   * above zero and the ceiling would happily allow a refund the server refuses,
+   * so it is answered before the arithmetic is consulted at all. Each of the
+   * three is answered in its own words, and by the time the ceiling is read
+   * there is money here that genuinely came in and may genuinely go back.
    */
   const refundable = Math.round(invoice.paid * 100)
   const problem =
-    invoice.paymentState === 'over_refunded'
-      ? 'More has already gone back out on this bill than ever came in. Another refund is refused; the accountant settles it.'
-      : invoice.paid <= 0
-        ? 'Nothing has been paid on this bill, so nothing can be refunded.'
-        : typed === undefined
-          ? 'One of those amounts is not an amount in rupees.'
-          : entered.length === 0
-            ? 'Say how much is being refunded, and how.'
-            : typed > refundable
-              ? `${money(invoice.paid)} has been paid; more than that cannot be refunded.`
-              : reason.trim() === ''
-                ? 'Say why the money is going back.'
-                : undefined
+    invoice.paymentState === 'void_with_balance'
+      ? 'This bill is void and still has money against it. Refunding against a cancelled bill is refused; the accountant settles it.'
+      : invoice.paymentState === 'over_refunded'
+        ? 'More has already gone back out on this bill than ever came in. Another refund is refused; the accountant settles it.'
+        : invoice.paid <= 0
+          ? 'Nothing has been paid on this bill, so nothing can be refunded.'
+          : typed === undefined
+            ? 'One of those amounts is not an amount in rupees.'
+            : entered.length === 0
+              ? 'Say how much is being refunded, and how.'
+              : typed > refundable
+                ? `${money(invoice.paid)} has been paid; more than that cannot be refunded.`
+                : reason.trim() === ''
+                  ? 'Say why the money is going back.'
+                  : undefined
 
   async function commit() {
     const result = await run('refund_payment', {
@@ -1918,14 +2080,21 @@ function RefundAction({
 
   return (
     <>
+      {/* `paid > 0` is not on its own a reason to open this form. A bill under
+          review can have money on it — a cancelled one usually does, which is
+          why it is under review — and the server refuses the refund either
+          way. Offering the form and refusing at the end teaches the admin that
+          the refusal is a glitch to retry; the button says so instead. */}
       <ActionButton
         variant="danger"
         busy={busy}
-        disabled={invoice.paid <= 0}
+        disabled={isUnderReview(invoice) || invoice.paid <= 0}
         disabledReason={
-          invoice.paymentState === 'over_refunded'
-            ? 'More has already gone back out on this bill than came in. A further refund is refused; the accountant settles it.'
-            : 'Nothing has been paid on this bill.'
+          invoice.paymentState === 'void_with_balance'
+            ? 'This bill is void and still has money against it. Refunding against a cancelled bill is refused; the accountant settles it.'
+            : invoice.paymentState === 'over_refunded'
+              ? 'More has already gone back out on this bill than came in. A further refund is refused; the accountant settles it.'
+              : 'Nothing has been paid on this bill.'
         }
         onClick={() => setOpen(true)}
       >

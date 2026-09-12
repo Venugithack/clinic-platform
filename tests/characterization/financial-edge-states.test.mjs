@@ -1,27 +1,41 @@
 /**
- * A bill against which more money has gone out than ever came in.
+ * A bill whose arithmetic landed somewhere nobody intended.
  *
  * Slice 4 derived unpaid / part paid / paid from the payment events, which is
- * right, and had no word for the arithmetic landing BELOW zero. There are two
- * ways to get there. Take ₹100, refund ₹40, then reverse the ₹100 because the
- * card never settled: the refund stands, the payment does not, and the clinic
- * is ₹40 down on a bill nobody ever paid. Or it is simply already true in the
- * history being carried across and nobody knows why.
+ * right, and had no word for anything else. Two states now have one.
  *
- * Either way it is not `unpaid`. `unpaid` is a bill printed five minutes ago
- * and not yet taken to the counter, and putting this in the same queue is how
- * it gets ignored for a year. So it has its own word, `over_refunded`, a queue
- * of its own, and — the part this file spends most of its length on — a set of
- * refusals that leave the ledger exactly as they found it.
+ * `over_refunded` is a bill BELOW zero. Take ₹100, refund ₹40, then reverse the
+ * ₹100 because the card never settled: the refund stands, the payment does not,
+ * and the clinic is ₹40 down on a bill nobody ever paid. Or it is simply
+ * already true in the history being carried across and nobody knows why. Either
+ * way it is not `unpaid` — `unpaid` is a bill printed five minutes ago and not
+ * yet taken to the counter, and putting this in the same queue is how it gets
+ * ignored for a year.
  *
- * Everything is built through the real commands, with one exception that is
- * commented where it happens: the over-refunded bill that arrives from history
- * cannot be created by the commands any more, because the command that used to
- * create it now refuses. A state the code refuses to produce still has to be
- * readable, and that is precisely what the migration exists for.
+ * `void_with_balance` is a CANCELLED bill that is not at zero, in either
+ * direction: money still held against a bill nobody is charging for, or money
+ * refunded past one. It is tested ahead of `over_refunded`, because of the two
+ * facts true about a voided bill at minus forty, the one that tells somebody
+ * what to do is that it was cancelled with money still against it.
  *
- * See docs/OWNER_POLICY_REGISTER.md items 49–52, and the migration
- * supabase/migrations/20260915000000_financial_edge_states.sql.
+ * Each has a queue of its own — the same queue — and, the part this file spends
+ * most of its length on, a set of refusals that leave the ledger exactly as
+ * they found it. Two of those refusals are new. A voided bill is closed in both
+ * directions: no receipt against one may be reversed and nothing may be
+ * refunded from one, because either would move a cancelled bill off zero.
+ * Against that, reversing a REFUND is now always allowed, whatever the bill is
+ * at afterwards — it only ever moves towards zero, and it is the only way out
+ * of an over-refund built from more than one refund.
+ *
+ * Everything is built through the real commands, with the exceptions commented
+ * where they happen: the states that arrive from history cannot be created by
+ * the commands any more, because the commands that used to create them now
+ * refuse. A state the code refuses to produce still has to be readable, and
+ * that is precisely what the migrations exist for.
+ *
+ * See docs/OWNER_POLICY_REGISTER.md items 49–52 and 58–61, and the migrations
+ * supabase/migrations/20260915000000_financial_edge_states.sql and
+ * supabase/migrations/20260916000000_void_balance_and_review_queue.sql.
  */
 import assert from 'node:assert/strict'
 import { after, describe, test } from 'node:test'
@@ -187,6 +201,78 @@ async function carriedOverOverRefund(clinicStaff, name = 'Edge Case', phone = '+
     paymentId: await paymentIdOf(paymentReceipt),
     refundId: await paymentIdOf(refundReceipt),
   }
+}
+
+/**
+ * A bill carried across at minus EIGHTY, with two forty-rupee refunds on it.
+ *
+ * The shape that proved the old rule had no exit. Both refunds are real and
+ * both go through `refund_payment` — ₹100 in, ₹40 back, ₹40 back again, which
+ * leaves the bill at plus twenty and is legal every step of the way. Only the
+ * last event is written directly, for the same reason as in
+ * `carriedOverOverRefund` above: `reverse_payment` now refuses to take a bill
+ * below zero, so the ₹100 receipt is marked reversed here, setting exactly the
+ * four columns that command sets and nothing else.
+ *
+ * What matters about two refunds rather than one is the walk back. Undoing the
+ * first lands on minus forty — still an over-refund — and the rule that used to
+ * refuse anything still negative refused it, which left the only route out of
+ * the state blocked by the rule meant to stop anybody entering it.
+ */
+async function carriedOverDoubleRefund(
+  clinicStaff, name = 'Twice Refunded', phone = '+919000000851',
+) {
+  const { patientId, invoiceId } = await feeBill(clinicStaff, name, phone)
+
+  await as(clinicStaff.pharmacy, 'take_payment', {
+    invoiceId, parts: [{ method: 'cash', amount: 100 }],
+  })
+  const paymentReceipt = String(await scalar(
+    `select receipt_number from jmc.payments where kind='payment' order by received_at desc limit 1`,
+  ))
+  for (const reason of [
+    'Half given back at the counter on the day',
+    'The rest given back the following morning',
+  ]) {
+    await as(clinicStaff.admin, 'refund_payment', {
+      invoiceId, reason, refund: [{ method: 'cash', amount: 40 }],
+    })
+  }
+  const [firstRefund, secondRefund] = (await rows(
+    `select receipt_number from jmc.payments where kind='refund' order by receipt_number`,
+  )).map((row) => String(row.receipt_number))
+
+  await rows(
+    `update jmc.payments
+        set status='reversed', reversed_by=$1, reversed_at=now(),
+            reversal_reason='Carried over: the card never settled'
+      where receipt_number=$2`,
+    [clinicStaff.admin.id, paymentReceipt],
+  )
+
+  return {
+    patientId, invoiceId, paymentReceipt, firstRefund, secondRefund,
+    firstRefundId: await paymentIdOf(firstRefund),
+    secondRefundId: await paymentIdOf(secondRefund),
+  }
+}
+
+/**
+ * Cancel a bill the way history did, rather than the way the command allows.
+ *
+ * `void_invoice` permits a void only at exactly zero, so neither of the two
+ * states below — a cancelled bill holding money, a cancelled bill in credit to
+ * the patient — can be reached through it any more. They are nevertheless in
+ * the history the clinic is carrying across, so they are written here, setting
+ * exactly the four columns `void_invoice` sets: status, reason, who, and when.
+ */
+async function voidedByHistory(clinicStaff, invoiceId, reason) {
+  await rows(
+    `update jmc.invoices
+        set status='void', void_reason=$1, voided_by=$2, voided_at=now()
+      where id=$3`,
+    [reason, clinicStaff.admin.id, invoiceId],
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -361,8 +447,20 @@ describe('a bill that arrived below zero', () => {
     assert.ok(review, 'an over-refunded bill is on the financial review queue by being one')
     assert.equal(review.invoice_number, 'INV-000001')
     assert.equal(review.patient_name, 'Edge Case')
-    assert.equal(review.over_refunded_by, '40.00')
-    assert.equal(review.paid, '-40.00')
+    assert.equal(review.review_state, 'over_refunded', 'the row and the badge cannot disagree')
+    assert.equal(review.paid, '-40.00', 'signed, so the row says which side of zero it is on')
+    assert.equal(review.out_of_balance, '40.00', 'and how far from zero, which is what it sorts on')
+    /*
+     * `over_refunded_by` is gone, and its absence is asserted rather than left
+     * to be noticed. It was a positive magnitude that assumed the balance was
+     * negative, and the queue now carries rows where it is positive — money
+     * held against a cancelled bill — for which "over-refunded by minus a
+     * hundred" is not a sentence anybody should have to read.
+     */
+    assert.ok(
+      !('over_refunded_by' in review),
+      'the column that assumed one direction must not come back',
+    )
     assert.equal(Number(review.receipts_in), 0, 'the payment was reversed, so nothing came in')
     assert.equal(Number(review.receipts_out), 1)
     assert.equal(Number(review.receipts_reversed), 1)
@@ -370,36 +468,202 @@ describe('a bill that arrived below zero', () => {
     assert.match(review.documents, new RegExp(`${carried.refundReceipt} refund 40\\.00`))
   })
 
-  test('a voided bill that is over-refunded still says over_refunded', async () => {
+  test('the only way out of an over-refund is walking the refunds back one at a time', async () => {
+    const staff = await clinic()
+    const carried = await carriedOverDoubleRefund(staff)
+
+    assert.equal((await balance(carried.invoiceId)).paid, '-80.00', 'two refunds and no payment')
+    assert.equal((await balance(carried.invoiceId)).payment_state, 'over_refunded')
+
+    /*
+     * ── THE FIRST STEP, WHICH USED TO BE THE WALL ─────────────────────────
+     *
+     * Reversing money OUT can only ever move a bill towards zero, so it is
+     * permitted even though the bill is still below zero when it lands. The
+     * old rule refused any reversal that left a bill negative and did not ask
+     * which way the money was going, so this exact call was refused — and with
+     * it the only exit from the state, by the rule that existed to stop
+     * anybody entering it.
+     */
+    await as(staff.admin, 'reverse_payment', {
+      paymentId: carried.firstRefundId,
+      reason: 'The first ₹40 was keyed against the wrong bill and never left the drawer',
+    })
+
+    const halfway = await balance(carried.invoiceId)
+    assert.equal(halfway.paid, '-40.00', 'one refund undone, one still standing')
+    assert.equal(halfway.payment_state, 'over_refunded', 'so it is still the exception')
+
+    // Queue MEMBERSHIP, not just the balance. A bill that is still forty
+    // rupees out and has quietly left the accountant's list is worse than one
+    // that never reached it: the figure is still wrong and nothing says so.
+    const stillThere = await reviewRow(carried.invoiceId)
+    assert.ok(stillThere, 'halfway out of an over-refund is still an over-refund')
+    assert.equal(stillThere.review_state, 'over_refunded')
+    assert.equal(stillThere.paid, '-40.00')
+    assert.equal(stillThere.out_of_balance, '40.00')
+    assert.equal(Number((await patientRow(carried.patientId)).under_review_invoices), 1)
+
+    // ── AND THE SECOND STEP, WHICH FINISHES IT ────────────────────────────
+    await as(staff.admin, 'reverse_payment', {
+      paymentId: carried.secondRefundId,
+      reason: 'The second ₹40 was the same mistake keyed again',
+    })
+
+    const settled = await balance(carried.invoiceId)
+    assert.equal(settled.paid, '0.00', 'net nothing was ever paid against this bill')
+    assert.equal(settled.due, '300.00', 'so the whole fee is owed again')
+    assert.equal(settled.payment_state, 'unpaid')
+
+    assert.equal(
+      await reviewRow(carried.invoiceId), undefined,
+      'and at zero it leaves the queue, because the queue is derived rather than enqueued',
+    )
+    assert.equal(await scalar('select count(*)::int from jmc.financial_review_queue'), 0)
+
+    const person = await patientRow(carried.patientId)
+    assert.equal(Number(person.under_review_invoices), 0)
+    assert.equal(Number(person.over_refunded_invoices), 0)
+    assert.equal(person.over_refunded_amount, '0.00')
+
+    // Three receipts, all keeping their numbers. Nothing is deleted, because
+    // none of them is a thing that did not happen.
+    assert.deepEqual(
+      (await rows('select receipt_number, kind, status from jmc.payments order by receipt_number'))
+        .map((row) => `${row.receipt_number} ${row.kind} ${row.status}`),
+      [
+        `${carried.paymentReceipt} payment reversed`,
+        `${carried.firstRefund} refund reversed`,
+        `${carried.secondRefund} refund reversed`,
+      ],
+    )
+  })
+})
+
+describe('a cancelled bill that did not land on zero', () => {
+  test('money still held against a cancelled bill is not filed under closed', async () => {
+    const staff = await clinic()
+    const { patientId, invoiceId } = await feeBill(staff, 'Void In Credit', '+919000000861')
+    await as(staff.pharmacy, 'take_payment', { invoiceId, parts: [{ method: 'cash', amount: 100 }] })
+
+    /*
+     * Voiding above zero is refused (`Refund the payment first`), and so is
+     * reversing any receipt against a voided bill — which was the other route
+     * in: take ₹100, refund ₹100, void at zero, then reverse the refund and the
+     * bill is cancelled with a hundred rupees of the patient's money on it. Both
+     * doors are shut, so this can only be written directly. It is nevertheless
+     * in the history being carried across, and this is what it has to read as.
+     */
+    await voidedByHistory(staff, invoiceId, 'Carried over: cancelled with the money still on it')
+
+    const bill = await balance(invoiceId)
+    assert.equal(bill.status, 'void')
+    assert.equal(bill.paid, '100.00', 'a hundred rupees of the patient’s money, against nothing')
+    assert.equal(bill.total, '300.00')
+    assert.equal(bill.due, '200.00')
+    assert.equal(
+      bill.payment_state, 'void_with_balance',
+      'not `void`, which would say there is nothing to look at',
+    )
+
+    // On the queue, with the receipt that explains it.
+    const review = await reviewRow(invoiceId)
+    assert.ok(review, 'a cancelled bill holding money is under review by being one')
+    assert.equal(review.invoice_number, 'INV-000001')
+    assert.equal(review.patient_name, 'Void In Credit')
+    assert.equal(review.status, 'void')
+    assert.equal(review.review_state, 'void_with_balance')
+    assert.equal(review.paid, '100.00', 'positive, and the row is able to say so')
+    assert.equal(review.out_of_balance, '100.00', 'distance from zero, not a direction')
+    assert.match(String(review.void_reason), /cancelled with the money still on it/)
+    assert.ok(review.voided_at, 'with when it was cancelled, which is where the search starts')
+    assert.equal(Number(review.receipts_in), 1)
+    assert.equal(Number(review.receipts_out), 0)
+    assert.equal(Number(review.receipts_reversed), 0)
+    assert.match(String(review.documents), /RCP-000001 payment 100\.00/)
+
+    /*
+     * And on the patient's row — which is the only place it can appear.
+     *
+     * `billed`, `paid` and `outstanding` all exclude voided bills, and always
+     * have, so a patient whose only problem is a cancelled bill with money on
+     * it has an `outstanding` of zero and nothing to chase. The signed
+     * `void_with_balance_amount` is the whole record of it.
+     */
+    const person = await patientRow(patientId)
+    assert.equal(person.outstanding, '0.00', 'the money columns still exclude a voided bill')
+    assert.equal(Number(person.void_with_balance_invoices), 1)
+    assert.equal(
+      person.void_with_balance_amount, '100.00',
+      'signed, because money held and money over-refunded are different errors',
+    )
+    assert.equal(Number(person.under_review_invoices), 1)
+    assert.equal(
+      Number(person.over_refunded_invoices), 0,
+      'nothing went back out, so this is not an over-refund',
+    )
+    assert.equal(person.over_refunded_amount, '0.00')
+  })
+
+  test('a cancelled bill below zero says void_with_balance, and is still counted as an over-refund', async () => {
     const staff = await clinic()
     const carried = await carriedOverOverRefund(staff)
 
     /*
      * Voiding is refused below zero (the next describe block), so this too can
      * only arrive from history — a bill voided years ago with money still out
-     * against it. `over_refunded` is tested ahead of `void` in the view for
-     * exactly this row: letting `void` win would file the exception under
-     * "closed" and it would never be seen again.
+     * against it.
+     *
+     * This test used to assert `over_refunded`, on the reasoning that letting
+     * `void` win would file the exception under "closed". That reasoning was
+     * right and the word was wrong: `void_with_balance` is the more specific
+     * statement about the same bill, and of the two facts true about it, the
+     * one that tells somebody what to do is that it was CANCELLED with money
+     * still against it. The exception is not hidden by the relabelling, and
+     * the second half of this test is what proves that.
      */
-    await rows(
-      `update jmc.invoices
-          set status='void', void_reason='Carried over: voided before the correction',
-              voided_by=$1, voided_at=now()
-        where id=$2`,
-      [staff.admin.id, carried.invoiceId],
-    )
+    await voidedByHistory(staff, carried.invoiceId, 'Carried over: voided before the correction')
 
     const bill = await balance(carried.invoiceId)
     assert.equal(bill.status, 'void')
-    assert.equal(bill.payment_state, 'over_refunded', 'the void does not get to hide it')
-    assert.ok(await reviewRow(carried.invoiceId), 'and it stays on the review queue')
+    assert.equal(bill.paid, '-40.00')
+    assert.equal(
+      bill.payment_state, 'void_with_balance',
+      'the more specific of the two true statements, which is the tested-first one',
+    )
+    assert.notEqual(
+      bill.payment_state, 'over_refunded',
+      'the ordering in the view is the contract: void_with_balance is tested first',
+    )
 
-    // The money columns exclude voided bills as they always did; the COUNT
-    // does not, because money that left the drawer did not stop leaving it.
+    // ── AND NOTHING IS LOST BY THE MORE SPECIFIC WORD ─────────────────────
+    //
+    // The queue's `where` and the patient's over-refund columns are defined on
+    // the MONEY — `paid < 0` — rather than on the state word, which is exactly
+    // what keeps them from emptying when a bill is relabelled above them.
+    const review = await reviewRow(carried.invoiceId)
+    assert.ok(review, 'it stays on the review queue')
+    assert.equal(review.review_state, 'void_with_balance')
+    assert.equal(review.paid, '-40.00')
+    assert.equal(review.out_of_balance, '40.00')
+    assert.equal(Number(review.receipts_in), 0, 'the payment was reversed, so nothing came in')
+    assert.equal(Number(review.receipts_out), 1)
+    assert.equal(Number(review.receipts_reversed), 1)
+
     const person = await patientRow(carried.patientId)
-    assert.equal(person.outstanding, '0.00')
-    assert.equal(Number(person.over_refunded_invoices), 1)
-    assert.equal(person.over_refunded_amount, '40.00')
+    assert.equal(person.outstanding, '0.00', 'the money columns exclude voided bills as they always did')
+    assert.equal(
+      Number(person.over_refunded_invoices), 1,
+      'money that left the drawer did not stop leaving it because the bill was cancelled',
+    )
+    assert.equal(person.over_refunded_amount, '40.00', 'a positive magnitude, being a quantity')
+    assert.equal(Number(person.void_with_balance_invoices), 1)
+    assert.equal(
+      person.void_with_balance_amount, '-40.00',
+      'negative here, where the bill above it was positive — which is why it is signed',
+    )
+    // Counted ONCE. It is one case for one person to look at, not two.
+    assert.equal(Number(person.under_review_invoices), 1)
   })
 })
 
@@ -519,6 +783,280 @@ describe('what may be voided, and what may not', () => {
   })
 })
 
+describe('a cancelled bill is closed in both directions', () => {
+  /**
+   * ₹300 billed, ₹100 taken, ₹100 given back, then cancelled at exactly zero.
+   *
+   * Every step through the real commands, and every step legal: the void is
+   * allowed precisely because the two receipts net to nothing. What the tests
+   * below are about is that the netting has to STAY true, and each of its two
+   * halves is one command away from being undone.
+   */
+  async function voidedAtZero(staff) {
+    const { patientId, invoiceId } = await feeBill(staff, 'Settled Then Cancelled', '+919000000871')
+    await as(staff.pharmacy, 'take_payment', { invoiceId, parts: [{ method: 'cash', amount: 100 }] })
+    await as(staff.admin, 'refund_payment', {
+      invoiceId, reason: 'Taken against the wrong bill and given straight back',
+      refund: [{ method: 'cash', amount: 100 }],
+    })
+    assert.equal((await balance(invoiceId)).paid, '0.00', 'zero, which is what makes the void legal')
+    await as(staff.admin, 'void_invoice', {
+      invoiceId, reason: 'Raised against the wrong visit',
+    })
+    return {
+      patientId, invoiceId,
+      paymentId: await paymentIdOf('RCP-000001'),
+      refundId: await paymentIdOf('RCP-000002'),
+    }
+  }
+
+  test('neither receipt behind a cancelled bill may be reversed', async () => {
+    const staff = await clinic()
+    const voided = await voidedAtZero(staff)
+
+    assert.equal((await balance(voided.invoiceId)).payment_state, 'void')
+    assert.equal(await scalar('select count(*)::int from jmc.financial_review_queue'), 0)
+
+    /*
+     * The two halves of the netting, refused in the same words.
+     *
+     * Reversing the REFUND is the one that used to be waved through: it moves
+     * the bill UP, to plus a hundred, and the old check only ever asked
+     * whether a reversal would take a bill below zero. That left a cancelled
+     * bill with a hundred rupees of the patient's money against it and no
+     * screen in the clinic that would ever mention it.
+     *
+     * Reversing the PAYMENT is the mirror image and would leave the same bill
+     * at minus a hundred. Neither is a repair; both are corrections an
+     * accountant has to approve, and there is no workflow for one yet.
+     */
+    const cancelledBillIsClosed = (receipt) => (error) => {
+      assert.match(
+        error.message,
+        new RegExp(`INV-000001 has been voided, so ${receipt} cannot be reversed`),
+      )
+      assert.match(error.message, /nothing has been reversed/)
+      assert.match(error.message, /A cancelled bill has to stay at exactly nothing/)
+      assert.match(error.message, /accountant-approved correction, and there is no workflow for one yet/)
+      return true
+    }
+
+    await refusedWithoutTrace(
+      voided.patientId,
+      'reversing the refund behind a cancelled bill, which would leave it holding money',
+      () => as(staff.admin, 'reverse_payment', {
+        paymentId: voided.refundId, reason: 'The refund never left the drawer',
+      }),
+      cancelledBillIsClosed('RCP-000002'),
+    )
+
+    await refusedWithoutTrace(
+      voided.patientId,
+      'reversing the payment behind a cancelled bill, which would take it below zero',
+      () => as(staff.admin, 'reverse_payment', {
+        paymentId: voided.paymentId, reason: 'The card never settled',
+      }),
+      cancelledBillIsClosed('RCP-000001'),
+    )
+
+    // Still exactly what it was: cancelled, at nothing, both receipts standing,
+    // and nothing for an accountant to look at.
+    const settled = await balance(voided.invoiceId)
+    assert.equal(settled.status, 'void')
+    assert.equal(settled.paid, '0.00')
+    assert.equal(settled.payment_state, 'void')
+    assert.deepEqual(
+      (await rows('select receipt_number, kind, status from jmc.payments order by receipt_number'))
+        .map((row) => `${row.receipt_number} ${row.kind} ${row.status}`),
+      ['RCP-000001 payment received', 'RCP-000002 refund received'],
+    )
+    assert.equal(await scalar('select count(*)::int from jmc.financial_review_queue'), 0)
+  })
+
+  test('nothing may be refunded out of a cancelled bill either', async () => {
+    const staff = await clinic()
+    const voided = await voidedAtZero(staff)
+
+    // At zero there is simply nothing there, and the refusal says that rather
+    // than reaching for the review queue it does not belong on.
+    await refusedWithoutTrace(
+      voided.patientId,
+      'refunding again from a bill that is cancelled and already at zero',
+      () => as(staff.admin, 'refund_payment', {
+        invoiceId: voided.invoiceId, reason: 'She came back and asked for it again',
+        refund: [{ method: 'cash', amount: 40 }],
+      }),
+      (error) => {
+        assert.match(
+          error.message, /INV-000001 has been voided, so there is nothing to refund against it/,
+        )
+        return true
+      },
+    )
+
+    // And on the carried-over bill that IS holding money, refunding the
+    // balance away is the obvious repair and is exactly the correction nobody
+    // has approved — so it gets the review-queue answer instead.
+    const held = await feeBill(staff, 'Void In Credit', '+919000000872')
+    await as(staff.pharmacy, 'take_payment', {
+      invoiceId: held.invoiceId, parts: [{ method: 'cash', amount: 100 }],
+    })
+    await voidedByHistory(staff, held.invoiceId, 'Carried over: cancelled with the money still on it')
+
+    await refusedWithoutTrace(
+      held.patientId,
+      'refunding the balance away from a cancelled bill that is holding money',
+      () => as(staff.admin, 'refund_payment', {
+        invoiceId: held.invoiceId, reason: 'Tidying up an old bill',
+        refund: [{ method: 'cash', amount: 100 }],
+      }),
+      (error) => {
+        assert.match(
+          error.message,
+          /INV-000002 has been voided with ₹100\.00 against it, and refunding that away is a correction an accountant has to approve/,
+        )
+        assert.match(error.message, /Nothing has been changed/)
+        assert.match(error.message, /financial review queue/)
+        return true
+      },
+    )
+  })
+
+  test('a void and a reversal arriving together cannot leave a cancelled bill off zero', async () => {
+    /*
+     * The two commands that are each legal on their own.
+     *
+     * At exactly zero, `void_invoice` is allowed — that is the whole rule —
+     * and `reverse_payment` on the refund is allowed too, because the bill is
+     * not void YET and reversing a refund only moves it towards zero. Run them
+     * a second apart in either order and the second one is refused by the
+     * first one's result. Run them in the same second and the question is
+     * whether the row locks make that still true, or whether both read a bill
+     * at zero and one of them cancels it while the other moves it off.
+     *
+     * THREE ARRANGEMENTS. The first two submit both at once, in each order,
+     * and which one wins is a genuine coin flip: measured repeatedly, the same
+     * arrangement produced both outcomes on different runs. That is the right
+     * shape for the property — the invariant must hold however it lands — and
+     * the wrong shape for coverage, because a coin flip can come down the same
+     * way all week and leave the other branch of this test never run.
+     *
+     * So the third arrangement removes the flip. `reverse_payment` looks the
+     * receipt up and takes ITS lock before it ever reaches the bill, while
+     * `void_invoice` goes straight for the invoice row; a few milliseconds'
+     * head start is therefore enough for the reversal to be holding the
+     * invoice when the void asks for it, and the void then reliably meets a
+     * transaction that has not committed yet. Every assertion below is still
+     * written about whichever one won rather than about which one should.
+     */
+    const settle = (promise) => promise.then(
+      (value) => ({ status: 'fulfilled', value }),
+      (reason) => ({ status: 'rejected', reason }),
+    )
+
+    for (const arrangement of [
+      { label: 'with both submitted at once, the void first', reversalFirst: false, headStart: 0 },
+      { label: 'with both submitted at once, the reversal first', reversalFirst: true, headStart: 0 },
+      { label: 'with the reversal already holding the bill', reversalFirst: true, headStart: 25 },
+    ]) {
+      const staff = await clinic()
+      const { patientId, invoiceId } = await feeBill(staff, 'Race Condition', '+919000000881')
+      await as(staff.pharmacy, 'take_payment', {
+        invoiceId, parts: [{ method: 'cash', amount: 100 }],
+      })
+      await as(staff.admin, 'refund_payment', {
+        invoiceId, reason: 'Taken against the wrong bill and given straight back',
+        refund: [{ method: 'cash', amount: 100 }],
+      })
+      assert.equal((await balance(invoiceId)).paid, '0.00', 'both commands are legal from here')
+      const refundId = await paymentIdOf('RCP-000002')
+
+      const voiding = () => settle(as(staff.admin, 'void_invoice', {
+        invoiceId, reason: 'Raised against the wrong visit',
+      }))
+      const reversing = () => settle(as(staff.admin, 'reverse_payment', {
+        paymentId: refundId, reason: 'The refund never left the drawer',
+      }))
+
+      const where = arrangement.label
+      let started
+      if (arrangement.reversalFirst) {
+        const reversalRun = reversing()
+        // Both are already settling, so neither rejection is unhandled while
+        // this waits — which is the only reason a head start is safe to take.
+        if (arrangement.headStart > 0) {
+          await new Promise((resolve) => setTimeout(resolve, arrangement.headStart))
+        }
+        started = [reversalRun, voiding()]
+      } else {
+        const voidRun = voiding()
+        started = [reversing(), voidRun]
+      }
+      const [reversal, voided] = await Promise.all(started)
+
+      const bill = await balance(invoiceId)
+      const [refund] = await rows('select * from jmc.payments where id=$1', [refundId])
+
+      assert.equal(
+        [reversal, voided].filter((result) => result.status === 'fulfilled').length, 1,
+        `${where}: exactly one of the two may take effect, and got ` +
+        JSON.stringify([reversal, voided].map((result) => result.status)),
+      )
+
+      if (voided.status === 'fulfilled') {
+        // The void won, so the reversal met a cancelled bill and was refused.
+        assert.equal(bill.status, 'void', where)
+        assert.equal(bill.paid, '0.00', `${where}: a cancelled bill stays at exactly nothing`)
+        assert.equal(bill.payment_state, 'void', where)
+        assert.equal(refund.status, 'received', `${where}: the refund that made the zero still stands`)
+        assert.equal(refund.reversed_at, null, where)
+        assert.match(String(reversal.reason.message), /has been voided/, where)
+      } else {
+        // The reversal won, so the void met a bill in credit and was refused.
+        assert.equal(refund.status, 'reversed', where)
+        assert.equal(bill.status, 'open', `${where}: the bill was never cancelled`)
+        assert.equal(bill.paid, '100.00', `${where}: the reversal put the payment back`)
+        assert.equal(bill.payment_state, 'part_paid', where)
+        assert.match(String(voided.reason.message), /has been paid against/, where)
+        assert.match(String(voided.reason.message), /Refund the payment first/, where)
+      }
+
+      // The invariant, whichever way it resolved and wherever else it is read.
+      assert.equal(
+        await scalar(
+          `select count(*)::int from jmc.invoice_balances where status='void' and paid <> 0`,
+        ),
+        0,
+        `${where}: no race may produce a cancelled bill with money against it`,
+      )
+      assert.equal(
+        await scalar(`select count(*)::int from jmc.invoice_balances where payment_state='void_with_balance'`),
+        0,
+        `${where}: and so nothing may reach the state the commands cannot create`,
+      )
+      assert.equal(
+        await scalar('select count(*)::int from jmc.financial_review_queue'), 0,
+        `${where}: nothing for an accountant either way`,
+      )
+      assert.equal(
+        Number((await patientRow(patientId)).under_review_invoices), 0, where,
+      )
+
+      // One event, once: the losing command left no audit entry claiming it
+      // happened, which is the same rollback claim `refusedWithoutTrace` makes
+      // for the sequential refusals above.
+      assert.equal(
+        await scalar(
+          `select count(*)::int from jmc.audit_events
+            where action in ('invoice.voided', 'payment.reversed')`,
+        ),
+        1,
+        `${where}: only the command that committed may be on the record`,
+      )
+    }
+  })
+})
+
 describe('an over-refunded bill is not a counter’s business', () => {
   test('money can neither be taken on it nor refunded from it', async () => {
     const staff = await clinic()
@@ -619,11 +1157,12 @@ describe('the exception reaches the people who can correct it', () => {
 
     // ── the bill ─────────────────────────────────────────────────────────
     const queue = report.body.queue
-    assert.equal(queue.length, 1, 'one row per over-refunded bill')
+    assert.equal(queue.length, 1, 'one row per bill under review')
     assert.equal(queue[0].invoice_number, 'INV-000001')
     assert.equal(queue[0].patient, 'Edge Case')
-    assert.equal(queue[0].paid, '-40.00')
-    assert.equal(queue[0].over_refunded_by, '40.00', 'as a magnitude, for a person to read')
+    assert.equal(queue[0].review_state, 'over_refunded', 'in the same word every screen uses')
+    assert.equal(queue[0].paid, '-40.00', 'signed, so it says which side of zero this bill is on')
+    assert.equal(queue[0].out_of_balance, '40.00', 'and how far, as a magnitude to read and sort on')
     assert.equal(queue[0].total, '300.00')
     assert.equal(Number(queue[0].receipts_in), 0)
     assert.equal(Number(queue[0].receipts_out), 1)
@@ -663,6 +1202,61 @@ describe('the exception reaches the people who can correct it', () => {
     assert.equal(patients[0].patient, 'Edge Case')
     assert.equal(Number(patients[0].over_refunded_invoices), 1)
     assert.equal(patients[0].over_refunded_amount, '40.00')
+    // The other kind, at zero here, so the two are carried separately rather
+    // than added into one figure that would mean neither.
+    assert.equal(Number(patients[0].void_with_balance_invoices), 0)
+    assert.equal(patients[0].void_with_balance_amount, '0.00')
+  })
+
+  test('a cancelled bill holding money reaches the accountant, though nothing is owed', async () => {
+    const staff = await clinic()
+    const { patientId, invoiceId } = await feeBill(staff, 'Void In Credit', '+919000000851')
+    await as(staff.pharmacy, 'take_payment', { invoiceId, parts: [{ method: 'cash', amount: 100 }] })
+    await voidedByHistory(staff, invoiceId, 'Carried over: cancelled with the money still on it')
+
+    /*
+     * The row that every money column in the clinic excludes.
+     *
+     * `billed`, `paid` and `outstanding` all filter out voided bills, so this
+     * patient owes nothing and is owed nothing, and `over_refunded_invoices` is
+     * zero because nothing went back out. A report keyed on either figure has
+     * no row for them — while the queue above it has one for their bill, which
+     * is the two halves of the same report disagreeing about who is on it.
+     */
+    const token = await tokenFor(staff.admin)
+    const report = await edgeGet('reports', '?report=financial_review&days=400', token)
+    assert.equal(report.status, 200)
+
+    assert.equal(report.body.queue.length, 1)
+    assert.equal(report.body.queue[0].review_state, 'void_with_balance')
+    assert.equal(report.body.queue[0].paid, '100.00', 'positive, and the report can say so')
+    assert.equal(report.body.queue[0].out_of_balance, '100.00')
+    assert.equal(report.body.queue[0].status, 'void')
+    assert.match(report.body.queue[0].void_reason, /cancelled with the money still on it/)
+    assert.ok(report.body.queue[0].voided_at)
+
+    assert.equal(report.body.documents.length, 1, 'the receipt that is still sitting against it')
+    assert.equal(report.body.documents[0].kind, 'payment')
+    assert.equal(report.body.documents[0].amount, '100.00')
+    assert.equal(report.body.documents[0].status, 'received')
+
+    const [person] = report.body.patients
+    assert.ok(person, 'and the patient is on the same report as their bill')
+    assert.equal(person.patient, 'Void In Credit')
+    assert.equal(person.outstanding, '0.00', 'nothing to chase, which is why it needs its own column')
+    assert.equal(Number(person.over_refunded_invoices), 0)
+    assert.equal(Number(person.void_with_balance_invoices), 1)
+    assert.equal(person.void_with_balance_amount, '100.00')
+
+    // And the dues list, which is read at a counter, keeps them too — on the
+    // same `under_review_invoices` test, so the two lists cannot disagree.
+    const dues = await edgeGet('reports', '?report=patient_dues&days=400', token)
+    assert.equal(dues.status, 200)
+    const row = dues.body.rows.find((entry) => entry.patient_id === patientId)
+    assert.ok(row, 'a patient with nothing outstanding but a cancelled bill in credit is still listed')
+    assert.equal(String(row.outstanding), '0.00')
+    assert.equal(Number(row.void_with_balance_invoices), 1)
+    assert.equal(String(row.void_with_balance_amount), '100.00')
   })
 
   test('the financial review queue is the accountant’s, not the counter’s', async () => {

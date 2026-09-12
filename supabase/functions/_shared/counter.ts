@@ -270,18 +270,38 @@ async function balanceOf(invoiceId: string): Promise<Balance> {
 }
 
 /**
- * What an over-refunded bill says, wherever somebody meets one.
+ * What a bill under financial review says, wherever somebody meets one.
  *
- * Policy register 50 fixes the words, and they are the same words on every
- * screen on purpose: this is not a bill in an unusual state, it is a bill that
- * has stopped being a counter's business until somebody with the books open
- * has looked at it.
+ * Policy register 50 fixes the words for an over-refund, and they are the same
+ * words on every screen on purpose: this is not a bill in an unusual state, it
+ * is a bill that has stopped being a counter's business until somebody with
+ * the books open has looked at it.
+ *
+ * Policy register 61 adds the second case. A cancelled bill that is not at
+ * zero is the same kind of problem — money that does not agree with the
+ * document it is attached to — but it is not an over-refund and calling it one
+ * would send somebody looking for a refund that may not exist.
  */
-function overRefunded(balance: Balance): Error {
+function underReview(balance: Balance): Error {
+  const tail =
+    `Nothing has been changed. It is on the financial review queue for the admin or accountant.`
+
+  if (balance.paymentState === 'void_with_balance') {
+    return new Error(
+      balance.paidPaise > 0
+        ? `Voided with money against it — financial correction required. ` +
+          `${balance.invoiceNumber} was cancelled while ${rupees(balance.paidPaise)} was still ` +
+          `paid against it. ${tail}`
+        : `Voided while over-refunded — financial correction required. ` +
+          `${balance.invoiceNumber} was cancelled with ${rupees(-balance.paidPaise)} more gone ` +
+          `back out than ever came in. ${tail}`,
+    )
+  }
+
   return new Error(
     `Over-refunded — financial correction required. ` +
     `${rupees(-balance.paidPaise)} more has gone back out on ${balance.invoiceNumber} than ever came in. ` +
-    `Nothing has been changed. It is on the financial review queue for the admin or accountant.`,
+    `${tail}`,
   )
 }
 
@@ -295,7 +315,7 @@ async function dueOn(invoiceId: string): Promise<number> {
    * patient for the clinic's own error, which is why this refuses rather than
    * returning it.
    */
-  if (balance.paidPaise < 0) throw overRefunded(balance)
+  if (balance.paidPaise < 0) throw underReview(balance)
   return balance.duePaise
 }
 
@@ -1249,16 +1269,9 @@ export async function runCounterCommand(session: SessionView, action: string, pa
          * A receipt can be split across more than one bill, and saying "the
          * money never arrived" says it about all of them at once. So the
          * question is not whether this receipt can be reversed but whether
-         * EVERY bill it is allocated to survives the arithmetic — and if one
-         * does not, none of it happens. There is no partial reversal: a
-         * receipt is one event and it either happened or it did not.
-         *
-         * The order matters as much as the check. Take ₹100, refund ₹40, then
-         * reverse the ₹100: what is left is a bill with minus forty rupees
-         * paid against it and two receipts that both describe real money.
-         * Nothing in the schema forbids it and no later screen can undo it,
-         * so it is forbidden here — reverse the ₹40 refund first (policy
-         * register 51) and the ₹100 reversal then lands on zero.
+         * EVERY bill it is allocated to survives it — and if one does not,
+         * none of it happens. There is no partial reversal: a receipt is one
+         * event and it either happened or it did not.
          *
          * Locks: the receipt, then its bills in id order, which is the order
          * every other command in this file takes them in.
@@ -1276,11 +1289,50 @@ export async function runCounterCommand(session: SessionView, action: string, pa
           // Stored, and constrained positive — an operator amount, not a
           // derived one, so it is read by the reader that refuses negatives.
           const allocated = parseMoney(link.amount, 'allocated amount')
-          // Reversing money IN takes it back out of what has been paid;
-          // reversing money OUT — an erroneous refund — puts it back.
-          const after = payment.kind === 'refund'
-            ? balance.paidPaise + allocated
-            : balance.paidPaise - allocated
+
+          /*
+           * ── A CANCELLED BILL IS CLOSED IN BOTH DIRECTIONS ───────────────
+           *
+           * Read after the row lock, so a void committing in the transaction
+           * alongside this one is either already visible here or is still
+           * waiting behind us.
+           *
+           * Voiding is allowed only at exactly zero, so the receipts against a
+           * voided bill net to nothing — and reversing any one of them breaks
+           * that. Take ₹100, refund ₹100, void at zero, then reverse the
+           * refund: the bill is cancelled with a hundred rupees of the
+           * patient's money against it, and because that reversal moved the
+           * figure UP rather than down, the over-refund rule below waved it
+           * through. Policy register 59 closes it the only way that does not
+           * invent a correction: not yet, and not here.
+           */
+          if (balance.status === 'void') {
+            throw new Error(
+              `${balance.invoiceNumber} has been voided, so ${payment.receipt_number} cannot be ` +
+              `reversed and nothing has been reversed. A cancelled bill has to stay at exactly ` +
+              `nothing, and undoing one of its receipts would move it off zero. Putting this ` +
+              `right is an accountant-approved correction, and there is no workflow for one yet.`,
+            )
+          }
+
+          /*
+           * ── A REFUND MAY ALWAYS BE UNDONE ───────────────────────────────
+           *
+           * Reversing money OUT can only ever move a bill towards zero, so it
+           * is permitted even when the bill is still below zero afterwards.
+           *
+           * That exception is the whole exit. A bill at minus eighty with two
+           * forty-rupee refunds against it is walked back one refund at a
+           * time, and the first step lands on minus forty — still an
+           * over-refund. Refusing it for that reason would leave the only
+           * route out of the state blocked by the rule meant to stop anybody
+           * entering it. Policy register 58.
+           */
+          if (payment.kind === 'refund') continue
+
+          // Reversing money IN takes it back out of what has been paid, and
+          // that is the only direction that can put a bill below zero.
+          const after = balance.paidPaise - allocated
           if (after >= 0) continue
 
           // The refunds that would have to go first — never including the
@@ -1338,13 +1390,32 @@ export async function runCounterCommand(session: SessionView, action: string, pa
          * the first one's refund and refuse.
          */
         const invoice = await db.prepare(
-          'select id from invoices where id=? for update',
-        ).get(invoiceId) as { id: string } | undefined
+          'select id,status from invoices where id=? for update',
+        ).get(invoiceId) as { id: string; status: string } | undefined
         if (!invoice) throw new Error('That bill was not found.')
 
         const balance = await balanceOf(invoiceId)
+        /*
+         * A cancelled bill takes no more money in either direction.
+         *
+         * Going forward this is unreachable: voiding requires exactly zero and
+         * a refund requires something above it. What it catches is a bill
+         * carried across already void with money against it, where refunding
+         * the balance away would look like the obvious repair and would be a
+         * correction nobody has approved. Policy register 59 and 61.
+         */
+        if (invoice.status === 'void') {
+          throw new Error(
+            balance.paidPaise === 0
+              ? `${balance.invoiceNumber} has been voided, so there is nothing to refund against it.`
+              : `${balance.invoiceNumber} has been voided with ${rupees(balance.paidPaise)} ` +
+                `against it, and refunding that away is a correction an accountant has to ` +
+                `approve. Nothing has been changed; it is on the financial review queue.`,
+          )
+        }
+
         const paid = balance.paidPaise
-        if (paid < 0) throw overRefunded(balance)
+        if (paid < 0) throw underReview(balance)
 
         const refunding = sumMoney(parts.map((part) => part.amountPaise))
         if (refunding > paid) {
@@ -1408,7 +1479,7 @@ export async function runCounterCommand(session: SessionView, action: string, pa
          *   had not typed one. Now it says what is actually wrong.
          */
         const balance = await balanceOf(invoiceId)
-        if (balance.paidPaise < 0) throw overRefunded(balance)
+        if (balance.paidPaise < 0) throw underReview(balance)
         if (balance.paidPaise > 0) {
           throw new Error(
             `${balance.invoiceNumber} has been paid against. Refund the payment first; voiding it would lose the money.`,

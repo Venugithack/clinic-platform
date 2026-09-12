@@ -881,16 +881,16 @@ export async function readSnapshot(
    * server-side figure still counts. The two then disagree by exactly that
    * amount, every time somebody settles an old balance.
    *
-   * The fourth clause is the over-refunded one, and it is here because the
-   * first three can all miss it: a bill voided years ago with money still out
-   * against it fails the `status <> 'void'` test, and one whose lines add to
-   * nothing has no `due` to speak of. An exception that only appears when the
-   * other clauses happen to catch it is an exception nobody finds.
+   * The fourth clause is the exceptions', and it is here because the first
+   * three can all miss one: a bill voided years ago with money still against
+   * it fails the `status <> 'void'` test, and one whose lines add to nothing
+   * has no `due` to speak of. An exception that only appears when the other
+   * clauses happen to catch it is an exception nobody finds.
    */
   const invoices: InvoiceView[] = cashDrawer
     ? await readInvoices(
       `(b.due > 0 and b.status <> 'void')
-       or b.payment_state = 'over_refunded'
+       or b.payment_state in ('over_refunded', 'void_with_balance')
        or b.created_at >= ${CLINIC_DAY_START}::timestamptz
        or exists (
          select 1 from payment_allocations pa
@@ -906,12 +906,18 @@ export async function readSnapshot(
    * discuss. The second clause keeps them on the list, and the sort puts the
    * exceptions at the top rather than at the far end of a descending column of
    * ordinary dues.
+   *
+   * `under_review_invoices` rather than the over-refund count, because the
+   * money columns beside it EXCLUDE voided bills — so a patient whose only
+   * problem is a cancelled bill with money against it has an `outstanding` of
+   * zero and an over-refund count of zero, and the one clause that would ever
+   * mention them is this one.
    */
   const patientBalances: PatientBalanceView[] = cashDrawer
     ? (await all(
       `select * from patient_balances
-        where outstanding <> 0 or over_refunded_invoices > 0
-        order by over_refunded_invoices > 0 desc, outstanding desc`,
+        where outstanding <> 0 or under_review_invoices > 0
+        order by under_review_invoices > 0 desc, outstanding desc`,
     )).map((row) => ({
       patientId: text(row.patient_id),
       patientName: text(row.name),
@@ -922,6 +928,9 @@ export async function readSnapshot(
       oldestDueAt: optional(row.oldest_due_at),
       overRefundedInvoices: num(row.over_refunded_invoices),
       overRefundedAmount: num(row.over_refunded_amount),
+      voidWithBalanceInvoices: num(row.void_with_balance_invoices),
+      voidWithBalanceAmount: num(row.void_with_balance_amount),
+      underReviewInvoices: num(row.under_review_invoices),
     }))
     : []
 

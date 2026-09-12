@@ -1732,9 +1732,9 @@ payment  -> payment_allocations                      money in, and money back
 | View | Answers |
 |---|---|
 | `prescription_line_supply` | prescribed, supplied, remaining, and one of `waiting` / `part_supplied` / `supplied` / `patient_declined` / `doctor_cancelled` / `needs_review` |
-| `invoice_balances` | total, paid, due, and `unpaid` / `part_paid` / `paid` / `void` / `over_refunded` — the last is tested *first*, ahead of `void`, so a voided over-refund cannot hide behind the void |
-| `patient_balances` | what one patient owes across every bill, plus `over_refunded_invoices` and `over_refunded_amount` — how much of that figure is the clinic's own error rather than the patient's debt |
-| `financial_review_queue` | one row per over-refunded bill, with every receipt, refund and reversal allocated to it, and by how much it is out |
+| `invoice_balances` | total, paid, due, and `unpaid` / `part_paid` / `paid` / `void` / `over_refunded` / `void_with_balance` — the last is tested *first of all*, and `over_refunded` next, both ahead of `void`, so neither a voided over-refund nor a cancelled bill still holding money can hide behind the word `void` |
+| `patient_balances` | what one patient owes across every bill, plus `over_refunded_invoices` / `over_refunded_amount` — now defined on `paid < 0`, the money rather than the state word, so relabelling a bill `void_with_balance` cannot silently empty them — `void_with_balance_invoices` / `void_with_balance_amount`, the amount **signed** (positive is money held against a cancelled bill, negative is money refunded past one), and `under_review_invoices`, the union of the two counted once. How much of the figure is the clinic's own error rather than the patient's debt |
+| `financial_review_queue` | one row per bill under financial review, on a two-part test: `paid < 0`, **or** void and not at ₹0. It carries `review_state` (the invoice's own `payment_state`), a signed `paid`, `out_of_balance` — the distance from zero whichever side it is on, and what the queue sorts by — `void_reason`, `voided_at`, and every receipt, refund and reversal allocated to it |
 
 ### 9.2 Confirm and hand over
 
@@ -1835,9 +1835,32 @@ may not be recorded twice.
   locks the invoice before reading `paid` so two simultaneous refunds cannot
   both think the money is there, and `reverse_payment` computes the result for
   every invoice the receipt touches and refuses atomically if any would go
-  below zero — naming the refunds to reverse first. Derived balances are read
-  with `parseBalance`, which is signed, and never with `parseMoney`, which is
-  for what a person typed at a counter. Policy register 49–55; §12.5.
+  below zero — naming the refunds to reverse first. Reversing a *refund* is the
+  exception and is always permitted: money going back out only ever moves a bill
+  towards zero, and refusing that step because the bill is still negative after
+  it would leave the only way out of the state blocked by the rule meant to stop
+  anybody entering it (policy register 58). Derived balances are read with
+  `parseBalance`, which is signed, and never with `parseMoney`, which is for
+  what a person typed at a counter. Policy register 49–55, 58; §12.5.
+- **And this is how a cancelled bill gets off zero.** Take ₹100, refund ₹100,
+  void at zero — every step correct — then reverse the refund. That moves the
+  bill *up*, to plus a hundred, and the rule above was watching only for a
+  result below zero, so it waved it through: a bill cancelled, holding a hundred
+  rupees of the patient's money, and nothing anywhere that would say so.
+  `void_with_balance` is the word for it — status `void` and net paid not ₹0, in
+  **either** direction — and it is tested before `over_refunded`, because of the
+  two true things about a voided bill at −₹40 the one that tells somebody what
+  to do is that it was cancelled with money still against it. The relabelling
+  loses none of the arithmetic: `paid` is still negative, `patient_balances`
+  still counts that bill as an over-refund because those two columns are defined
+  on `paid < 0` rather than on the state word, and it is still on the review
+  queue. **Going forward the state cannot be reached at all**: `void_invoice`
+  allows a void only at exactly zero, `reverse_payment` refuses every receipt
+  allocated to a voided bill in both directions, and `refund_payment` refuses to
+  take a refund against one. Every row it ever matches came out of the history
+  the clinic is carrying across, which is the only reason it needs a name. What
+  it is not is a repair: nothing nets the two directions off, and clearing one
+  is the accountant's unbuilt workflow. Policy register 58–63; §12.5.
 - **Anonymous sales are paid in full** (policy register 46), and an unreviewed
   regulatory classification cannot leave the counter anonymously at all —
   `schedule = 'unset'` or `schedule_verified_at is null` is refused. Pay-later
@@ -2010,11 +2033,16 @@ cases in `command`. Three reasons, in order of how much they matter:
    settled that on 12 September 2026 — see §11.5 — and both ends moved
    together.
 
+   The matrix is fifteen reports and it has not moved since Slice 6; what
+   changed under `financial_review` is its content, not who may read it.
+
    `financial_review` is admin-only for a different reason from the rest of the
-   column. It is not that a pharmacist should not see an over-refunded bill; it
-   is that there is nothing a counter can do with one. Voiding it is refused,
-   and taking payment against it would charge the patient for the clinic's own
-   error. It is accountant's work, so it is on the accountant's desk (§12.5).
+   column. It is not that a pharmacist should not see a bill under review; it
+   is that there is nothing a counter can do with one. Voiding an over-refund is
+   refused, taking payment against one would charge the patient for the clinic's
+   own error, and on a cancelled bill that is off zero every repair a counter
+   could reach for — reverse the receipt, refund the balance away — is refused
+   too. It is accountant's work, so it is on the accountant's desk (§12.5).
 
    `GET /reports?report=index` returns only the reports the caller may run, so
    the UI builds its menu from the server's answer rather than from a list in
@@ -2181,11 +2209,14 @@ against itself proves nothing:
   as a pharmacist and as an admin-only manager, and asserts the stations
   offered are exactly the ones that role's session may use.
 
-### 12.5 One defect found, left alone, and then fixed
+### 12.5 One defect found, left alone, fixed, and then the fix fixed
 
 **This section used to say the defect below was deliberately not fixed. It has
-been fixed.** What follows is what it was, what was done about it, and the part
-that was never the code's to decide — which is the part still open.
+been fixed — and the fix, as first written, had two holes in it, which are also
+written down here.** What follows is what it was, what was done about it, what
+that got wrong, what closed it, and the part that was never the code's to decide
+— which is the part still open. None of it reached the clinic; nothing in this
+branch has.
 
 **What it was.** Writing the administrator-corrections test surfaced an edge in
 `void_invoice`. It refuses a bill that has been paid against — correctly, since
@@ -2230,12 +2261,80 @@ And in the commands:
   `outstanding`, and no longer drops a patient whose bills happen to net to
   zero across one.
 
+**What that fix got wrong.** Two holes, and they are the same hole read in
+opposite directions. `reverse_payment` worked out the result correctly for both
+kinds of receipt — reversing a refund *adds* money back, reversing a payment
+takes it away — and then applied one refusal to both: the result must not be
+below zero. The arithmetic was right; the rule written over it was the wrong
+shape.
+
+- **The exit was refused by the rule guarding the entrance.** A refund is money
+  going out, so reversing one can only move a bill towards zero — it can never
+  create an over-refund. But a bill at −₹80 carrying two ₹40 refunds has to be
+  walked back one refund at a time, and the first step lands on −₹40, which is
+  still below zero, so it was refused. The only route out of the state was
+  blocked by the rule that existed to stop anybody entering it. The refusal even
+  named the refunds to reverse first — which on a bill whose only live receipts
+  were refunds meant the *other* refund, and that one was refused in its turn
+  for exactly the same reason.
+- **The other side of the same test let a cancelled bill off zero.** Take ₹100,
+  refund ₹100, void at zero — every step allowed and correct. Then reverse the
+  refund. That moves the bill *up*, to plus a hundred, so a test looking only
+  for a result below zero waved it through, and the result was a cancelled bill
+  holding a hundred rupees of the patient's money: not over-refunded, so not on
+  the queue; `void`, so filed under closed; and no screen anywhere that would
+  have mentioned it. Voiding is permitted only at exactly zero, so nothing else
+  could have put a bill there.
+
+**What closed them.** Migration `20260916000000_void_balance_and_review_queue.sql`
+— forward-only, views only, no stored row touched — and two commands:
+
+- `reverse_payment` permits the reversal of a **refund** whatever the balance
+  is afterwards (policy register 58), and still refuses the reversal of a
+  **payment** that would take any linked invoice below zero, atomically and for
+  every invoice the receipt touches (60).
+- A voided bill is closed in both directions: no receipt allocated to one may be
+  reversed, and `refund_payment` refuses a refund taken against one (59). A
+  cancelled bill stays at net ₹0. The way out of one that is not is item 56's
+  accountant-approved correction, which does not exist yet — so the refusal is
+  a refusal, not a redirection to somewhere better.
+- `invoice_balances.payment_state` gains `void_with_balance` — void and not at
+  ₹0, in either direction — tested *before* `over_refunded`, so a voided bill at
+  −₹40 reads as the thing that tells somebody what to do.
+- `patient_balances` gains `void_with_balance_invoices`, a **signed**
+  `void_with_balance_amount` and `under_review_invoices`, the union counted
+  once; `over_refunded_invoices` / `over_refunded_amount` were re-defined on
+  `paid < 0` rather than on the state word, so the relabelling above could not
+  silently empty them. They count exactly the bills they counted before.
+- `financial_review_queue` was dropped and rebuilt, losing `over_refunded_by`.
+  It was a positive magnitude that assumed the balance was negative, and the
+  queue now carries rows where it is positive, for which "over-refunded by minus
+  a hundred" is not a sentence anybody should read. In its place `review_state`,
+  a signed `paid`, and `out_of_balance` — the distance from zero whichever side
+  — which is what the queue and the report sort on.
+- `financial_review` in `reports/index.ts` reads the new shape (it was broken by
+  the drop, which is the honest way round: a column that no longer exists fails
+  loudly rather than answering wrongly), and both money lists moved from
+  `over_refunded_invoices` to `under_review_invoices`. That last one matters
+  more than it looks: `patient_balances`' money columns exclude voided bills, so
+  a patient whose only exception is a cancelled bill with money against it has
+  `outstanding = 0` and would have been dropped by a test on the money alone.
+
 **What is still not the code's decision.** An over-refund is two real events —
 a refund that went out and a receipt that turned out never to have settled — and
 the clinic is genuinely down the difference. Nothing here invents a balancing
 entry for it, and no command in this release closes a row on the review queue.
 How the money is recovered or written off, who approves that, and what the GST
 credit/debit-note treatment is where GST applies are the clinic accountant's,
-and they are unanswered: policy register 56 and 57, and `ROLLOUT.md` §7. The
-code's job was to stop creating these silently and to stop hiding the ones that
-already exist. That much is done.
+and they are unanswered: policy register 56 and 57, and `ROLLOUT.md` §7.
+
+A cancelled bill that is not at zero is in the same position and it is worth
+being blunt about what that means at the counter. Every repair the application
+could make to one is now refused — the receipt cannot be reversed, nothing can
+be refunded against it — and that is the right refusal, because each of those
+would be a correction nobody has approved. It is also a dead end until item 56
+exists: the bill sits on the review queue saying exactly what is wrong with it
+and there is no command in this release that finishes the sentence. The code's
+job was to stop creating these silently, to stop hiding the ones that already
+exist, and — after the first attempt — to stop refusing the one step that walks
+an over-refund back. That much is done. The rest is the accountant's.

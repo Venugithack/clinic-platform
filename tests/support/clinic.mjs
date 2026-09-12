@@ -53,12 +53,33 @@ export async function emptyClinic(connection) {
   const releases = await connection`select * from jmc.clinical_vocabulary_releases`
   const released = await connection`select * from jmc.clinical_phrases where release_id is not null`
 
-  // Carrying nothing across is indistinguishable, three assertions later, from
-  // a vocabulary that was never approved. Say which it is here instead.
+  /*
+   * Carrying nothing across is indistinguishable, three assertions later, from
+   * a vocabulary that was never approved. Say which it is here instead.
+   *
+   * BOTH halves are checked, and the second is the one that has actually gone
+   * wrong: a release row with no phrases under it. That is what is left when
+   * two suites run against this database at once — one truncates while the
+   * other is between its own read and its own restore, and the phrases are
+   * gone for good, because the only copy of them was the rows this function
+   * was about to put back. Checking only the release let that through, and the
+   * failure surfaced four files later as `0 !== 80` in an unrelated gate.
+   *
+   * Refusing here does not make the concurrent run safe. It makes it loud, and
+   * it stops this call from being the one that destroys the evidence.
+   */
   if (releases.length === 0) {
     throw new Error(
       'No clinical vocabulary release is installed. The migrations seed it, so ' +
         'this database predates them or was emptied by hand: run "npm run staging:up".',
+    )
+  }
+  if (released.length === 0) {
+    throw new Error(
+      `${releases.length} clinical vocabulary release(s) are installed but no phrase ` +
+        'belongs to any of them, so there is nothing to carry across and this truncate ' +
+        'would make that permanent. The usual cause is two test suites sharing this ' +
+        'database — run them one at a time. Recover with "npm run staging:up".',
     )
   }
 

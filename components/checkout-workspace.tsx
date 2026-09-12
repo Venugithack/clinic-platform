@@ -25,6 +25,7 @@ import {
   Stack,
   blankPart,
   fromPaise,
+  isUnderReview,
   partsPayload,
   partsTotal,
   type PartDraft,
@@ -177,12 +178,18 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
    * has already left the drawer twice, not money anybody is going to hand
    * over. Counting it here would send a pharmacist looking for a patient who
    * owes nothing, so it is held out of the figure and named separately.
+   *
+   * A cancelled bill with money still against it is the clinic's other
+   * accounting exception, and it is deliberately not here at all: `live` drops
+   * every voided bill first, and nothing is collectable on a bill the clinic
+   * has cancelled, whichever way its money points. It belongs on Billing, in
+   * front of an admin. What the test below is for is the day one arrives some
+   * other way — it asks whether a bill is an exception rather than naming one
+   * of the two, so the counter can never grow a payment form for either.
    */
   const live = data.invoices.filter((invoice) => invoice.status !== 'void')
-  const underReview = live.filter((invoice) => invoice.paymentState === 'over_refunded')
-  const owing = live.filter(
-    (invoice) => invoice.due > 0 && invoice.paymentState !== 'over_refunded',
-  )
+  const underReview = live.filter(isUnderReview)
+  const owing = live.filter((invoice) => invoice.due > 0 && !isUnderReview(invoice))
   const owed = owing.reduce((total, invoice) => total + invoice.due, 0)
 
   const counts: Record<Station, string> = {
@@ -202,7 +209,7 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
       <PageHeader
         eyebrow="Pharmacy counter"
         title="Counter"
-        sub={`${queue.length} prescriptions waiting · ${money(owed)} due across ${owing.length} ${owing.length === 1 ? 'bill' : 'bills'}${underReview.length > 0 ? ` · ${underReview.length} ${underReview.length === 1 ? 'bill is' : 'bills are'} over-refunded and with the administrator` : ''}`}
+        sub={`${queue.length} prescriptions waiting · ${money(owed)} due across ${owing.length} ${owing.length === 1 ? 'bill' : 'bills'}${underReview.length > 0 ? ` · ${underReview.length} ${underReview.length === 1 ? 'bill is' : 'bills are'} under review and with the administrator` : ''}`}
       />
 
       <div
@@ -1465,10 +1472,18 @@ function CheckoutStation({
    * server refuses. It is neither owed nor settled, so it gets its own list
    * and its own explanation, and it is never what this screen opens by
    * default: the work at this counter is the bills above it.
+   *
+   * A cancelled bill carrying money is the same kind of thing and is not on
+   * this screen in any list: `live` drops it, and `invoice` below is looked up
+   * within `live`, so neither the sidebar nor `onSelect` can reach one. That
+   * is the right answer — a bill the clinic has cancelled collects nothing —
+   * and it is Billing's to settle. The test is written as "is this an
+   * exception" all the same, so that if one ever does arrive here it lands in
+   * With the administrator and meets the notice, rather than a payment form.
    */
   const live = data.invoices.filter((invoice) => invoice.status !== 'void')
-  const underReview = live.filter((invoice) => invoice.paymentState === 'over_refunded')
-  const collectable = live.filter((invoice) => invoice.paymentState !== 'over_refunded')
+  const underReview = live.filter(isUnderReview)
+  const collectable = live.filter((invoice) => !isUnderReview(invoice))
   const owing = collectable.filter((invoice) => invoice.due > 0)
   const settled = collectable.filter((invoice) => invoice.due <= 0)
   const invoice =
@@ -1618,7 +1633,7 @@ function CheckoutStation({
             <div className="space-y-2 pt-2">
               <SectionHeader
                 title="With the administrator"
-                sub={`${underReview.length} over-refunded · nothing to collect`}
+                sub={`${underReview.length} under review · nothing to collect`}
               />
               {underReview.map((row) => (
                 <InvoiceButton
@@ -1650,12 +1665,16 @@ function CheckoutStation({
                   note={
                     invoice.paymentState === 'over_refunded'
                       ? 'Below nothing: more went back out than came in.'
-                      : undefined
+                      : invoice.paymentState === 'void_with_balance'
+                        ? 'Money on a bill the clinic cancelled.'
+                        : undefined
                   }
                 />
-                {/* The Due figure is the biggest thing on this card, and on an
-                    over-refunded bill it is the one that is most misread. It
-                    does not travel without the words. */}
+                {/* The Due figure is the biggest thing on this card, and on a
+                    bill under review it is the one that is most misread — for
+                    opposite reasons: on an over-refunded bill it is the
+                    over-refund itself, and on a cancelled one it is a figure
+                    nobody is being charged. Neither travels without words. */}
                 <Figure
                   label="Due"
                   value={money(invoice.due)}
@@ -1663,19 +1682,25 @@ function CheckoutStation({
                   note={
                     invoice.paymentState === 'over_refunded'
                       ? 'The over-refund, not money owed.'
-                      : undefined
+                      : invoice.paymentState === 'void_with_balance'
+                        ? 'Nothing is owed on a cancelled bill.'
+                        : undefined
                   }
                 />
               </div>
 
               {invoice.payments.length > 0 ? <InvoicePayments invoice={invoice} /> : null}
 
-              {invoice.paymentState === 'over_refunded' ? (
+              {isUnderReview(invoice) ? (
                 <Notice tone="bad">
-                  This bill is over-refunded: {money(-invoice.paid)} more has gone back out than
-                  ever came in. Nothing can be taken against it here, and taking money would not
-                  put it right — the pharmacy cannot settle this one. It is with the administrator
-                  and the clinic&rsquo;s accountant, who correct it between them.{' '}
+                  {invoice.paymentState === 'over_refunded'
+                    ? `This bill is over-refunded: ${money(-invoice.paid)} more has gone back out than ever came in.`
+                    : invoice.paid > 0
+                      ? `This bill was cancelled and ${money(invoice.paid)} is still held against it.`
+                      : `This bill was cancelled and ${money(-invoice.paid)} went back out on it afterwards.`}{' '}
+                  Nothing can be taken against it here, and taking money would not put it right —
+                  the pharmacy cannot settle this one. It is with the administrator and the
+                  clinic&rsquo;s accountant, who correct it between them.{' '}
                   {invoice.patientName
                     ? `${invoice.patientName} owes the clinic nothing on it.`
                     : 'Nobody owes the clinic anything on it.'}

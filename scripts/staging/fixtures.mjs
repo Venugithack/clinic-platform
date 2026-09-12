@@ -654,7 +654,7 @@ export const FIXTURE_PRESCRIPTIONS = {
 }
 
 /**
- * Six invoices, chosen so every payment state the counter can show exists.
+ * Seven invoices, chosen so every payment state a screen can show exists.
  *
  * Slice 4 replaced the single `bills` row — amount, status and method in one
  * place — with an invoice, its immutable lines, and payments allocated against
@@ -662,11 +662,18 @@ export const FIXTURE_PRESCRIPTIONS = {
  * express at all, so both are here; a fixture set where every bill is either
  * unpaid or paid would never exercise the arithmetic that matters.
  *
- * The sixth is the one nobody wants and everybody has: a bill more money has
- * left than ever entered. It cannot be built through the commands — every path
- * that would create one now refuses — so it is written here directly, which is
- * exactly how it arrives in real life too. Without it the over-refunded screens
- * are unreachable by hand and the sentence above this one is false.
+ * The last two are the ones nobody wants and everybody has. Neither can be
+ * built through the commands — every path that would create one now refuses —
+ * so both are written here directly, which is exactly how they arrive in real
+ * life too. Without them the review screens are unreachable by hand and the
+ * sentence above is false.
+ *
+ * The sixth is a bill more money has left than ever entered. The seventh is a
+ * cancelled bill that is not at nothing: ₹300 taken, then the bill voided
+ * before anybody noticed the payment, so the clinic is holding money against a
+ * document it is not charging anybody for. Voiding now requires a balance of
+ * exactly zero and no receipt against a voided bill may be reversed, so this
+ * one can only ever be history — which is the whole reason it needs a name.
  */
 export const FIXTURE_INVOICES = {
   paidCashToday: {
@@ -709,6 +716,24 @@ export const FIXTURE_INVOICES = {
     reversedPayment: 'Card settlement failed at the bank; the receipt printed before it was known.',
     refund: 40, refundTime: '12:40',
     refundReason: 'Wrong strength returned unopened; part of the payment given back at the counter.',
+  },
+  /*
+   * Cancelled with the money still on it.
+   *
+   * ₹300 taken by UPI in the morning. That evening the bill is found to have
+   * been raised against the wrong visit and is voided — and nobody notices
+   * that it had been paid. The void is real, the payment is real, and the
+   * clinic is holding three hundred rupees against a document it is not
+   * charging anybody for.
+   *
+   * `voided` below is what makes it, and it is the other half of the pair with
+   * `overRefunded` above: one bill below zero, one cancelled off zero.
+   */
+  voidWithBalance: {
+    id: uid('a9', 7), number: 'INV-000007', patient: 'driver', encounter: null,
+    amount: 300, paid: 300, method: 'upi', createdDaysAgo: 8, createdTime: '10:20', paidTime: '10:25',
+    voided: 'Raised against the wrong visit. Cancelled the same evening.',
+    voidedTime: '18:30',
   },
 }
 
@@ -1721,7 +1746,14 @@ export async function seedClinic(sql, options = {}) {
         invoice_number: invoice.number,
         patient_id: patientId(invoice.patient),
         encounter_id: invoice.encounter ? FIXTURE_ENCOUNTERS[invoice.encounter].id : null,
-        status: 'open',
+        // A voided bill keeps its number and its lines; the three void columns
+        // travel together, which is what `invoices_voided_completely` checks.
+        status: invoice.voided ? 'void' : 'open',
+        void_reason: invoice.voided ?? '',
+        voided_by: invoice.voided ? staffId('manager') : null,
+        voided_at: invoice.voided
+          ? clock.at(-invoice.createdDaysAgo, invoice.voidedTime)
+          : null,
         created_by: staffId('doctor'),
         created_at: clock.at(-invoice.createdDaysAgo, invoice.createdTime),
       })),
