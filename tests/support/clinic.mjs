@@ -221,6 +221,10 @@ export function sessionFor(staff) {
     roles: staff.roles,
     lastSeen: new Date().toISOString(),
     canPublishClinicalTemplates: Boolean(staff.canPublishClinicalTemplates),
+    // A preference, carried so this synthetic session has the same shape as
+    // the one `getSession` builds. Nothing in the command layer reads it to
+    // decide what anybody may do.
+    theme: staff.theme ?? 'system',
   }
 }
 

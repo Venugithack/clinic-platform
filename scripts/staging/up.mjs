@@ -10,7 +10,7 @@
  * start` brings up eleven images and needs a supabase/config.toml this
  * repository does not have; what the database tests need is Postgres, and
  * Postgres is one image and four seconds. The Edge Function runtime is a
- * separate question, answered in docs/STAGING.md.
+ * separate question, answered in docs/operations/STAGING.md.
  *
  * Everything here refuses to act on anything but a loopback scratch database —
  * see guard.mjs. The clinic's live database is reachable from this machine.

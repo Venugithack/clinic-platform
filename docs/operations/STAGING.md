@@ -389,7 +389,7 @@ that at a temporary directory it deletes afterwards.
 That exercises this application's rules — the ticket, the checksum, the
 role check, the audit row — against a real filesystem. It says nothing about
 Supabase's: that the bucket is private, that an anonymous GET is refused, that
-no service key reaches the browser. §`ROLLOUT.md` §7 carries that as a
+no service key reaches the browser. §`docs/operations/ROLLOUT.md` §7 carries that as a
 deployment check, because it can only be answered where the bucket is.
 
 ---
@@ -398,7 +398,7 @@ deployment check, because it can only be answered where the bucket is.
 
 Staging can prove the clinic's logic. It cannot prove the things that are true
 only of the deployed artefact and the deployed project, and those have their
-own short list. `ROLLOUT.md` is the operating document; this is the part of it
+own short list. `docs/operations/ROLLOUT.md` is the operating document; this is the part of it
 that is about this repository.
 
 ### 7.1 What is in the bundle
@@ -440,7 +440,7 @@ switched on for the clinic.
 the application is written and tested against the pessimistic case — a role
 that is neither superuser nor `BYPASSRLS` — so it works either way, but nobody
 here has read what the deployed role actually is, because nothing in this
-programme queries production. Preflight query 7 in `ROLLOUT.md` reads it. It
+programme queries production. Preflight query 7 in `docs/operations/ROLLOUT.md` reads it. It
 returns five booleans and no clinic data.
 
 ### 7.4 What a printer does
@@ -448,5 +448,5 @@ returns five booleans and no clinic data.
 Print layout is checked in a browser at A4 and at 80 mm widths, which proves
 the CSS and proves nothing about paper. Margins, page breaks in a long medicine
 list, and whether a reprint is legibly marked as one are answered by an HP
-Smart Tank 580 with paper in it. `ROLLOUT.md` §7 keeps that open, and it should
+Smart Tank 580 with paper in it. `docs/operations/ROLLOUT.md` §7 keeps that open, and it should
 stay open until somebody in Chennai holds the page.

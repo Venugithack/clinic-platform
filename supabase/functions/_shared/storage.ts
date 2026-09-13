@@ -18,7 +18,7 @@
  * mistaken for one: it exercises the application's own logic — consent, the
  * access rules, the audit, the checksum — against real bytes, and says nothing
  * about Supabase's bucket policies. Those are a deployment check, and
- * docs/STAGING.md says which checks staging cannot make.
+ * docs/operations/STAGING.md says which checks staging cannot make.
  *
  * The guard is the same shape as the database guard: the local backend refuses
  * to write anywhere that is not an explicitly configured scratch directory,

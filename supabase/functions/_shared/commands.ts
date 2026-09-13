@@ -54,6 +54,12 @@ type ClinicalFields = {
   notes: string
   advice: string
   followUpDate?: string
+  /**
+   * What the follow-up should say. Distinct from `advice`, which is what the
+   * patient is told today; this is the note the clinic reads when they come
+   * back. `sign_consultation` falls back to the advice when it is empty.
+   */
+  followUpNote: string
 }
 
 
@@ -90,6 +96,7 @@ function clinicalFields(payload: Payload, requireDiagnosis: boolean): ClinicalFi
     notes: optional(payload, 'notes'),
     advice: optional(payload, 'advice'),
     followUpDate: optionalDate(payload, 'followUpDate'),
+    followUpNote: optional(payload, 'followUpNote'),
   }
 }
 
@@ -100,7 +107,7 @@ function clinicalFields(payload: Payload, requireDiagnosis: boolean): ClinicalFi
  *
  * The owner asked for four; six was slowing down a person who signs in dozens
  * of times a day. Four digits is ten thousand combinations, which is not a
- * password and was never treated as one. `TABLET.md` §5 lists what has to hold
+ * password and was never treated as one. `docs/reference/TABLET.md` §5 lists what has to hold
  * for it to be acceptable, and every item on that list is already here and
  * must stay here: one PIN per staff member, wrong attempts throttled
  * server-side and charged to the caller, salted scrypt at Node's default cost,
@@ -395,7 +402,7 @@ async function completeConsultation(session: SessionView, payload: Payload) {
         (id,patient_id,encounter_id,doctor_id,due_date,note,status,created_at)
         values (?,?,?,?,?,?,'open',now())`).run(
           randomUUID(), patientId, encounterId, session.staffId, fields.followUpDate,
-          optional(payload, 'followUpNote') || fields.advice,
+          fields.followUpNote || fields.advice,
         )
     }
 
@@ -818,25 +825,25 @@ export async function runCommand(session: SessionView, action: string, payload: 
           await db.prepare(`update consultation_drafts set
             appointment_id=?,complaint=?,complaint_duration_value=?,complaint_duration_unit=?,
             examination=?,diagnosis=?,diagnosis_status=?,aetiology=?,aetiology_certainty=?,
-            notes=?,advice=?,follow_up_date=?,updated_at=now()
+            notes=?,advice=?,follow_up_date=?,follow_up_note=?,updated_at=now()
             where id=? and doctor_id=?`).run(
               optional(payload, 'appointmentId') || null, fields.complaint,
               fields.complaintDurationValue ?? null, fields.complaintDurationUnit ?? null,
               fields.examination, fields.diagnosis, fields.diagnosisStatus, fields.aetiology,
               fields.aetiologyCertainty, fields.notes, fields.advice,
-              fields.followUpDate ?? null, draftId, session.staffId,
+              fields.followUpDate ?? null, fields.followUpNote, draftId, session.staffId,
             )
         } else {
           await db.prepare(`insert into consultation_drafts
             (id,patient_id,doctor_id,appointment_id,complaint,complaint_duration_value,
              complaint_duration_unit,examination,diagnosis,diagnosis_status,aetiology,
-             aetiology_certainty,notes,advice,follow_up_date,created_at,updated_at)
-            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,now(),now())`).run(
+             aetiology_certainty,notes,advice,follow_up_date,follow_up_note,created_at,updated_at)
+            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,now(),now())`).run(
               draftId, patientId, session.staffId, optional(payload, 'appointmentId') || null,
               fields.complaint, fields.complaintDurationValue ?? null,
               fields.complaintDurationUnit ?? null, fields.examination, fields.diagnosis,
               fields.diagnosisStatus, fields.aetiology, fields.aetiologyCertainty,
-              fields.notes, fields.advice, fields.followUpDate ?? null,
+              fields.notes, fields.advice, fields.followUpDate ?? null, fields.followUpNote,
             )
         }
         await db.prepare('delete from consultation_draft_lines where draft_id=?').run(draftId)
@@ -1211,9 +1218,72 @@ export async function runCommand(session: SessionView, action: string, payload: 
           (id,prescription_id,printed_by,printed_at,copy_number) values (?,?,?,now(),?)`).run(
             randomUUID(), prescriptionId, session.staffId, copyNumber,
           )
-        await audit(session.staffId, 'prescription.printed', 'prescription', prescriptionId, `${copyNumber === 1 ? 'Printed' : 'Reprinted'} ${rx.prescription_number}, copy ${copyNumber}`)
+        /*
+         * A REQUEST, in the words as well as in the table.
+         *
+         * This used to record "Printed RX-000123, copy 2", which is a claim
+         * about paper. A browser cannot make that claim: `window.print()` opens
+         * the operating system's dialogue and never says whether the operator
+         * pressed Print or Cancel, whether the tray was empty, or whether the
+         * clinic printer was even awake. The row is written before the dialogue
+         * opens — it has to be, so a copy taken during a crash is still on the
+         * record — so the honest thing for it to say is that a copy was asked
+         * for.
+         *
+         * The action key stays `prescription.printed`: it is a stable
+         * identifier that history and reports already use, and changing it
+         * would split one thing into two names. Only the sentence changes.
+         */
+        await audit(session.staffId, 'prescription.printed', 'prescription', prescriptionId, `${copyNumber === 1 ? 'Print' : 'Reprint'} requested for ${rx.prescription_number}, copy ${copyNumber}`)
       })
-      return { message: copyNumber === 1 ? 'Prescription ready to print.' : `Reprint copy ${copyNumber} recorded.`, data: { copyNumber } }
+      return {
+        message: copyNumber === 1
+          ? 'Print requested. Copy 1 recorded.'
+          : `Reprint requested. Copy ${copyNumber} recorded.`,
+        data: { copyNumber },
+      }
+    }
+
+    /*
+     * Somebody's own appearance, on their own account.
+     *
+     * No `requireRole`: every signed-in person may choose how their own
+     * screen looks, and there is nothing here anybody could want to do to
+     * somebody else — the update is keyed by the caller's own staff id and
+     * takes no id from the payload.
+     *
+     * Not audited, deliberately. The audit trail is what the clinic did to
+     * patients, stock and money; a nurse turning the lights down twice a shift
+     * is neither, and burying real events under that noise makes the record
+     * worse rather than better.
+     *
+     * The response carries the whole clinic as usual, so the session it
+     * returns already holds the new value and the tablet does not have to be
+     * told twice.
+     */
+    case 'set_theme': {
+      const theme = requireChoice(
+        payload,
+        'theme',
+        ['system', 'paper', 'night', 'contrast'] as const,
+        'system',
+      )
+      await db.prepare('update staff set theme=? where id=?').run(theme, session.staffId)
+
+      /*
+       * Correct the session this request is holding.
+       *
+       * `command/index.ts` resolves the session once, BEFORE running anything,
+       * and then builds the snapshot it returns from that same object. Every
+       * other command changes rows the snapshot re-reads, so nobody has needed
+       * this — but this one changes the signed-in person's own staff row, and
+       * without the line below the tablet gets its answer back still carrying
+       * the appearance it had a moment ago. The screen then has a choice it
+       * applied and an account that disagrees with it until the next poll
+       * fifteen seconds later, which is exactly long enough to look broken.
+       */
+      session.theme = theme
+      return { message: 'Appearance saved for your account.', data: { theme } }
     }
 
     case 'complete_follow_up': {

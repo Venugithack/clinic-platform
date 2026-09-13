@@ -10,12 +10,28 @@ export { ActionButton, Button } from './Button'
 export { Card, CardBody, CardHeader } from './Card'
 export { ConfirmButton } from './ConfirmButton'
 export { Disclosure } from './Disclosure'
+export { Drawer } from './Drawer'
 export { EmptyState } from './EmptyState'
 export { CheckRow, Field, FieldRow, Input, Select, Textarea } from './Field'
+export { Icon, type IconName } from './Icon'
 export { Modal } from './Modal'
 export { Numpad } from './Numpad'
 export { Notice } from './Notice'
 export { PageHeader, SectionHeader } from './PageHeader'
+export { Popover } from './Popover'
 export { Table, TBody, TD, TH, THead, TR } from './Table'
+export {
+  Busy,
+  DWELL_MAJOR,
+  DWELL_ROUTINE,
+  SLOW_MESSAGE,
+  TaskFailure,
+  TaskResult,
+  useTask,
+  type TaskFact,
+  type TaskOutcome,
+  type TaskPhase,
+  type TaskResponse,
+} from './task'
 export { Token } from './Token'
 export { clinicDayOf, clinicToday, formatDate, formatDay, formatExpiry, money, words } from './format'

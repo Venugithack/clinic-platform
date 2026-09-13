@@ -1,3 +1,4 @@
+import { forwardRef } from 'react'
 import type {
   InputHTMLAttributes,
   ReactNode,
@@ -55,19 +56,21 @@ export function Field({
   )
 }
 
-export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  // Values typed into a blank are transcription-critical — set them in mono.
-  const mono =
-    rest.type === 'number' ||
-    rest.type === 'date' ||
-    rest.type === 'datetime-local' ||
-    rest.type === 'tel' ||
-    rest.inputMode === 'numeric' ||
-    rest.inputMode === 'decimal'
-      ? 'font-mono'
-      : ''
-  return <input className={`${CONTROL} ${mono} ${className}`} {...rest} />
-}
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function Input({ className = '', ...rest }, ref) {
+    // Values typed into a blank are transcription-critical — set them in mono.
+    const mono =
+      rest.type === 'number' ||
+      rest.type === 'date' ||
+      rest.type === 'datetime-local' ||
+      rest.type === 'tel' ||
+      rest.inputMode === 'numeric' ||
+      rest.inputMode === 'decimal'
+        ? 'font-mono'
+        : ''
+    return <input ref={ref} className={`${CONTROL} ${mono} ${className}`} {...rest} />
+  },
+)
 
 export function Select({
   className = '',

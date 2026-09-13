@@ -1,5 +1,6 @@
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
 import { QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
+import { DueNowPanel } from './due-now'
 import { ConsultationPanel } from './consultation-workspace'
 import type { ActionRunner } from './clinic-context'
 import { DayBookPanel } from './day-book-panel'
@@ -56,6 +57,13 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
       )
     case 'queue':
       return <QueuePanel data={data} run={run} />
+    /*
+     * The nurse's landing screen: the queue, the missing readings and the bed
+     * board joined back together under the patient each of them is about.
+     * It reads the snapshot and writes nothing, so it needs no `run`.
+     */
+    case 'due':
+      return <DueNowPanel data={data} />
     case 'vitals':
       return <VitalsPanel data={data} run={run} />
     case 'consultation':

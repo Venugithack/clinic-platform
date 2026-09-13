@@ -41,7 +41,7 @@ const mainSays = (words) =>
  */
 async function openConsultation() {
   if (await onConsultation()) return
-  await goToStation('Queue')
+  await goToStation('Today')
   await waitFor(mainSays('call in'), { what: 'the queue' })
   const called = evaluate(`(() => {
     const button = [...document.querySelectorAll('main button')]

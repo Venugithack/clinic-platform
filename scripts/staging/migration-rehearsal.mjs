@@ -279,7 +279,7 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
      * ── re-application ─────────────────────────────────────────────────────
      *
      * `supabase db push` applies each file once and wraps it in a transaction,
-     * so this should never happen. docs/STAGING.md §3.1 is about what happens
+     * so this should never happen. docs/operations/STAGING.md §3.1 is about what happens
      * when a migration is applied by some other route anyway.
      *
      * What is re-applied is the set of BACKFILLS, which is what this rehearsal

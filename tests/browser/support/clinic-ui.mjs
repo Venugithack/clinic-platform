@@ -11,6 +11,26 @@ import { ab, evaluate, open, viewport, waitFor } from './harness.mjs'
 export const LANDSCAPE = { width: 1024, height: 768, name: 'landscape 1024x768' }
 export const PORTRAIT = { width: 768, height: 1024, name: 'portrait 768x1024' }
 
+/**
+ * The other three the plan names, and why each one is in the list.
+ *
+ * The suite ran at 1024 and 768 only, which is how a 288px number pad inside a
+ * 248px card sat on the clinic's very first screen without anybody noticing.
+ *
+ *   DESKTOP  the width the two-column consultation needs, and the only one
+ *            where the doctor's history column has ever been drawn
+ *   PHONE    a phone in a pocket, which is what somebody covering a shift
+ *            actually has in their hand
+ *   NARROW   the smallest screen the plan asks for, and the one that finds
+ *            every fixed width
+ */
+export const DESKTOP = { width: 1280, height: 800, name: 'desktop 1280x800' }
+export const PHONE = { width: 390, height: 844, name: 'phone 390px' }
+export const NARROW = { width: 320, height: 568, name: 'narrow 320px' }
+
+/** Every viewport the plan's acceptance gate names, in order. */
+export const EVERY_SHAPE = [DESKTOP, LANDSCAPE, PORTRAIT, PHONE, NARROW]
+
 export function setViewport({ width, height }) {
   viewport(width, height)
 }
@@ -91,29 +111,121 @@ export function railStations() {
   }
   // The rail also carries the menu close button and Sign out, which are chrome
   // rather than stations and would otherwise show up in every assertion.
-  return items.filter((label) => label && label !== '×' && label !== 'SIGN OUT')
+  // Matched case-insensitively: labels are sentence case now, and a filter
+  // written against the old tracked capitals silently stops filtering.
+  const chrome = new Set(['×', 'close', 'sign out'])
+  return items.filter((label) => label && !chrome.has(label.trim().toLowerCase()))
 }
 
 /**
- * Move to a station by its label on the rail.
+ * Everything this session can actually reach, bar and More together.
  *
- * Matched case-insensitively against the rendered text, because the rail is
- * uppercased in CSS: the DOM says "Vitals", the screen says "VITALS", and a
- * text selector that takes the DOM at its word finds nothing when a test is
- * written from what the tester can see.
+ * A doctor, nurse or pharmacist now works from a three-station bar with
+ * everything else one tap away under **More**, so the primary nav is no longer
+ * the whole of what somebody is authorized for. The plan is explicit that this
+ * is an arrangement and never a reduction — "Do not remove capabilities or
+ * change permissions to make navigation look simpler" — and the only honest way
+ * to test that is to count the union.
+ *
+ * An administrator has no More: that role keeps the full grouped rail, so this
+ * is just `railStations()` there.
+ */
+export async function allStations() {
+  const bar = railStations()
+  if (!bar.some((label) => label.toLowerCase() === 'more')) return bar
+
+  const opened = evaluate(`(() => {
+    const more = [...document.querySelectorAll('${RAIL} button')]
+      .find(el => (el.innerText || '').trim().toLowerCase() === 'more')
+    if (!more) return 'no-more'
+    more.click()
+    return 'ok'
+  })()`)
+  if (opened.includes('no-more')) return bar
+
+  await waitFor(`document.querySelector('[data-jmc-layer] [role=dialog]') !== null`, {
+    what: 'the More drawer',
+  })
+  const raw = evaluate(
+    `JSON.stringify([...document.querySelectorAll('[data-jmc-layer] [role=dialog] button')]
+       .map(el => (el.innerText || '').split('\\n')[0].trim())
+       .filter(Boolean))`,
+  )
+  let extra = []
+  try {
+    extra = JSON.parse(raw.startsWith('"') ? JSON.parse(raw) : raw)
+  } catch {
+    extra = []
+  }
+  evaluate(`(() => {
+    const close = [...document.querySelectorAll('[data-jmc-layer] [role=dialog] button')]
+      .find(el => (el.getAttribute('aria-label') || '') === 'Close')
+    if (close) close.click()
+    return 'ok'
+  })()`)
+  await waitFor(`document.querySelector('[data-jmc-layer] [role=dialog]') === null`, {
+    what: 'the More drawer to close',
+  })
+
+  const chrome = new Set(['close', 'sign out', 'more'])
+  const seen = new Set()
+  return [...bar, ...extra]
+    .filter((label) => label && !chrome.has(label.trim().toLowerCase()))
+    .filter((label) => (seen.has(label) ? false : seen.add(label)))
+}
+
+/**
+ * Move to a station by its label.
+ *
+ * Looks on the bar first, then inside **More** — which is where most of a
+ * clinical role's stations now live. Matched case-insensitively and by prefix,
+ * because a bar entry renders its icon and its label as one element and a
+ * drawer entry carries the station's one-line description underneath it.
  */
 export async function goToStation(label) {
-  const clicked = evaluate(`(() => {
+  const wanted = JSON.stringify(label.toLowerCase())
+  const onBar = evaluate(`(() => {
     const item = [...document.querySelectorAll('${RAIL} button, ${RAIL} a')]
-      .find(el => (el.innerText || '').trim().toLowerCase()
-        .startsWith(${JSON.stringify(label.toLowerCase())}))
+      .find(el => (el.innerText || '').split('\\n')[0].trim().toLowerCase()
+        .startsWith(${wanted}))
     if (!item) return 'no-station'
     item.click()
     return 'ok'
   })()`)
-  if (clicked.includes('no-station')) {
-    throw new Error(`no station called "${label}" on this rail — rail is ${railStations().join(', ')}`)
+
+  if (onBar.includes('no-station')) {
+    const opened = evaluate(`(() => {
+      const more = [...document.querySelectorAll('${RAIL} button')]
+        .find(el => (el.innerText || '').trim().toLowerCase() === 'more')
+      if (!more) return 'no-more'
+      more.click()
+      return 'ok'
+    })()`)
+    if (opened.includes('no-more')) {
+      throw new Error(
+        `no station called "${label}" on this rail and no More menu — rail is ${railStations().join(', ')}`,
+      )
+    }
+    await waitFor(`document.querySelector('[data-jmc-layer] [role=dialog]') !== null`, {
+      what: 'the More drawer',
+    })
+    const inDrawer = evaluate(`(() => {
+      const item = [...document.querySelectorAll('[data-jmc-layer] [role=dialog] button')]
+        .find(el => (el.innerText || '').split('\\n')[0].trim().toLowerCase()
+          .startsWith(${wanted}))
+      if (!item) return 'no-station'
+      item.click()
+      return 'ok'
+    })()`)
+    if (inDrawer.includes('no-station')) {
+      const all = await allStations()
+      throw new Error(`no station called "${label}" — this session can reach ${all.join(', ')}`)
+    }
+    await waitFor(`document.querySelector('[data-jmc-layer] [role=dialog]') === null`, {
+      what: 'the More drawer to close',
+    })
   }
+
   await waitFor(`(document.querySelector('main')?.innerText ?? '').length > 0`, {
     what: `the ${label} station`,
   })
@@ -213,7 +325,7 @@ export function buttonExists(label) {
 //
 // The vitals screen is not a form of text boxes. It is five reading rows and
 // one on-screen pad: tap a row to start entering it, tap digits, tap the next
-// row. That is deliberate — TABLET.md rule 3 keeps the OS keyboard off a 10"
+// row. That is deliberate — docs/reference/TABLET.md rule 3 keeps the OS keyboard off a 10"
 // screen, where it covers exactly the field being filled in — and it means a
 // test drives it by tapping too, rather than by setting input values.
 

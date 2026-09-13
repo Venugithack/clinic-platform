@@ -4,7 +4,7 @@
 **Owner-supplied decisions recorded 11 September 2026**
 
 This is the authoritative product-policy register for the current programme.
-It supersedes the open-question status in `OWNER_DECISIONS.md`, while retaining
+It supersedes the open-question status in `archive/docs/current-programme/OWNER_DECISIONS.md`, while retaining
 that file as the historical explanation of why each question was raised.
 
 These decisions authorize product behavior; they do not replace review by the
@@ -17,6 +17,13 @@ Status meanings:
 - **Partial** — the direction is known, but one named value or boundary remains.
 - **Evidence** — policy is decided; real clinic material is still needed for
   validation.
+- **Deferred** — the owner decided the capability is not in this release. This
+  is a scope decision and not an open question: the release is complete without
+  it, and what a later release would have to settle is written down beside it.
+
+Section K was added on 13 September 2026 for item 64, and the references moved
+from K to L to keep the bibliography last. Nothing else was re-lettered; the
+earlier shift of old H→I, I→J, J→K on 12 September still holds.
 
 ---
 
@@ -267,6 +274,11 @@ zero; they do not block the review queue itself, which only reports what the
 ledger already says. None of them block schema/UI work with guarded staging
 fixtures.
 
+Medicine administration on the nurse's round was carried here briefly as an
+eighth item. It is not an evidence gate and it is no longer open: the owner
+deferred it from this release on 13 September 2026, and it is recorded as
+item 64 in section K.
+
 ---
 
 ## J. Standing safe defaults
@@ -300,7 +312,62 @@ fixtures.
 
 ---
 
-## K. Policy rationale references
+## K. Nursing observation and medicine administration
+
+| # | Question | Approved policy | Status |
+|---:|---|---|---|
+| 64 | Does this release record medicine given to, or skipped for, a patient under observation? | **No. Deferred to a future release.** The clinic continues to work the way it works today: the doctor writes what the patient is to be given as a free-text observation instruction on the bed, the nurse reads it there, and what happened is recorded as an observation note in the same timeline. The nurse's **Due now** round therefore carries the queue, the readings, the observation checks and the handoffs, and carries no dose list. Nothing in the application schedules a dose, marks one due, or records one as given or skipped. | **Approved — deferred 13 September 2026** |
+
+This is a decision about clinical scope, not an unfinished screen. The Due-now
+workspace is complete against it: every task it shows has an authoritative
+record behind it, which is the property that makes it worth trusting. A dose
+list with nothing behind it would have been worse than no dose list at all, on
+the one screen whose whole job is to be the authority on what is still
+outstanding.
+
+### Item 64 in full: what a later release must answer first
+
+Medicine administration is a clinical subsystem, not a panel. Building it means
+answering all of the following, and section J's standing safe defaults and item
+62's concurrency rule apply to whatever is decided:
+
+1. **Who orders a dose?** Only the doctor who admitted the patient, any doctor,
+   or may a nurse enter a standing instruction the doctor later countersigns?
+2. **What makes a dose due?** A fixed clock time, an interval from the previous
+   dose, or a frequency like a prescription's `twice_daily` resolved against the
+   clinic's own hours? What is the window before it counts as overdue, and does
+   an overdue dose escalate to the doctor the way an observation check does?
+3. **What is recorded when one is given?** Actor, time, medicine, dose and route
+   are obvious. Is a second person's check required for any class — Schedule H1,
+   injections, paediatric doses — and is the route recorded per administration
+   or inherited from the order?
+4. **What is a skip?** Patient refused, asleep, nil by mouth, vomited it back,
+   not available on the trolley, clinically withheld by the nurse. Do these share
+   one reason list, and which of them must reach the doctor rather than sitting
+   in the shift record? Item 20 draws the Patient Declined and Doctor Cancelled
+   distinction for prescriptions; does the same wording apply here?
+5. **Does giving a dose move stock?** If the medicine comes off the pharmacy
+   shelf, administration is a dispense and everything in section C and the FEFO
+   rules applies to it. If the observation room holds its own trolley, that is a
+   second stock location the application does not have, and it needs receiving,
+   counting and expiry of its own.
+6. **Who pays for it, and when?** A dose given in observation is either billed as
+   a medicine line on the visit's invoice, included in an observation charge, or
+   not billed. Item 48's one-checkout rule decides where the line appears once
+   this is answered.
+7. **What happens to an unfinished round at handover or discharge?** Does an
+   undue dose follow the patient out, is the order closed, and who is
+   accountable for a dose that was due while nobody was on the ward?
+
+Until these are answered, `set_observation_instructions` and `record_observation`
+are the clinic's medicine-administration record, and they are the doctor's
+words and the nurse's note rather than a structured order and a structured
+administration. That is a real limitation and it is stated here rather than
+papered over on a screen.
+
+---
+
+## L. Policy rationale references
 
 - CDSCO, [Drugs Rules, 1945](https://cdsco.gov.in/opencms/resources/UploadCDSCOWeb/2022/drug_rules/Drugs%20Rules%201945_2024%2009.pdf), Rule 65: scheduled prescription dispensing, repeat directions, substitution restrictions, records, expiry segregation, and registered-pharmacist supervision of supply outside the manufacturer's container.
 - Pharmacy Council of India, [FAQ on registered-pharmacist responsibility](https://pci.gov.in/en/faqs/), including dispensing only the medicine prescribed and not substituting the prescription.

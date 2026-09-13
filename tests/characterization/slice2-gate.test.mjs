@@ -376,7 +376,7 @@ describe('signing, exact medicine identity, follow-up and paper', () => {
     assert.equal(queue.prescriptions[0].items[0].genericName, 'Paracetamol')
   })
 
-  test('every physical print and reprint receives its own audited copy number', async () => {
+  test('every print and reprint request receives its own audited copy number', async () => {
     const { publisher, patientId, medicineId } = await clinic()
     const signed = await as(publisher, 'sign_consultation', clinicalPayload(patientId, medicineId))
 

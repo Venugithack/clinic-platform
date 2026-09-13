@@ -19,6 +19,7 @@ import {
   CardHeader,
   CheckRow,
   ConfirmButton,
+  DWELL_MAJOR,
   Disclosure,
   EmptyState,
   Field,
@@ -35,10 +36,13 @@ import {
   THead,
   TR,
   Table,
+  TaskFailure,
+  TaskResult,
   Textarea,
   formatDate,
   formatExpiry,
   money,
+  useTask,
   words,
 } from '@/components/ui'
 
@@ -3170,6 +3174,21 @@ export function BatchActions({
 }) {
   const busy = useBusy()
   const isAdmin = roles.includes('admin')
+
+  /*
+   * Moving stock between states is a consequential act.
+   *
+   * It is append-only and permanent — the movement stays on the ledger for
+   * good — so it gets the treatment the plan asks of a consequential action:
+   * the review it already had, a blocking state on the review's own surface
+   * with the operation named, and a result that says exactly what moved.
+   *
+   * The unconfirmed case is why this is a task rather than a busy flag. An
+   * answer lost on the clinic Wi-Fi used to land in `problem` reading like a
+   * refusal, and `adjust_stock` carries no idempotency key — so somebody told
+   * "that did not work" would press it again and move the stock twice.
+   */
+  const adjust = useTask()
   const [from, setFrom] = useState('available')
   const [to, setTo] = useState('quarantine')
   const [quantity, setQuantity] = useState('')
@@ -3239,8 +3258,8 @@ export function BatchActions({
         ) : null}
         <div className="mt-3">
           <ConfirmButton
-            busy={busy}
-            busyLabel="Recording…"
+            busy={adjust.busy}
+            busyLabel={adjust.workingLabel}
             disabled={Boolean(moveProblem)}
             disabledReason={moveProblem}
             title="Record this adjustment"
@@ -3254,21 +3273,48 @@ export function BatchActions({
             }
             confirmLabel="Record it"
             onConfirm={async () => {
-              const result = await run('adjust_stock', {
-                batchId: batch.id,
-                from,
-                to,
-                quantity,
-                reason,
+              setProblem('')
+              const result = await adjust.run({
+                working: `Moving ${quantity} ${plural(batch.baseUnit || 'unit', Number(quantity) || 2)}…`,
+                request: () =>
+                  run('adjust_stock', {
+                    batchId: batch.id,
+                    from,
+                    to,
+                    quantity,
+                    reason,
+                  }),
+                confirmed: () => ({
+                  kind: 'confirmed',
+                  title: 'Stock moved',
+                  identity: `${batch.medicineName} · batch ${batch.batchNumber}`,
+                  detail: `${quantity} ${plural(batch.baseUnit || 'unit', Number(quantity) || 2)} ${
+                    from === 'none' ? 'added to' : `moved from ${from} to`
+                  } ${to === 'none' ? 'out of stock' : to}. The movement is on the ledger for good.`,
+                  icon: 'boxes',
+                  dwell: DWELL_MAJOR,
+                }),
               })
-              if (result.ok) onDone()
-              else setProblem(result.message)
+              // Only a confirmed movement closes the window. A refusal keeps
+              // the typed quantity and reason so they can be corrected, and an
+              // unconfirmed one keeps them because nobody yet knows whether the
+              // stock moved.
+              if (result?.ok) onDone()
             }}
           >
             Record the adjustment
           </ConfirmButton>
+          {/*
+           * No `onRetry`. `adjust_stock` carries no idempotency key, so a
+           * second press after a lost answer is a second movement on an
+           * append-only ledger. Checking the batch first is the instruction,
+           * and the unconfirmed state gives it.
+           */}
+          <TaskFailure failure={adjust.failure} />
         </div>
       </div>
+
+      <TaskResult outcome={adjust.outcome} onDismiss={adjust.dismiss} />
 
       <div>
         <SectionHeader

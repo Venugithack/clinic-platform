@@ -1294,7 +1294,7 @@ model.
 ## 15. Decisions required from the clinic owner
 
 > **Status update, 11 September 2026:** owner decisions are now recorded in
-> [`OWNER_POLICY_REGISTER.md`](OWNER_POLICY_REGISTER.md). The questions below
+> [`../OWNER_POLICY_REGISTER.md`](../OWNER_POLICY_REGISTER.md). The questions below
 > remain as the research-derived checklist and evidence trail; consult the
 > register for current approved and unresolved status.
 
@@ -1362,8 +1362,8 @@ the doctor's or pharmacist's common path.
 
 ## Sources
 
-1. Jayamurugan Clinic repository inspection: **docs/PRODUCT_UX_PLAN.md**,
-   **docs/INVENTORY.md**,
+1. Jayamurugan Clinic repository inspection: **docs/reference/PRODUCT_UX_DISCOVERY.md**,
+   **docs/reference/INVENTORY.md**,
    **supabase/migrations/20260831000000_clinic_schema.sql**, and
    **supabase/functions/_shared/commands.ts**, accessed 10 September 2026.
 2. Ministry of Health & Family Welfare / NRCeS,

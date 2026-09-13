@@ -1401,6 +1401,7 @@ export async function readPatientRecord(
         notes: text(draftRow.notes),
         advice: text(draftRow.advice),
         followUpDate: optional(draftRow.follow_up_date),
+        followUpNote: text(draftRow.follow_up_note),
         items: jsonArray(draftRow.draft_items) as PrescriptionItemView[],
         createdAt: text(draftRow.created_at),
         updatedAt: text(draftRow.updated_at),

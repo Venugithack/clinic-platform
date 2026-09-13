@@ -1,4 +1,4 @@
-# Claude implementation brief for Jayamurugan Clinic
+# AI implementation brief for Jayamurugan Clinic
 
 This file is the coding handoff for the approved product direction. Treat it as
 an execution contract, not as permission to rewrite the application or deploy
@@ -15,8 +15,9 @@ Confirmed additions from the owner:
 - The pharmacy counter collects the doctor's consultation fee, even when no
   medicine is supplied by the clinic.
 - Staff sign-in changes from a six-digit PIN to a four-digit numeric PIN.
-- Doctor, nurse, pharmacy, and inventory requirements in
-  `PRODUCT_UX_PLAN.md` are approved direction.
+- Approved owner decisions are recorded in `docs/OWNER_POLICY_REGISTER.md`.
+- The target role workflows and interaction rules are recorded in
+  `docs/UI_UX_PLAN.md`.
 
 Do not interpret "predictive" as autonomous clinical decision-making. The
 system may help the doctor find and reuse information; it must never diagnose,
@@ -24,15 +25,18 @@ choose treatment, approve a substitution, or sign on the doctor's behalf.
 
 ## 2. Read before changing code
 
-Read these files completely, in this order:
+Always read `AGENTS.md`, then `docs/README.md`. The documentation map in that
+file routes each task to its current sources. Before implementation, also read:
 
-1. `AGENTS.md`
-2. `docs/README.md`
-3. `docs/PRODUCT_UX_PLAN.md`
-4. `docs/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`
-5. `docs/INVENTORY.md`
-6. `docs/TABLET.md`
-7. `.github/workflows/ci.yml`
+1. `docs/UI_UX_PLAN.md` for any role workspace or interaction change.
+2. `docs/OWNER_POLICY_REGISTER.md` for workflows controlled by clinic policy.
+3. `docs/SCHEMA_AND_TYPES.md` for any data, API, or shared-type change.
+4. The applicable document in `docs/reference/` for specialist subject matter.
+5. The applicable runbook in `docs/operations/` for staging or release work.
+6. `.github/workflows/ci.yml` before changing code or verification.
+
+`docs/reference/PRODUCT_UX_DISCOVERY.md` preserves the earlier design-session
+rationale. Later core documents take precedence where the direction changed.
 
 `archive/` describes a retired application. It may explain old decisions but
 is not an implementation source. Do not restore its architecture, commands,
@@ -210,6 +214,12 @@ check-in works.
   retain repeated readings, and show approved `Review this reading` prompts.
 - Add observation elapsed timers, next-check due, notes, doctor instructions,
   handoff, discharge, and transfer confirmation.
+- Medicine given and skipped are NOT in this release. Owner policy register
+  item 64, decided 13 September 2026: a patient under observation is given what
+  the doctor wrote as a free-text observation instruction on the bed, and what
+  happened is recorded as an observation note in the same timeline. The nurse's
+  round carries the queue, the readings, the observation checks and the
+  handoffs, and carries no dose list. This is settled scope, not a gap.
 
 Gate: a normal doctor visit stays in Consult, exact medicine identity remains
 visible through signing/printing, and nurse work never requires reselecting the
@@ -434,6 +444,28 @@ The following originally required owner sign-off where they blocked implementati
 Safe defaults until approval: no automatic stock reservation, no automatic
 substitution, no autonomous diagnosis/treatment, no automated WhatsApp, no
 pharmacy image access, and no image release.
+
+### Deferred by decision, not left open
+
+**Nurse medicine due, given and skipped** is out of scope for this release —
+owner policy register item 64, decided 13 September 2026. It is recorded here
+because it is the one capability in `docs/UI_UX_PLAN.md` the application
+deliberately does not implement, and a later reader should not mistake that for
+unfinished work.
+
+The clinic keeps working as it does: `set_observation_instructions` holds what
+the doctor wrote, `record_observation` holds what the nurse did, and both sit in
+the same bed timeline. There is no order, no schedule, no due time and no
+given/skipped event anywhere in the schema, the commands or the types.
+
+Building it later is a clinical subsystem and not a panel. Section K of the
+register lists the seven questions that must be answered first — who orders a
+dose, what makes one due and what escalates, what is recorded when one is
+given, what a skip is and which skips reach the doctor, whether administration
+moves pharmacy or ward stock, who pays, and what happens to an unfinished round
+at handover. **Do not answer any of them by implementing one**, and do not show
+a nurse a dose list with no authoritative order behind it: the value of that
+screen is that everything on it is real.
 
 ## 11. Definition of done
 

@@ -1,5 +1,10 @@
 # Jayamurugan Clinic product and UX improvement plan
 
+> **Reference status:** this is the design-session discovery record. Use
+> [`../UI_UX_PLAN.md`](../UI_UX_PLAN.md) for the current target interface and
+> [`../OWNER_POLICY_REGISTER.md`](../OWNER_POLICY_REGISTER.md) for approved
+> policy. Those later core documents take precedence.
+
 **Status:** Discovery draft for owner review  
 **Prepared:** 10 September 2026  
 **Scope:** Doctor, nurse, pharmacy, admin, inventory, dispensing, billing,
@@ -13,7 +18,7 @@ migration or change any application behaviour.
 
 The evidence base and refined data design for diagnoses, aetiology, medicine
 identity, package SKUs, barcodes, and batches are in
-`CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`. Where that research is
+`docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`. Where that research is
 more specific, it supersedes the earlier shorthand in this plan.
 
 ## 1. Product outcome
@@ -1027,7 +1032,7 @@ No production work begins until Phase 0 exits successfully.
 ## 18. Owner decisions required
 
 > **Status update, 11 September 2026:** the owner has answered these product
-> questions. Use [`OWNER_POLICY_REGISTER.md`](OWNER_POLICY_REGISTER.md) as the
+> questions. Use [`../OWNER_POLICY_REGISTER.md`](../OWNER_POLICY_REGISTER.md) as the
 > authoritative policy and remaining-evidence list. The questions below are
 > retained as design provenance.
 

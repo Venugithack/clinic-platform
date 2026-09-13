@@ -124,7 +124,7 @@ transaction block does nothing at all, and Postgres warns and then creates the
 tables in `public`, where the retired application lives and eight table names
 collide exactly. `supabase db push` wraps each file; nothing else is guaranteed
 to. If the clinic is behind far enough to be applying any of the pre-Slice-2
-files, that trap is live. `docs/STAGING.md` §3.1 is the long version.
+files, that trap is live. `docs/operations/STAGING.md` §3.1 is the long version.
 
 ```bash
 # Rehearse against a restored copy first. Not optional.
@@ -161,7 +161,7 @@ they meet it.
 Nothing below can be done for them, and the counter is partly refused until it
 is.
 
-1. **Reset the PINs.** `docs/PIN_RESET_RUNBOOK.md`. Confirm an admin exists
+1. **Reset the PINs.** `docs/operations/PIN_RESET_RUNBOOK.md`. Confirm an admin exists
    first (preflight 6). Until a staff member is reset they keep their
    six-digit PIN; the legacy count must reach zero before six-digit
    compatibility comes out of the code.

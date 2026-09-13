@@ -1,6 +1,6 @@
 -- Stock that is going off, and the three things you can do about it.
 --
--- INVENTORY.md §6: return it to the supplier, dispense it first (FEFO already
+-- docs/reference/INVENTORY.md §6: return it to the supplier, dispense it first (FEFO already
 -- does), or write it off at cost. Until now the application could do none of
 -- them: expired stock stayed on the shelf, counted as an asset, and nothing
 -- stopped it being dispensed.

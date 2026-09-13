@@ -8,23 +8,34 @@ import type {
   InvoiceLineView,
   InvoiceView,
   PatientView,
+  PrescriptionItemView,
   Role,
 } from '@/lib/types'
-import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
+import {
+  useBusy,
+  useConnection,
+  useSelectedPatient,
+  type ActionRunner,
+} from './clinic-context'
+import { navigationFor, type View } from './navigation'
 import { callApi } from '@/lib/api'
 import {
   ActionButton,
   Badge,
+  Busy,
   Button,
   Card,
   CardBody,
   CardHeader,
   CheckRow,
   ConfirmButton,
+  DWELL_MAJOR,
+  DWELL_ROUTINE,
   Disclosure,
   EmptyState,
   Field,
   FieldRow,
+  Icon,
   Input,
   Modal,
   Notice,
@@ -37,13 +48,18 @@ import {
   THead,
   TR,
   Table,
+  TaskFailure,
+  TaskResult,
   Textarea,
   Token,
   clinicToday,
   formatDate,
   formatDay,
   money,
+  useTask,
   words,
+  type IconName,
+  type TaskOutcome,
   type Tone,
 } from '@/components/ui'
 
@@ -85,12 +101,205 @@ const BED_TONE = {
   out_of_service: 'stop',
 } as const
 
-export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: ActionRunner }) {
-  const busy = useBusy()
-  const { select, goTo } = useSelectedPatient()
-  const waiting = data.appointments.filter(
-    (item) => item.status === 'waiting' || item.status === 'in_consult',
+/* ═══════════════════════════════════════════════ the operational overview */
+
+/**
+ * One thing that is wrong in the clinic right now, and where it is put right.
+ *
+ * The administrator's first screen used to be four tiles and two lists of
+ * equal weight — a patient queue, a bed count, a bill count and a stock count,
+ * all the same size whether the number under them was 0 or 9, and a "Needs
+ * attention" column that only ever knew about low stock and beds. A reader had
+ * to work out which of six panels was the one that mattered this morning, and
+ * two of the things that matter most — a prescription past its `valid until`
+ * and a bill on the financial review queue — appeared on none of them.
+ *
+ * So the screen is a list of exceptions instead. Each row is a count, the word
+ * for what it counts, one sentence saying what it means, and the station that
+ * settles it. Rows are ordered by what somebody owes a decision on rather than
+ * by which module they came from, and the plan's rule holds: "Avoid a dashboard
+ * made from equally prominent cards."
+ *
+ * Every figure is counted out of the snapshot on each render. Nothing here is
+ * stored, dismissed or acknowledged, which is the plan's other requirement for
+ * this screen — "Exceptions stay visible until resolved rather than
+ * disappearing because they were opened." Opening one changes nothing; only
+ * the clinic answering differently does.
+ */
+type Exception = {
+  id: string
+  /** The word. The count is never on the screen without it. */
+  label: string
+  count: number
+  /** What the figure means and what happens next, in the clinic's own words. */
+  detail: string
+  /** `stop` is a decision owed now; `attn` is work to keep an eye on. */
+  tone: 'stop' | 'attn'
+  icon: IconName
+  /** Where it is settled, most specific first. The first station this session can reach wins. */
+  routes: View[]
+  /** Said instead of a control when nobody on this session's rail can settle it. */
+  whoSettles: string
+}
+
+/** Severity as a word, because colour is never the only signal. */
+const SEVERITY: Record<Exception['tone'], { word: string; tone: Tone }> = {
+  stop: { word: 'Act now', tone: 'stop' },
+  attn: { word: 'Watch', tone: 'attn' },
+}
+
+function minutesSince(at: string, now: number): number {
+  const then = new Date(at).getTime()
+  if (!Number.isFinite(then)) return 0
+  return Math.max(0, Math.round((now - then) / 60_000))
+}
+
+/** A wait said out loud rather than as a bare number. */
+function waitWords(minutes: number): string {
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'}${rest > 0 ? ` ${rest} min` : ''}`
+}
+
+/** Whole days from the clinic's today to a plain `YYYY-MM-DD`. */
+function daysUntil(day: string, today: string): number {
+  const then = new Date(`${day.slice(0, 10)}T00:00:00`).getTime()
+  const from = new Date(`${today}T00:00:00`).getTime()
+  if (!Number.isFinite(then) || !Number.isFinite(from)) return Number.POSITIVE_INFINITY
+  return Math.round((then - from) / 86_400_000)
+}
+
+/**
+ * What a prescription line still owes, and whether anybody may act on it.
+ *
+ * Local copies of `remainingOf` and `isPending` from `components/counter-math.ts`
+ * rather than imports of them. That module reaches `plural` out of
+ * `formulary-workspace.tsx`, which imports `Stack` from this file — and an
+ * import cycle through modules that evaluate at load time is how a shared
+ * component becomes `undefined` on one screen and not another. The arithmetic
+ * is four lines; the cycle would not be worth it.
+ */
+function lineRemaining(item: PrescriptionItemView): number {
+  if (item.remaining !== undefined) return item.remaining
+  return Math.max((item.quantity ?? 0) - (item.supplied ?? 0), 0)
+}
+
+/** A line the counter may still hand something over on. */
+function lineOwed(item: PrescriptionItemView): boolean {
+  if (item.supplyState) {
+    return item.supplyState === 'waiting' || item.supplyState === 'part_supplied'
+  }
+  return !item.cancelled && !item.needsReview
+}
+
+/** A line only a doctor can settle. */
+function lineNeedsDoctor(item: PrescriptionItemView): boolean {
+  return item.supplyState === 'needs_review' || item.needsReview === true
+}
+
+/**
+ * One exception, with the control that answers it.
+ *
+ * The station is resolved against what this session can actually reach rather
+ * than assumed: a pure administrator's rail carries no Consult and no queue, so
+ * a row that sent one there would land on a screen with no way back to it. When
+ * nothing on the rail settles it, the row says who does instead of offering a
+ * button that goes nowhere.
+ */
+function ExceptionRow({
+  exception,
+  station,
+  onOpen,
+}: {
+  exception: Exception
+  station?: { id: View; label: string }
+  onOpen: (view: string) => void
+}) {
+  const severity = SEVERITY[exception.tone]
+
+  return (
+    <div
+      data-testid="overview-exception"
+      data-exception={exception.id}
+      className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-rule px-4 py-3 last:border-b-0"
+    >
+      <span
+        aria-hidden="true"
+        className={`mt-1 shrink-0 ${exception.tone === 'stop' ? 'text-stop' : 'text-attn'}`}
+      >
+        <Icon name={exception.icon} size={20} />
+      </span>
+      <p
+        data-testid="exception-count"
+        className="w-[46px] shrink-0 text-right font-mono text-[20px] leading-tight font-medium tabular-nums"
+      >
+        {exception.count}
+      </p>
+      <div className="min-w-[150px] flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-[15px] leading-snug font-semibold">{exception.label}</h3>
+          <Badge tone={severity.tone}>{severity.word}</Badge>
+        </div>
+        <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{exception.detail}</p>
+      </div>
+      <div className="shrink-0" data-print="hide">
+        {station ? (
+          <Button
+            size="sm"
+            aria-label={`${exception.label} — open ${station.label}`}
+            onClick={() => onOpen(station.id)}
+          >
+            Open {station.label}
+          </Button>
+        ) : (
+          <p className="max-w-[190px] text-[12px] leading-snug text-ink-2">{exception.whoSettles}</p>
+        )}
+      </div>
+    </div>
   )
+}
+
+/**
+ * A confirmed admin result, centred over the screen it did not change.
+ *
+ * Wrapped rather than rendered bare so that a browser test can ask for the
+ * administrator's own result, and so the wrapper is absent — not merely empty —
+ * until the clinic has actually confirmed something.
+ */
+function AdminResult({
+  task,
+  next,
+}: {
+  task: ReturnType<typeof useTask>
+  next?: { label: string; onPress: () => void }
+}) {
+  if (!task.outcome) return null
+  return (
+    <div data-testid="admin-result">
+      <TaskResult outcome={task.outcome} onDismiss={task.dismiss} next={next} />
+    </div>
+  )
+}
+
+export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: ActionRunner }) {
+  const { select, goTo } = useSelectedPatient()
+  const connection = useConnection()
+  const followUpTask = useTask()
+  /* Which row is saving. One global `busy` would relabel every Mark completed
+     on the screen, which is the confusion the shared lifecycle exists to end. */
+  const [completing, setCompleting] = useState('')
+  const now = Date.now()
+  const today = clinicToday()
+
+  /* Waiting and in consultation are counted apart. One is a person nobody has
+     started on and the other is a consultation nobody has finished; they are
+     different facts and they are settled by different people. */
+  const waitingNow = data.appointments.filter((item) => item.status === 'waiting')
+  const inConsult = data.appointments.filter((item) => item.status === 'in_consult')
+  const longestWait = waitingNow
+    .map((item) => ({ item, minutes: minutesSince(item.scheduledAt, now) }))
+    .sort((a, b) => b.minutes - a.minutes)[0]
   const low = data.medicines.filter((item) => item.active && item.totalAvailable <= item.reorderLevel)
   /*
    * What is owed, derived rather than read off a flag.
@@ -119,8 +328,331 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
   const owing = liveInvoices.filter((item) => item.due > 0 && !isUnderReview(item))
   const outstanding = owing.reduce((sum, item) => sum + item.due, 0)
   const occupied = data.beds.filter((item) => item.status === 'occupied')
-  const attention = [...low].slice(0, 5)
+  const overdueChecks = occupied.filter(
+    (bed) => bed.nextCheckAt !== undefined && new Date(bed.nextCheckAt).getTime() <= now,
+  )
+  const handoffs = data.beds.filter(
+    (bed) => bed.handoffRequestedAt !== undefined && bed.handoffResolvedAt === undefined,
+  )
   const openFollowUps = data.followUps.filter((item) => item.status === 'open')
+  const overdueFollowUps = openFollowUps.filter((item) => item.dueDate < today)
+
+  /* Prescriptions counted by what is still owed on them rather than by a status
+     column: one whose every line has been declined is finished, and one with a
+     single part-supplied line is still work standing at the counter. */
+  const owedRx = data.prescriptions.filter((rx) =>
+    rx.items.some((item) => lineOwed(item) && lineRemaining(item) > 0),
+  )
+  const expiredRx = owedRx.filter(
+    (rx) => rx.expired === true || (rx.validUntil !== undefined && rx.validUntil < today),
+  )
+  const liveRx = owedRx.filter((rx) => !expiredRx.includes(rx))
+  const doctorRx = data.prescriptions.filter((rx) => rx.items.some(lineNeedsDoctor))
+
+  /* Stock. Expired, recalled and blocked are held apart from merely low: one is
+     medicine that must not leave the shelf and the other is a purchase order. */
+  const expiredBatches = data.batches.filter(
+    (batch) => batch.expired && batch.availableQuantity > 0,
+  )
+  /* Quantity, not merely status: a recalled batch that was exhausted years ago
+     is history, and putting it on this list every morning teaches a reader to
+     stop reading the list. */
+  const blockedBatches = data.batches.filter(
+    (batch) =>
+      batch.quarantinedQuantity > 0 ||
+      batch.blockedQuantity > 0 ||
+      (batch.status !== 'active' && batch.availableQuantity > 0),
+  )
+  const expiringSoon = data.batches.filter((batch) => {
+    if (batch.expired || batch.availableQuantity <= 0) return false
+    const days = daysUntil(batch.expiry, today)
+    return days >= 0 && days <= 60
+  })
+
+  const balances = data.patientBalances.filter((balance) => balance.outstanding > 0)
+  const owedByPatients = balances.reduce((sum, balance) => sum + balance.outstanding, 0)
+
+  /*
+   * The financial review queue — policy register items 50, 55 and 61.
+   *
+   * Named in the words the command itself refuses in, so that the screen and
+   * the server say one thing. `counter.ts` answers a counter with "Over-refunded
+   * — financial correction required", "Voided with money against it — financial
+   * correction required" or "Voided while over-refunded — financial correction
+   * required" depending on which way the arithmetic went, and this is where the
+   * one person who can do anything about it meets the same sentence.
+   *
+   * The two states are exclusive and `void_with_balance` is decided first, so a
+   * bill appears in exactly one of these three lists and the row's count is the
+   * queue.
+   */
+  const overRefunded = data.invoices.filter((item) => item.paymentState === 'over_refunded')
+  const voidHeld = data.invoices.filter(
+    (item) => item.paymentState === 'void_with_balance' && item.paid > 0,
+  )
+  const voidPast = data.invoices.filter(
+    (item) => item.paymentState === 'void_with_balance' && item.paid <= 0,
+  )
+  const reviewWords = [
+    overRefunded.length > 0
+      ? `Over-refunded — financial correction required. ${money(
+          overRefunded.reduce((sum, item) => sum - item.paid, 0),
+        )} more has gone back out than ever came in.`
+      : '',
+    voidHeld.length > 0
+      ? `Voided with money against it — financial correction required. ${money(
+          voidHeld.reduce((sum, item) => sum + item.paid, 0),
+        )} is still held against ${voidHeld.length === 1 ? 'a bill' : 'bills'} nobody is being charged for.`
+      : '',
+    voidPast.length > 0
+      ? `Voided while over-refunded — financial correction required. ${money(
+          voidPast.reduce((sum, item) => sum - item.paid, 0),
+        )} went back out past ${voidPast.length === 1 ? 'a bill' : 'bills'} already cancelled.`
+      : '',
+    `${underReview.map((item) => item.invoiceNumber).join(', ')}. Nothing is collected at the counter and nothing on any screen closes one: an administrator and the clinic's accountant settle it between them.`,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  /*
+   * Every exception this clinic can be in, declared in the order a person
+   * should meet them and then sorted so that what is owed a decision comes
+   * first. A row with nothing behind it is dropped rather than drawn as a
+   * reassuring zero — a screen of zeroes is a screen nobody reads.
+   */
+  const everyException: Exception[] = [
+    {
+      id: 'financial-review',
+      label:
+        underReview.length === 1 ? 'Bill under financial review' : 'Bills under financial review',
+      count: underReview.length,
+      tone: 'stop',
+      icon: 'alert-circle',
+      detail: reviewWords,
+      routes: ['billing'],
+      whoSettles: 'The administrator and the clinic’s accountant.',
+    },
+    {
+      id: 'connection',
+      label: 'Clinic refresh not answered',
+      count: connection.stale ? 1 : 0,
+      tone: 'stop',
+      icon: 'signal-off',
+      detail: connection.lastUpdated
+        ? `Every figure on this screen is from ${formatDate(
+            new Date(connection.lastUpdated).toISOString(),
+          )}, the last answer that came back. It keeps trying by itself; until it succeeds nothing here is proof of what the clinic holds now.`
+        : 'Nothing on this screen has been confirmed by the clinic yet.',
+      routes: [],
+      whoSettles: 'It retries by itself. Check the clinic Wi-Fi if it stays.',
+    },
+    {
+      id: 'observation-overdue',
+      label: overdueChecks.length === 1 ? 'Observation check overdue' : 'Observation checks overdue',
+      count: overdueChecks.length,
+      tone: 'stop',
+      icon: 'clock',
+      detail: `${overdueChecks
+        .map((bed) => `${bed.label}${bed.patientName ? ` · ${bed.patientName}` : ''}`)
+        .join(', ')}. The next check was due and has not been recorded.`,
+      routes: ['beds'],
+      whoSettles: 'A nurse on the bed board.',
+    },
+    {
+      id: 'handoff',
+      label: 'Doctor handoff requested',
+      count: handoffs.length,
+      tone: 'stop',
+      icon: 'bed',
+      detail: `${handoffs
+        .map((bed) => `${bed.label}${bed.patientName ? ` · ${bed.patientName}` : ''}`)
+        .join(', ')}. A nurse has asked for the doctor and nobody has acknowledged it.`,
+      routes: ['beds'],
+      whoSettles: 'The doctor, on the bed board.',
+    },
+    {
+      id: 'rx-needs-doctor',
+      label: doctorRx.length === 1 ? 'Prescription only a doctor can settle' : 'Prescriptions only a doctor can settle',
+      count: doctorRx.length,
+      tone: 'stop',
+      icon: 'draft',
+      detail:
+        'A signed line carries no readable medicine or no recorded quantity. The counter cannot supply it and nobody but the doctor who is responsible may say what it authorised.',
+      routes: ['review', 'counter'],
+      whoSettles: 'A doctor, on the review queue.',
+    },
+    {
+      id: 'stock-expired',
+      label: expiredBatches.length === 1 ? 'Expired batch still on the shelf' : 'Expired batches still on the shelf',
+      count: expiredBatches.length,
+      tone: 'stop',
+      icon: 'alert',
+      detail: `${expiredBatches.reduce(
+        (sum, batch) => sum + batch.availableQuantity,
+        0,
+      )} units past their expiry date. Nothing expired can be picked, so this is stock waiting to be returned or written off.`,
+      routes: ['expiring', 'inventory'],
+      whoSettles: 'The pharmacist, on Expiring.',
+    },
+    {
+      id: 'rx-expired',
+      label: expiredRx.length === 1 ? 'Prescription past its valid until' : 'Prescriptions past their valid until',
+      count: expiredRx.length,
+      tone: 'stop',
+      icon: 'prescription',
+      detail:
+        'The remainder can no longer be supplied against the signed order. Only a new or amended prescription from the doctor can release it.',
+      routes: ['counter', 'records'],
+      whoSettles: 'The doctor writes a new order; the counter supplies it.',
+    },
+    {
+      id: 'waiting',
+      label: waitingNow.length === 1 ? 'Person waiting' : 'People waiting',
+      count: waitingNow.length,
+      tone: 'attn',
+      icon: 'queue',
+      detail: longestWait
+        ? `Longest wait ${waitWords(longestWait.minutes)} — ${longestWait.item.patientName}, token ${longestWait.item.token}.`
+        : 'Checked in and not yet called.',
+      routes: ['queue', 'due', 'patients'],
+      whoSettles: 'The doctor calls them in from today’s queue.',
+    },
+    {
+      id: 'in-consult',
+      label: inConsult.length === 1 ? 'Consultation unfinished' : 'Consultations unfinished',
+      count: inConsult.length,
+      tone: 'attn',
+      icon: 'stethoscope',
+      detail: `${inConsult
+        .map((item) => `${item.patientName} (${item.token})`)
+        .join(', ')}. Called in and not yet completed, so no fee has reached the counter.`,
+      routes: ['consultation', 'queue', 'records'],
+      whoSettles: 'The doctor, in Consult.',
+    },
+    {
+      id: 'beds-occupied',
+      label: 'Beds occupied',
+      count: occupied.length,
+      tone: 'attn',
+      icon: 'bed',
+      detail: `${occupied.length} of ${data.beds.length} observation beds in use${
+        occupied.length > 0
+          ? ` — ${occupied.map((bed) => bed.patientName ?? bed.label).join(', ')}`
+          : ''
+      }.`,
+      routes: ['beds'],
+      whoSettles: 'A nurse, on the bed board.',
+    },
+    {
+      id: 'rx-waiting',
+      label: liveRx.length === 1 ? 'Prescription waiting at the counter' : 'Prescriptions waiting at the counter',
+      count: liveRx.length,
+      tone: 'attn',
+      icon: 'counter',
+      detail: `${liveRx.reduce(
+        (sum, rx) =>
+          sum + rx.items.filter((item) => lineOwed(item) && lineRemaining(item) > 0).length,
+        0,
+      )} lines still to hand over, inside their valid until.`,
+      routes: ['counter', 'billing'],
+      whoSettles: 'The pharmacist hands medicine over; nobody else may.',
+    },
+    {
+      id: 'stock-blocked',
+      label: blockedBatches.length === 1 ? 'Batch blocked or quarantined' : 'Batches blocked or quarantined',
+      count: blockedBatches.length,
+      tone: 'attn',
+      icon: 'lock',
+      detail:
+        'Recalled, quarantined or held back. The quantity is on the shelf and cannot be picked, so a stock figure that ignored it would be a surprise at the counter.',
+      routes: ['expiring', 'inventory'],
+      whoSettles: 'The pharmacist, on Expiring.',
+    },
+    {
+      id: 'stock-expiring',
+      label: 'Batches expiring within 60 days',
+      count: expiringSoon.length,
+      tone: 'attn',
+      icon: 'clock',
+      detail:
+        'Still saleable today. Returned to the supplier while there is time, or it becomes the row above.',
+      routes: ['expiring', 'inventory'],
+      whoSettles: 'The pharmacist, on Expiring.',
+    },
+    {
+      id: 'stock-low',
+      label: 'Medicines at or below reorder level',
+      count: low.length,
+      tone: 'attn',
+      icon: 'boxes',
+      detail: `${low
+        .slice(0, 4)
+        .map((item) => `${item.name} ${item.strength} (${item.totalAvailable} left)`)
+        .join(', ')}${low.length > 4 ? `, and ${low.length - 4} more` : ''}.`,
+      routes: ['orders', 'inventory'],
+      whoSettles: 'The pharmacist raises a purchase order.',
+    },
+    {
+      id: 'bills-owing',
+      label: owing.length === 1 ? 'Bill owing' : 'Bills owing',
+      count: owing.length,
+      tone: 'attn',
+      icon: 'rupee',
+      detail: `${money(outstanding)} still due${
+        underReview.length > 0
+          ? `, with the ${underReview.length === 1 ? 'bill' : `${underReview.length} bills`} under review kept out of that figure`
+          : ''
+      }.`,
+      routes: ['billing', 'counter'],
+      whoSettles: 'Admin or pharmacy at the counter.',
+    },
+    {
+      id: 'patient-balances',
+      label: balances.length === 1 ? 'Patient carrying a balance' : 'Patients carrying a balance',
+      count: balances.length,
+      tone: 'attn',
+      icon: 'users',
+      detail: `${money(owedByPatients)} against their names. There is no credit limit and no due date; a balance is settled whenever they next come in.`,
+      routes: ['billing'],
+      whoSettles: 'Admin or pharmacy at the counter.',
+    },
+    {
+      id: 'follow-ups',
+      label: overdueFollowUps.length === 1 ? 'Follow-up overdue' : 'Follow-ups overdue',
+      count: overdueFollowUps.length,
+      tone: 'attn',
+      icon: 'history',
+      detail: `${overdueFollowUps
+        .slice(0, 4)
+        .map((item) => `${item.patientName} (due ${item.dueDate})`)
+        .join(', ')}${overdueFollowUps.length > 4 ? `, and ${overdueFollowUps.length - 4} more` : ''}.`,
+      routes: ['records', 'patients'],
+      whoSettles: 'The doctor who asked for the review.',
+    },
+  ]
+  const exceptions = everyException.filter((exception) => exception.count > 0)
+
+  /* What somebody owes a decision on, before what somebody should keep an eye
+     on. Stable within each half, so the order does not dance between refreshes. */
+  const ordered = [
+    ...exceptions.filter((exception) => exception.tone === 'stop'),
+    ...exceptions.filter((exception) => exception.tone === 'attn'),
+  ]
+
+  /*
+   * The stations this session actually has. A pure administrator's rail carries
+   * no Consult, no queue and no review queue — those belong to the clinical
+   * roles — so an exception offers the first station on its list that this
+   * person can reach, and says who settles it when that is nobody.
+   */
+  const reachable = new Map(navigationFor(data.session.roles).map((item) => [item.id, item]))
+  const stationFor = (routes: View[]) => {
+    for (const id of routes) {
+      const station = reachable.get(id)
+      if (station) return station
+    }
+    return undefined
+  }
 
   return (
     <Stack>
@@ -129,6 +661,40 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
         title="Overview"
         sub={`${data.patients.length} patients on the register · ${data.appointments.length} appointments today`}
       />
+
+      {/* The exceptions first, because this screen exists to answer "what is
+          wrong in the clinic right now" and everything below is context for
+          it. One list, ordered by what is owed a decision — not six panels of
+          equal weight where the reader has to work out which one matters. */}
+      <Card data-testid="admin-overview">
+        <CardHeader
+          title="What needs attention"
+          sub={
+            ordered.length === 0
+              ? 'Nothing is waiting on anybody'
+              : `${ordered.length} ${ordered.length === 1 ? 'exception' : 'exceptions'} · what is owed a decision first`
+          }
+        />
+        {ordered.length === 0 ? (
+          <CardBody>
+            <EmptyState
+              title="Nothing needs attention"
+              direction="Nobody is waiting, every observation check is in date, no batch or prescription is blocked, and no bill is under financial review."
+            />
+          </CardBody>
+        ) : (
+          <div>
+            {ordered.map((exception) => (
+              <ExceptionRow
+                key={exception.id}
+                exception={exception}
+                station={stationFor(exception.routes)}
+                onOpen={goTo}
+              />
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* Doctor presence is a fact about the building, so it is stated in
           words on its own rule rather than decorated. It follows one thing
@@ -150,27 +716,12 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Patient queue" value={waiting.length} note="Waiting or in consultation" />
-        <Stat label="Beds occupied" value={`${occupied.length}/${data.beds.length}`} note="Observation beds" />
-        <Stat
-          label="Bills owing"
-          value={owing.length}
-          note={
-            underReview.length > 0
-              ? `${money(outstanding)} still due · ${underReview.length} ${underReview.length === 1 ? 'bill is' : 'bills are'} under review, left out of that figure and waiting on Billing`
-              : `${money(outstanding)} still due`
-          }
-        />
-        <Stat label="Low stock" value={low.length} note="At or below reorder level" />
-      </div>
-
       {data.session.roles.includes('doctor') && openFollowUps.length ? (
         <Card variant="record">
           <CardHeader title="Follow-up reminders" sub={`${openFollowUps.length} open`} />
           <CardBody className="space-y-2">
             {openFollowUps.map((followUp) => {
-              const overdue = followUp.dueDate < clinicToday()
+              const overdue = followUp.dueDate < today
               return (
                 <div key={followUp.id} className="flex flex-wrap items-center gap-3 border-b border-rule pb-2 last:border-b-0">
                   <div className="min-w-[220px] flex-1">
@@ -180,15 +731,46 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
                     </p>
                   </div>
                   <Button size="sm" onClick={() => { select(followUp.patientId); goTo('consultation') }}>Open patient</Button>
-                  {run ? <ActionButton size="sm" busy={busy} onClick={() => run('complete_follow_up', { followUpId: followUp.id, status: 'completed' })}>Mark completed</ActionButton> : null}
+                  {/* Routine, and its own row's: the busy label names this
+                      patient rather than every Mark completed on the screen. */}
+                  {run ? (
+                    <ActionButton
+                      size="sm"
+                      busy={followUpTask.busy && completing === followUp.id}
+                      busyLabel={followUpTask.workingLabel}
+                      onClick={() => {
+                        if (followUpTask.busy) return
+                        setCompleting(followUp.id)
+                        void followUpTask.run({
+                          working: `Completing ${followUp.patientName}’s follow-up…`,
+                          request: () =>
+                            run('complete_follow_up', {
+                              followUpId: followUp.id,
+                              status: 'completed',
+                            }),
+                          confirmed: () => ({
+                            kind: 'confirmed',
+                            title: 'Follow-up completed',
+                            icon: 'history',
+                            identity: followUp.patientName,
+                            detail: `Due ${followUp.dueDate} · ${followUp.note || 'Review'}`,
+                            dwell: DWELL_ROUTINE,
+                          }),
+                        })
+                      }}
+                    >
+                      Mark completed
+                    </ActionButton>
+                  ) : null}
                 </div>
               )
             })}
+            <TaskFailure failure={followUpTask.failure} onDismiss={followUpTask.dismiss} />
           </CardBody>
         </Card>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4">
         <Card>
           <CardHeader title="Patient flow" sub={`${data.appointments.length} today`} />
           {data.appointments.length === 0 ? (
@@ -228,44 +810,9 @@ export function OverviewPanel({ data, run }: { data: ClinicSnapshot; run?: Actio
           )}
         </Card>
 
-        <Card>
-          <CardHeader title="Needs attention" />
-          <CardBody className="space-y-2">
-            {attention.length === 0 && occupied.length === 0 ? (
-              <EmptyState
-                title="Nothing needs attention"
-                direction="Stock is above every reorder level and no bed is occupied."
-              />
-            ) : null}
-            {attention.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-baseline justify-between gap-3 border-b border-rule pb-2 last:border-b-0"
-              >
-                <span className="min-w-0 text-[14px] font-semibold">
-                  {item.name} {item.strength}
-                </span>
-                <span className="shrink-0 font-mono text-[12px] text-stop tabular-nums">
-                  {item.totalAvailable} left · reorder at {item.reorderLevel}
-                </span>
-              </div>
-            ))}
-            {data.beds
-              .filter((bed) => bed.status !== 'available')
-              .map((bed) => (
-                <div
-                  key={bed.id}
-                  className="flex items-baseline justify-between gap-3 border-b border-rule pb-2 last:border-b-0"
-                >
-                  <span className="min-w-0 text-[14px] font-semibold">{bed.label}</span>
-                  <span className="shrink-0 font-mono text-[12px] text-ink-2">
-                    {bed.patientName ?? words(bed.status)}
-                  </span>
-                </div>
-              ))}
-          </CardBody>
-        </Card>
       </div>
+
+      <AdminResult task={followUpTask} />
     </Stack>
   )
 }
@@ -437,9 +984,20 @@ export function PatientsPanel({
   run: ActionRunner
   canRegister?: boolean
 }) {
-  const busy = useBusy()
   const { patientId, select } = useSelectedPatient()
   const [messaging, setMessaging] = useState<PatientView | null>(null)
+  /*
+   * Two routine saves, each owning its own panel.
+   *
+   * Registering a patient and issuing a token are separate records and are
+   * separately refused, so one shared `busy` would have greyed both forms for
+   * either — and the plan's rule for admin is "Saved settings, staff changes
+   * and routine corrections use a small two-second success result plus a
+   * persistent updated value". The persistent value is the row on the register
+   * below, which is where the evidence belongs.
+   */
+  const registerTask = useTask()
+  const queueTask = useTask()
 
   // The three fields the duplicate check reads are held here; the rest of the
   // registration form stays uncontrolled, as the other forms in this app are.
@@ -508,15 +1066,29 @@ export function PatientsPanel({
     event.preventDefault()
     const form = event.currentTarget
     const values = new FormData(form)
-    const result = await run('create_patient', {
-      name,
-      age,
-      sex: values.get('sex'),
-      phone,
-      address: values.get('address'),
-      whatsappConsent: values.get('whatsappConsent') === 'on',
+    const registered = { name: name.trim(), phone: phone.trim() }
+    const result = await registerTask.run({
+      working: `Registering ${registered.name || 'this patient'}…`,
+      request: () =>
+        run('create_patient', {
+          name,
+          age,
+          sex: values.get('sex'),
+          phone,
+          address: values.get('address'),
+          whatsappConsent: values.get('whatsappConsent') === 'on',
+        }),
+      confirmed: () => ({
+        kind: 'confirmed',
+        title: 'Patient registered',
+        icon: 'user',
+        identity: `${registered.name} · ${registered.phone}`,
+        detail:
+          'This tablet is now working on them. Give them a token beside this form, or go straight to Vitals or Consult.',
+        dwell: DWELL_ROUTINE,
+      }),
     })
-    if (result.ok) {
+    if (result?.ok) {
       setJustRegistered({ name, phone })
       form.reset()
       setName('')
@@ -531,14 +1103,29 @@ export function PatientsPanel({
     event.preventDefault()
     const form = event.currentTarget
     const values = new FormData(form)
-    const result = await run('create_appointment', {
-      // The patient the clinic is working on, not a second choice from a
-      // second dropdown. Selecting a duplicate candidate above lands here.
-      patientId,
-      reason: values.get('reason'),
-      scheduledAt: values.get('scheduledAt'),
+    const patient = data.patients.find((item) => item.id === patientId)
+    const result = await queueTask.run({
+      working: `Adding ${patient?.name ?? 'this patient'} to today’s queue…`,
+      request: () =>
+        run('create_appointment', {
+          // The patient the clinic is working on, not a second choice from a
+          // second dropdown. Selecting a duplicate candidate above lands here.
+          patientId,
+          reason: values.get('reason'),
+          scheduledAt: values.get('scheduledAt'),
+        }),
+      // The server's own sentence, because it carries the token that was
+      // issued — the one fact the desk is about to say out loud.
+      confirmed: (answer) => ({
+        kind: 'confirmed',
+        title: 'Added to today’s queue',
+        icon: 'queue',
+        identity: patient?.name ?? 'Patient',
+        detail: answer.message,
+        dwell: DWELL_ROUTINE,
+      }),
     })
-    if (result.ok) form.reset()
+    if (result?.ok) form.reset()
   }
 
   return (
@@ -552,6 +1139,7 @@ export function PatientsPanel({
       {canRegister ? (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-print="hide">
           <Disclosure label="Register a new patient" hint="Name, age and a mobile number are enough to start">
+            <Busy on={registerTask.busy} label={registerTask.workingLabel}>
             <form onSubmit={addPatient} className="space-y-4">
               <FieldRow>
                 <Field label="Full name" required>
@@ -615,13 +1203,22 @@ export function PatientsPanel({
                 }}
               />
 
-              <ActionButton type="submit" variant="primary" busy={busy} busyLabel="Saving…">
+              <TaskFailure failure={registerTask.failure} onDismiss={registerTask.dismiss} />
+
+              <ActionButton
+                type="submit"
+                variant="primary"
+                busy={registerTask.busy}
+                busyLabel={registerTask.workingLabel}
+              >
                 Save patient
               </ActionButton>
             </form>
+            </Busy>
           </Disclosure>
 
           <Disclosure label="Add to today's queue" hint="Issues the next token in the queue">
+            <Busy on={queueTask.busy} label={queueTask.workingLabel}>
             <form onSubmit={addAppointment} className="space-y-4">
               <FieldRow>
                 <Field label="Patient" required className="sm:col-span-2">
@@ -647,18 +1244,21 @@ export function PatientsPanel({
                   <Input name="scheduledAt" type="datetime-local" defaultValue={nowOnThisTablet()} required />
                 </Field>
               </FieldRow>
+              <TaskFailure failure={queueTask.failure} onDismiss={queueTask.dismiss} />
+
               <ActionButton
                 type="submit"
                 variant="primary"
                 className="min-h-[56px]"
-                busy={busy}
-                busyLabel="Adding…"
+                busy={queueTask.busy}
+                busyLabel={queueTask.workingLabel}
                 disabled={patientId === ''}
                 disabledReason="Choose the patient first."
               >
                 Add to today&rsquo;s queue
               </ActionButton>
             </form>
+            </Busy>
           </Disclosure>
         </div>
       ) : null}
@@ -747,6 +1347,9 @@ export function PatientsPanel({
         connectionNote={data.whatsapp.note}
         run={run}
       />
+
+      <AdminResult task={registerTask} />
+      <AdminResult task={queueTask} />
     </Stack>
   )
 }
@@ -771,7 +1374,7 @@ function PatientMessage({
   connectionNote: string
   run: ActionRunner
 }) {
-  const busy = useBusy()
+  const sendTask = useTask()
   const [body, setBody] = useState('')
 
   const blocked = !patient?.whatsappConsent
@@ -781,47 +1384,73 @@ function PatientMessage({
       : undefined
 
   return (
-    <Modal
-      open={patient !== null}
-      onClose={onClose}
-      title="Patient WhatsApp"
-      sub={patient ? `${patient.name} · ${patient.phone}` : undefined}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <ActionButton
-            variant="primary"
-            busy={busy}
-            busyLabel="Sending…"
-            disabled={Boolean(blocked) || body.trim() === ''}
-            disabledReason={blocked ?? 'Write a message first.'}
-            onClick={async () => {
-              if (!patient) return
-              const result = await run('send_patient_whatsapp', { patientId: patient.id, body })
-              if (result.ok) onClose()
-            }}
-          >
-            Send message
-          </ActionButton>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <Field label="Message" hint="Sent from the clinic's WhatsApp number.">
-          <Textarea
-            rows={5}
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            placeholder={
-              patient ? `Hello ${patient.name}, this is a message from Jayamurugan Clinic.` : ''
-            }
-          />
-        </Field>
-        {blocked ? <Notice tone="bad">{blocked}</Notice> : null}
-      </div>
-    </Modal>
+    <>
+      <Modal
+        open={patient !== null}
+        onClose={onClose}
+        title="Patient WhatsApp"
+        sub={patient ? `${patient.name} · ${patient.phone}` : undefined}
+        // The dialog's own surface carries the wait. A message leaving the
+        // clinic for a patient's phone cannot be un-sent, so the box stays up
+        // and says what it is doing until Meta has actually answered.
+        busy={sendTask.busy}
+        busyLabel={sendTask.workingLabel}
+        footer={
+          <>
+            <Button variant="ghost" onClick={onClose} disabled={sendTask.busy}>
+              Cancel
+            </Button>
+            <ActionButton
+              variant="primary"
+              busy={sendTask.busy}
+              busyLabel={sendTask.workingLabel}
+              disabled={Boolean(blocked) || body.trim() === ''}
+              disabledReason={blocked ?? 'Write a message first.'}
+              onClick={async () => {
+                if (!patient) return
+                const result = await sendTask.run({
+                  working: `Sending to ${patient.name}…`,
+                  request: () => run('send_patient_whatsapp', { patientId: patient.id, body }),
+                  confirmed: () => ({
+                    kind: 'confirmed',
+                    title: 'Message sent',
+                    icon: 'check-circle',
+                    identity: `${patient.name} · ${patient.phone}`,
+                    detail: body.trim(),
+                    dwell: DWELL_ROUTINE,
+                  }),
+                })
+                if (result?.ok) {
+                  setBody('')
+                  onClose()
+                }
+              }}
+            >
+              Send message
+            </ActionButton>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Message" hint="Sent from the clinic's WhatsApp number.">
+            <Textarea
+              rows={5}
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+              placeholder={
+                patient ? `Hello ${patient.name}, this is a message from Jayamurugan Clinic.` : ''
+              }
+            />
+          </Field>
+          {blocked ? <Notice tone="bad">{blocked}</Notice> : null}
+          {/* A refusal keeps the typed message. Nothing offers a blind retry:
+              an unconfirmed send may already have reached the patient. */}
+          <TaskFailure failure={sendTask.failure} onDismiss={sendTask.dismiss} />
+        </div>
+      </Modal>
+
+      <AdminResult task={sendTask} />
+    </>
   )
 }
 
@@ -895,6 +1524,7 @@ export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunn
       <ObservationForm
         bed={observing}
         data={data}
+        clock={clock}
         run={run}
         onClose={() => setObserving(null)}
       />
@@ -932,7 +1562,7 @@ function BedForm({
   run: ActionRunner
   onClose: () => void
 }) {
-  const busy = useBusy()
+  const saveTask = useTask()
   const [status, setStatus] = useState('available')
   const [patientId, setPatientId] = useState('')
   const [notes, setNotes] = useState('')
@@ -949,30 +1579,50 @@ function BedForm({
   // Re-key on the bed so each opening starts from that bed's own state.
   const key = bed?.id ?? 'none'
 
+  const chosen = data.patients.find((patient) => patient.id === patientId)
+
   return (
+    <>
     <Modal
       key={key}
       open={bed !== null}
       onClose={onClose}
       title="Update bed"
       sub={bed?.label}
+      busy={saveTask.busy}
+      busyLabel={saveTask.workingLabel}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={saveTask.busy}>
             Cancel
           </Button>
           <ActionButton
             variant="primary"
-            busy={busy}
-            busyLabel="Saving…"
+            busy={saveTask.busy}
+            busyLabel={saveTask.workingLabel}
             disabled={status === 'occupied' && !patientId}
             disabledReason="Choose which patient is in this bed."
             onClick={async () => {
               if (!bed) return
-              const result = await run('update_bed', {
-                bedId: bed.id, status, patientId, notes, nextCheckAt,
+              const result = await saveTask.run({
+                working: `Saving ${bed.label}…`,
+                request: () =>
+                  run('update_bed', {
+                    bedId: bed.id, status, patientId, notes, nextCheckAt,
+                  }),
+                confirmed: () => ({
+                  kind: 'confirmed',
+                  title: 'Bed updated',
+                  icon: 'bed',
+                  identity: `${bed.label} · ${words(status)}`,
+                  detail:
+                    status === 'occupied'
+                      ? `${chosen?.name ?? 'Patient'} is in this bed${nextCheckAt ? `, next check ${formatDate(new Date(nextCheckAt).toISOString())}` : ''}.`
+                      : 'Nobody is in this bed.',
+                  dwell: DWELL_ROUTINE,
+                }),
               })
-              if (result.ok) onClose()
+              if (result?.ok) onClose()
             }}
           >
             Save bed
@@ -1009,25 +1659,65 @@ function BedForm({
             <Input type="datetime-local" value={nextCheckAt} onChange={(event) => setNextCheckAt(event.target.value)} />
           </Field>
         ) : null}
+        <TaskFailure failure={saveTask.failure} onDismiss={saveTask.dismiss} />
       </div>
     </Modal>
+
+    <AdminResult task={saveTask} />
+    </>
+  )
+}
+
+/**
+ * What just happened, said inside the window that asked for it.
+ *
+ * The result overlay is portalled to `<body>` and everything else in the
+ * document is `inert` while a dialog is open, so an overlay raised by a dialog
+ * that stays open would be unreachable behind it — which is the shape of the
+ * bug this replaces, where the observation form closed itself and left its
+ * answer in the shared notice bar behind where the reader was looking.
+ *
+ * So routine work done inside a window that must stay open answers here, with
+ * no dwell: it is a persistent result and it stays until the next one replaces
+ * it or the window closes. Consequential work — a discharge, a transfer, a
+ * void, a refund — closes its window first and then gets the overlay.
+ */
+function DialogResult({ outcome }: { outcome: TaskOutcome | null }) {
+  if (!outcome) return null
+  return (
+    <Notice tone={outcome.kind === 'partial' ? 'pending' : 'good'} icon={outcome.icon}>
+      <span className="font-semibold">{outcome.title}</span>
+      {outcome.identity ? <> · {outcome.identity}</> : null}
+      {outcome.detail ? <span className="mt-0.5 block">{outcome.detail}</span> : null}
+    </Notice>
   )
 }
 
 function ObservationForm({
   bed,
   data,
+  clock,
   run,
   onClose,
 }: {
   bed: BedView | null
   data: ClinicSnapshot
+  /** The bed board's ticking clock, so the overdue figure here matches it. */
+  clock: number
   run: ActionRunner
   onClose: () => void
 }) {
-  const busy = useBusy()
   const canNurse = data.session.roles.some((role) => role === 'admin' || role === 'nurse')
   const canDoctor = data.session.roles.includes('doctor')
+  /*
+   * Four tasks, because these are four records and four refusals. One shared
+   * state would have put "Saving observation…" on the Request doctor handoff
+   * button, which is the confusion the shared lifecycle exists to end.
+   */
+  const noteTask = useTask()
+  const handoffTask = useTask()
+  const instructionTask = useTask()
+  const closeTask = useTask()
   const [note, setNote] = useState('')
   const [nextCheckAt, setNextCheckAt] = useState('')
   const [instructions, setInstructions] = useState('')
@@ -1040,80 +1730,244 @@ function ObservationForm({
     setInstructions(bed?.doctorInstructions ?? '')
     setOutcome('discharged')
     setClosureNote('')
+    // The persistent results go with the bed they were about. Opening bed 3
+    // must never begin by telling somebody what was recorded on bed 1.
+    noteTask.dismiss()
+    handoffTask.dismiss()
+    instructionTask.dismiss()
+    // `dismiss` is stable for the life of a task, so the bed is the whole
+    // dependency. Adding them would only invite a reset on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bed])
 
-  return (
-    <Modal open={bed !== null} onClose={onClose} title="Observation actions" sub={bed ? `${bed.label} · ${bed.patientName ?? 'No patient'}` : undefined}>
-      <div className="space-y-5">
-        {canNurse ? (
-          <section className="space-y-3">
-            <p className="eyebrow">Nursing observation</p>
-            <Field label="Observation note"><Textarea value={note} onChange={(event) => setNote(event.target.value)} /></Field>
-            <Field label="Next check"><Input type="datetime-local" value={nextCheckAt} onChange={(event) => setNextCheckAt(event.target.value)} /></Field>
-            <div className="flex flex-wrap gap-2">
-              <ActionButton busy={busy} disabled={!note.trim() && !nextCheckAt} onClick={async () => {
-                if (!bed) return
-                const result = await run('record_observation', { bedId: bed.id, note, nextCheckAt })
-                if (result.ok) { setNote(''); onClose() }
-              }}>Save observation</ActionButton>
-              <ActionButton busy={busy} onClick={async () => {
-                if (!bed) return
-                const result = await run('request_observation_handoff', { bedId: bed.id, note })
-                if (result.ok) onClose()
-              }}>Request doctor handoff</ActionButton>
-            </div>
-          </section>
-        ) : null}
+  /*
+   * The bed as the clinic has it now, not as it was when this window opened.
+   *
+   * `observing` is a view captured at the moment of the tap, so without this
+   * the handoff badge and the overdue timer inside the window would be frozen
+   * at whatever they said then — and a nurse saving an observation would watch
+   * the next-check figure stay overdue after she had just moved it.
+   */
+  const live = bed ? (data.beds.find((row) => row.id === bed.id) ?? bed) : null
+  const handoffOpen = Boolean(live?.handoffRequestedAt) && !live?.handoffResolvedAt
 
-        {canDoctor ? (
-          <section className="space-y-3 border-t border-rule pt-4">
-            <p className="eyebrow">Doctor instruction</p>
-            <Field label="Instruction"><Textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} /></Field>
-            <div className="flex flex-wrap gap-2">
-              <ActionButton busy={busy} disabled={!instructions.trim()} onClick={async () => {
-                if (!bed) return
-                const result = await run('set_observation_instructions', { bedId: bed.id, instructions })
-                if (result.ok) onClose()
-              }}>Save instruction</ActionButton>
-              {bed?.handoffRequestedAt && !bed.handoffResolvedAt ? (
-                <ActionButton variant="primary" busy={busy} onClick={async () => {
-                  const result = await run('resolve_observation_handoff', { bedId: bed.id, note: instructions })
-                  if (result.ok) onClose()
-                }}>Acknowledge handoff</ActionButton>
+  const said = (title: string, detail: string): TaskOutcome => ({
+    kind: 'confirmed',
+    title,
+    icon: 'bed',
+    identity: `${live?.label ?? 'Bed'} · ${live?.patientName ?? 'No patient'}`,
+    detail,
+    // Persistent. This window stays open, so the result stays with it.
+    dwell: 0,
+  })
+
+  return (
+    <>
+      <Modal
+        open={bed !== null}
+        onClose={onClose}
+        title="Observation actions"
+        sub={live ? `${live.label} · ${live.patientName ?? 'No patient'}` : undefined}
+      >
+        <div className="space-y-5">
+          {/* The urgent state of this bed, inside the window rather than only
+              behind it. Saving an observation no longer closes the window, so
+              whoever is standing at the bed keeps the overdue figure and the
+              outstanding handoff in front of them while they work. */}
+          {live?.status === 'occupied' ? (
+            <div className="space-y-2 border-l-2 border-ink pl-3">
+              <ObservationTimer at={live.nextCheckAt} clock={clock} />
+              {handoffOpen ? (
+                <Badge tone="stop">Doctor handoff requested</Badge>
+              ) : live.handoffResolvedAt ? (
+                <Badge tone="free">Handoff acknowledged</Badge>
+              ) : null}
+              {live.doctorInstructions ? (
+                <p className="text-[12px] leading-snug">
+                  <span className="font-semibold">Doctor:</span> {live.doctorInstructions}
+                </p>
               ) : null}
             </div>
-          </section>
-        ) : null}
+          ) : null}
 
-        {canNurse ? (
-          <section className="space-y-3 border-t border-rule pt-4">
-            <p className="eyebrow">Close observation</p>
-            <FieldRow>
-              <Field label="Outcome"><Select value={outcome} onChange={(event) => setOutcome(event.target.value as 'discharged' | 'transferred')}><option value="discharged">Discharged</option><option value="transferred">Transferred</option></Select></Field>
-              <Field label="Outcome note" required><Input value={closureNote} onChange={(event) => setClosureNote(event.target.value)} /></Field>
-            </FieldRow>
-            <ConfirmButton
-              variant="danger"
-              confirmVariant="danger"
-              busy={busy}
-              disabled={!closureNote.trim()}
-              title={outcome === 'discharged' ? 'Discharge patient?' : 'Record transfer?'}
-              question={`${outcome === 'discharged' ? 'Discharge' : 'Transfer'} ${bed?.patientName ?? 'this patient'} and mark ${bed?.label ?? 'this bed'} for cleaning? The observation history is kept.`}
-              confirmLabel={outcome === 'discharged' ? 'Confirm discharge' : 'Confirm transfer'}
-              onConfirm={async () => {
-                if (!bed) return
-                const result = await run('close_observation', {
-                  bedId: bed.id, outcome, note: closureNote, confirmed: true,
-                })
-                if (result.ok) onClose()
-              }}
+          {canNurse ? (
+            <Busy
+              on={noteTask.busy || handoffTask.busy}
+              label={noteTask.busy ? noteTask.workingLabel : handoffTask.workingLabel}
             >
-              {outcome === 'discharged' ? 'Discharge patient' : 'Record transfer'}
-            </ConfirmButton>
-          </section>
-        ) : null}
-      </div>
-    </Modal>
+              <section className="space-y-3">
+                <p className="eyebrow">Nursing observation</p>
+                <Field label="Observation note"><Textarea value={note} onChange={(event) => setNote(event.target.value)} /></Field>
+                <Field label="Next check"><Input type="datetime-local" value={nextCheckAt} onChange={(event) => setNextCheckAt(event.target.value)} /></Field>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton
+                    busy={noteTask.busy}
+                    busyLabel={noteTask.workingLabel}
+                    disabled={!note.trim() && !nextCheckAt}
+                    disabledReason="Write an observation, or set the next check time."
+                    onClick={async () => {
+                      if (!bed) return
+                      const written = note.trim()
+                      const due = nextCheckAt
+                      const result = await noteTask.run({
+                        working: `Saving the observation for ${live?.label ?? 'this bed'}…`,
+                        request: () => run('record_observation', { bedId: bed.id, note, nextCheckAt }),
+                        confirmed: () =>
+                          said(
+                            'Observation recorded',
+                            `${written || 'No note'}${
+                              due
+                                ? ` · next check ${formatDate(new Date(due).toISOString())}`
+                                : ' · next check not scheduled'
+                            }`,
+                          ),
+                      })
+                      // The window stays open. The note is cleared because it
+                      // is on the record now; the bed, the timer and the
+                      // handoff stay in front of whoever is at the bedside.
+                      if (result?.ok) setNote('')
+                    }}
+                  >
+                    Save observation
+                  </ActionButton>
+                  <ActionButton
+                    busy={handoffTask.busy}
+                    busyLabel={handoffTask.workingLabel}
+                    onClick={async () => {
+                      if (!bed) return
+                      const asked = note.trim()
+                      await handoffTask.run({
+                        working: `Asking the doctor to come to ${live?.label ?? 'this bed'}…`,
+                        request: () => run('request_observation_handoff', { bedId: bed.id, note }),
+                        confirmed: () =>
+                          said(
+                            'Doctor handoff requested',
+                            asked
+                              ? `${asked} — the request stays on the bed board until a doctor acknowledges it.`
+                              : 'The request stays on the bed board until a doctor acknowledges it.',
+                          ),
+                      })
+                    }}
+                  >
+                    Request doctor handoff
+                  </ActionButton>
+                </div>
+                <TaskFailure failure={noteTask.failure} onDismiss={noteTask.dismiss} />
+                <TaskFailure failure={handoffTask.failure} onDismiss={handoffTask.dismiss} />
+                <DialogResult outcome={noteTask.outcome} />
+                <DialogResult outcome={handoffTask.outcome} />
+              </section>
+            </Busy>
+          ) : null}
+
+          {canDoctor ? (
+            <Busy on={instructionTask.busy} label={instructionTask.workingLabel}>
+              <section className="space-y-3 border-t border-rule pt-4">
+                <p className="eyebrow">Doctor instruction</p>
+                <Field label="Instruction"><Textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} /></Field>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton
+                    busy={instructionTask.busy}
+                    busyLabel={instructionTask.workingLabel}
+                    disabled={!instructions.trim()}
+                    disabledReason="Write the instruction first."
+                    onClick={async () => {
+                      if (!bed) return
+                      const written = instructions.trim()
+                      await instructionTask.run({
+                        working: `Saving the instruction for ${live?.label ?? 'this bed'}…`,
+                        request: () =>
+                          run('set_observation_instructions', { bedId: bed.id, instructions }),
+                        confirmed: () => said('Instruction saved', written),
+                      })
+                    }}
+                  >
+                    Save instruction
+                  </ActionButton>
+                  {handoffOpen ? (
+                    <ActionButton
+                      variant="primary"
+                      busy={instructionTask.busy}
+                      busyLabel={instructionTask.workingLabel}
+                      onClick={async () => {
+                        if (!bed) return
+                        const written = instructions.trim()
+                        await instructionTask.run({
+                          working: `Acknowledging the handoff on ${live?.label ?? 'this bed'}…`,
+                          request: () =>
+                            run('resolve_observation_handoff', { bedId: bed.id, note: instructions }),
+                          confirmed: () =>
+                            said(
+                              'Handoff acknowledged',
+                              written || 'The nurse sees that a doctor has taken this on.',
+                            ),
+                        })
+                      }}
+                    >
+                      Acknowledge handoff
+                    </ActionButton>
+                  ) : null}
+                </div>
+                <TaskFailure failure={instructionTask.failure} onDismiss={instructionTask.dismiss} />
+                <DialogResult outcome={instructionTask.outcome} />
+              </section>
+            </Busy>
+          ) : null}
+
+          {canNurse ? (
+            <section className="space-y-3 border-t border-rule pt-4">
+              <p className="eyebrow">Close observation</p>
+              <FieldRow>
+                <Field label="Outcome"><Select value={outcome} onChange={(event) => setOutcome(event.target.value as 'discharged' | 'transferred')}><option value="discharged">Discharged</option><option value="transferred">Transferred</option></Select></Field>
+                <Field label="Outcome note" required><Input value={closureNote} onChange={(event) => setClosureNote(event.target.value)} /></Field>
+              </FieldRow>
+              {/* Consequential: the bed empties and the patient leaves the
+                  clinic's care, so this one reviews first, blocks its own
+                  dialog while it commits, and answers on the overlay once this
+                  window has closed. */}
+              <ConfirmButton
+                variant="danger"
+                confirmVariant="danger"
+                busy={closeTask.busy}
+                busyLabel={closeTask.workingLabel}
+                disabled={!closureNote.trim()}
+                disabledReason="Say what happened to the patient first."
+                title={outcome === 'discharged' ? 'Discharge patient?' : 'Record transfer?'}
+                question={`${outcome === 'discharged' ? 'Discharge' : 'Transfer'} ${live?.patientName ?? 'this patient'} and mark ${live?.label ?? 'this bed'} for cleaning? The observation history is kept.`}
+                confirmLabel={outcome === 'discharged' ? 'Confirm discharge' : 'Confirm transfer'}
+                onConfirm={async () => {
+                  if (!bed) return
+                  const patientName = live?.patientName ?? 'The patient'
+                  const label = live?.label ?? 'This bed'
+                  const why = closureNote.trim()
+                  const result = await closeTask.run({
+                    working: `${outcome === 'discharged' ? 'Discharging' : 'Transferring'} ${patientName}…`,
+                    request: () =>
+                      run('close_observation', {
+                        bedId: bed.id, outcome, note: closureNote, confirmed: true,
+                      }),
+                    confirmed: () => ({
+                      kind: 'confirmed',
+                      title: outcome === 'discharged' ? 'Patient discharged' : 'Transfer recorded',
+                      icon: 'bed',
+                      identity: `${patientName} · ${label}`,
+                      detail: `${why} — ${label} is now for cleaning. The observation history is kept.`,
+                      dwell: DWELL_MAJOR,
+                    }),
+                  })
+                  if (result?.ok) onClose()
+                }}
+              >
+                {outcome === 'discharged' ? 'Discharge patient' : 'Record transfer'}
+              </ConfirmButton>
+              <TaskFailure failure={closeTask.failure} onDismiss={closeTask.dismiss} />
+            </section>
+          ) : null}
+        </div>
+      </Modal>
+
+      <AdminResult task={closeTask} />
+    </>
   )
 }
 
@@ -1363,6 +2217,8 @@ export function ReasonAction({
   confirmLabel,
   reasonLabel = 'Reason',
   reasonHint,
+  busyLabel = 'Recording…',
+  failure,
   variant = 'secondary',
   size = 'md',
   disabled = false,
@@ -1375,6 +2231,21 @@ export function ReasonAction({
   confirmLabel: string
   reasonLabel?: string
   reasonHint?: string
+  /**
+   * The present-tense operation, shown on the dialog's own surface while it is
+   * in flight. Optional and additive: every existing call site keeps working
+   * and gets the generic word.
+   */
+  busyLabel?: string
+  /**
+   * A refusal, rendered inside this dialog rather than behind it.
+   *
+   * While a window is open every other child of `<body>` is `inert`, so a
+   * refusal shown out on the workspace is one the person who caused it cannot
+   * read or reach. Optional and additive; a call site that passes nothing keeps
+   * the shared notice bar it had.
+   */
+  failure?: ReactNode
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   size?: 'sm' | 'md'
   disabled?: boolean
@@ -1384,12 +2255,27 @@ export function ReasonAction({
   const busy = useBusy()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
+  /*
+   * This dialog's own view of the request, kept apart from the clinic-wide
+   * `busy`. The window stays up and says what it is doing until the clinic has
+   * answered, rather than closing and putting the loading state on a trigger
+   * behind where the reader is looking — which is what voiding a bill used to
+   * do. A refusal keeps the window AND the typed reason, so the next attempt is
+   * a correction rather than a retype.
+   */
+  const [committing, setCommitting] = useState(false)
 
   async function commit() {
-    const result = await onConfirm(reason.trim())
-    if (!result || result.ok) {
-      setOpen(false)
-      setReason('')
+    if (committing) return
+    setCommitting(true)
+    try {
+      const result = await onConfirm(reason.trim())
+      if (!result || result.ok) {
+        setOpen(false)
+        setReason('')
+      }
+    } finally {
+      setCommitting(false)
     }
   }
 
@@ -1398,7 +2284,8 @@ export function ReasonAction({
       <ActionButton
         variant={variant}
         size={size}
-        busy={busy}
+        busy={busy || committing}
+        busyLabel={busyLabel}
         disabled={disabled}
         disabledReason={disabledReason}
         onClick={() => setOpen(true)}
@@ -1409,14 +2296,17 @@ export function ReasonAction({
         open={open}
         onClose={() => setOpen(false)}
         title={title}
+        busy={committing}
+        busyLabel={busyLabel}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={committing}>
               Cancel
             </Button>
             <ActionButton
               variant={variant === 'danger' ? 'danger' : 'primary'}
-              busy={busy}
+              busy={committing}
+              busyLabel={busyLabel}
               disabled={reason.trim() === ''}
               disabledReason="Say why before this is recorded."
               onClick={commit}
@@ -1431,10 +2321,11 @@ export function ReasonAction({
           <Field label={reasonLabel} hint={reasonHint} required>
             <Textarea
               value={reason}
-              disabled={busy}
+              disabled={busy || committing}
               onChange={(event) => setReason(event.target.value)}
             />
           </Field>
+          {failure}
         </div>
       </Modal>
     </>
@@ -1515,6 +2406,16 @@ export function InvoicePayments({
   run?: ActionRunner
   canReverse?: boolean
 }) {
+  /*
+   * Reversing a receipt is money, and money is consequential: a review step
+   * that collects the reason, a loading state on the dialog's own surface, and
+   * a result that names the receipt, the amount and the bill it was against.
+   * The task lives here rather than at the call site because the only screen
+   * that passes `canReverse` is Billing, and a reversal offered anywhere else
+   * should behave identically the day it is.
+   */
+  const reverseTask = useTask()
+
   return (
     <div>
       <SectionHeader title="Money against this bill" sub={`${invoice.payments.length} recorded`} />
@@ -1559,6 +2460,8 @@ export function InvoicePayments({
                       confirmLabel="Reverse the receipt"
                       reasonLabel="Why it never arrived"
                       reasonHint="A reversal says the money never arrived. A refund says it came back — they are not the same."
+                      busyLabel={`Reversing ${payment.receiptNumber}…`}
+                      failure={<TaskFailure failure={reverseTask.failure} />}
                       question={
                         <>
                           Reverse receipt{' '}
@@ -1567,8 +2470,28 @@ export function InvoicePayments({
                           as reversed, and it stops counting towards what has been paid.
                         </>
                       }
-                      onConfirm={(reason) =>
-                        run('reverse_payment', { paymentId: payment.id, reason })
+                      /* A null answer means the task refused a second press or
+                         the request threw. Nothing is confirmed either way, so
+                         this stays `ok: false` and the window stays open with
+                         the typed reason and the failure inside it. */
+                      onConfirm={async (reason) =>
+                        (await reverseTask.run({
+                          working: `Reversing ${payment.receiptNumber}…`,
+                          request: () => run('reverse_payment', { paymentId: payment.id, reason }),
+                          confirmed: () => ({
+                            kind: 'confirmed',
+                            title: 'Receipt reversed',
+                            icon: 'receipt',
+                            identity: `${payment.receiptNumber} · ${invoice.invoiceNumber}`,
+                            detail: `${money(payment.amount)} ${
+                              payment.kind === 'refund'
+                                ? 'that went back out'
+                                : 'that never arrived'
+                            } no longer counts against ${invoice.patientName ?? 'this counter sale'}. The receipt keeps its number and stays on the record as reversed.`,
+                            facts: [{ label: 'Reason', value: reason }],
+                            dwell: DWELL_MAJOR,
+                          }),
+                        })) ?? { ok: false, message: 'Not confirmed.' }
                       }
                     >
                       Reverse
@@ -1580,6 +2503,8 @@ export function InvoicePayments({
           ))}
         </TBody>
       </Table>
+
+      <AdminResult task={reverseTask} />
     </div>
   )
 }
@@ -1665,6 +2590,10 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
 
   const [openId, setOpenId] = useState('')
   const open = data.invoices.find((invoice) => invoice.id === openId) ?? null
+  /* Voiding is consequential and it is the administrator's alone, so it gets
+     the whole treatment: a review that collects the reason, a loading state on
+     that review's own surface, and a result naming the bill and the patient. */
+  const voidTask = useTask()
 
   return (
     <Stack>
@@ -1834,6 +2763,12 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                 as a patient owing more than they were ever charged. */}
             {open.paymentState === 'over_refunded' ? (
               <Notice tone="bad">
+                {/* Policy register item 50 fixes these words and `counter.ts`
+                    refuses in them. The same sentence on every screen is the
+                    point of it, so the bill's own card leads with it. */}
+                <span className="font-semibold">
+                  Over-refunded — financial correction required.
+                </span>{' '}
                 {money(-open.paid)} more has gone back out on this bill than ever came in — usually
                 a refund, and then the reversal of the payment that refund answered. The Due figure
                 below is that money, not money the patient owes. Taking payment, refunding again
@@ -1848,6 +2783,14 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                 on this card is Paid. The sentence says which way it points. */}
             {open.paymentState === 'void_with_balance' ? (
               <Notice tone="bad">
+                {/* Policy register item 61, in the words `counter.ts` refuses a
+                    counter in — and which of the two depends on the direction
+                    the money went, because they are different errors. */}
+                <span className="font-semibold">
+                  {open.paid > 0
+                    ? 'Voided with money against it — financial correction required.'
+                    : 'Voided while over-refunded — financial correction required.'}
+                </span>{' '}
                 {open.paid > 0
                   ? `${money(open.paid)} is still held against this bill, and the bill was cancelled — so the clinic is holding money for something it is not charging anybody for.`
                   : `${money(-open.paid)} went back out on this bill after it was cancelled — so money left the drawer against a bill that was already charging nobody anything.`}{' '}
@@ -1892,6 +2835,8 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                   title="Void this bill"
                   confirmLabel="Void the bill"
                   reasonLabel="Why it should never have been raised"
+                  busyLabel={`Voiding ${open.invoiceNumber}…`}
+                  failure={<TaskFailure failure={voidTask.failure} />}
                   question={
                     <>
                       Void <span className="font-mono font-semibold">{open.invoiceNumber}</span>? It
@@ -1914,7 +2859,23 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
                           ? 'This bill is over-refunded and under financial review. It is settled by a correction the accountant approves, not by voiding.'
                           : 'Money has been taken against this bill. Refund it first.'
                   }
-                  onConfirm={(reason) => run('void_invoice', { invoiceId: open.id, reason })}
+                  onConfirm={async (reason) =>
+                    (await voidTask.run({
+                      working: `Voiding ${open.invoiceNumber}…`,
+                      request: () => run('void_invoice', { invoiceId: open.id, reason }),
+                      confirmed: () => ({
+                        kind: 'confirmed',
+                        title: 'Bill voided',
+                        icon: 'receipt',
+                        identity: `${open.invoiceNumber} · ${open.patientName ?? 'Counter sale — no patient'}`,
+                        detail: `${money(open.total)} is no longer charged to anybody. The bill keeps its number and its lines and stays on the record as void.`,
+                        facts: [{ label: 'Reason', value: reason }],
+                        dwell: DWELL_MAJOR,
+                      }),
+                      // Null means nothing was confirmed — a second press
+                      // refused, or a request that threw. The window stays.
+                    })) ?? { ok: false, message: 'Not confirmed.' }
+                  }
                 >
                   Void the bill
                 </ReasonAction>
@@ -2009,6 +2970,8 @@ export function BillingPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
           </Table>
         )}
       </Card>
+
+      <AdminResult task={voidTask} />
     </Stack>
   )
 }
@@ -2028,9 +2991,33 @@ function RefundAction({
   run: ActionRunner
 }) {
   const busy = useBusy()
+  /* Real money leaving the drawer: the dialog reviews, blocks its own surface
+     while the clinic decides, and answers with the bill, the patient and the
+     amount once it has. A refusal never auto-dismisses and never offers a
+     blind retry — see `refundKey` below for why that matters here above all. */
+  const refundTask = useTask()
   const [open, setOpen] = useState(false)
   const [parts, setParts] = useState<PartDraft[]>([blankPart()])
   const [reason, setReason] = useState('')
+
+  /**
+   * One key per refund being attempted, held across a failure.
+   *
+   * It used to be `crypto.randomUUID()` written inline in the payload, which
+   * means a brand-new key on every press — the exact shape that makes an
+   * idempotency key useless. Refund ₹300, lose the reply on the clinic Wi-Fi,
+   * press again because the screen still shows the form, and the server sees a
+   * key it has never met and refunds ₹300 a second time. Real money, gone,
+   * twice, against a bill that can now only be put right by an accountant
+   * under policy item 56 — which is a workflow nobody has built yet.
+   *
+   * So the key belongs to the attempt and not to the press. It is minted once,
+   * survives every refusal, and is replaced only after the clinic has confirmed
+   * a refund actually happened. The counter's hand-over has always worked this
+   * way (`keyFor` in `checkout-workspace.tsx`); this is the same discipline on
+   * the one command where getting it wrong costs the patient money.
+   */
+  const [refundKey, setRefundKey] = useState(() => crypto.randomUUID())
 
   const typed = partsTotal(parts)
   const entered = partsPayload(parts)
@@ -2065,16 +3052,35 @@ function RefundAction({
                   : undefined
 
   async function commit() {
-    const result = await run('refund_payment', {
-      invoiceId: invoice.id,
-      idempotencyKey: crypto.randomUUID(),
-      reason: reason.trim(),
-      refund: entered,
+    const going = typed ?? 0
+    const why = reason.trim()
+    const methods = entered.map((part) => METHOD_LABEL[part.method]).join(' + ')
+    const result = await refundTask.run({
+      working: `Refunding ${fromPaise(going)} on ${invoice.invoiceNumber}…`,
+      request: () =>
+        run('refund_payment', {
+          invoiceId: invoice.id,
+          idempotencyKey: refundKey,
+          reason: why,
+          refund: entered,
+        }),
+      confirmed: () => ({
+        kind: 'confirmed',
+        title: 'Refund recorded',
+        icon: 'rupee',
+        identity: `${invoice.patientName ?? 'Counter sale — no patient'} · ${invoice.invoiceNumber}`,
+        detail: `${fromPaise(going)} went back out${methods ? ` by ${methods}` : ''}. The payment it answers keeps its number and its amount.`,
+        facts: [{ label: 'Reason', value: why }],
+        dwell: DWELL_MAJOR,
+      }),
     })
-    if (result.ok) {
+    if (result?.ok) {
       setOpen(false)
       setParts([blankPart()])
       setReason('')
+      // Only now. A refused or unanswered attempt keeps the key, so pressing
+      // again asks the clinic about the same refund rather than a second one.
+      setRefundKey(crypto.randomUUID())
     }
   }
 
@@ -2105,14 +3111,17 @@ function RefundAction({
         onClose={() => setOpen(false)}
         title="Refund against this bill"
         sub={invoice.invoiceNumber}
+        busy={refundTask.busy}
+        busyLabel={refundTask.workingLabel}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={refundTask.busy}>
               Cancel
             </Button>
             <ActionButton
               variant="danger"
-              busy={busy}
+              busy={refundTask.busy}
+              busyLabel={refundTask.workingLabel}
               disabled={Boolean(problem)}
               disabledReason={problem}
               onClick={commit}
@@ -2141,8 +3150,16 @@ function RefundAction({
               onChange={(event) => setReason(event.target.value)}
             />
           </Field>
+          {/* Inside the window, because the window stays open on a refusal and
+              everything outside it is inert. No Try again: this command moves
+              real money, and an unconfirmed one may already have moved it. The
+              same `refundKey` is still held, so pressing Record the refund
+              again asks the clinic about THIS refund rather than a second. */}
+          <TaskFailure failure={refundTask.failure} />
         </div>
       </Modal>
+
+      <AdminResult task={refundTask} />
     </>
   )
 }
@@ -2271,22 +3288,39 @@ export function ClinicSettingsPanel({
   data: ClinicSnapshot
   run: ActionRunner
 }) {
-  const busy = useBusy()
+  /* A routine save: the panel it changes is covered while it saves, a short
+     result names what the clinic now prints, and the persistent value is the
+     "Last changed" line in the header, which the snapshot moves by itself. */
+  const saveTask = useTask()
   const s = data.settings
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const values = new FormData(event.currentTarget)
-    await run('update_clinic_settings', {
-      name: values.get('name'),
-      address: values.get('address'),
-      phone: values.get('phone'),
-      email: values.get('email'),
-      drugLicenceNumber: values.get('drugLicenceNumber'),
-      doctorRegistrationNumber: values.get('doctorRegistrationNumber'),
-      gstin: values.get('gstin'),
-      consultationFee: Number(values.get('consultationFee') ?? 0),
-      footerNote: values.get('footerNote'),
+    const named = String(values.get('name') ?? s.name)
+    const fee = Number(values.get('consultationFee') ?? 0)
+    await saveTask.run({
+      working: 'Saving the clinic details…',
+      request: () =>
+        run('update_clinic_settings', {
+          name: values.get('name'),
+          address: values.get('address'),
+          phone: values.get('phone'),
+          email: values.get('email'),
+          drugLicenceNumber: values.get('drugLicenceNumber'),
+          doctorRegistrationNumber: values.get('doctorRegistrationNumber'),
+          gstin: values.get('gstin'),
+          consultationFee: fee,
+          footerNote: values.get('footerNote'),
+        }),
+      confirmed: () => ({
+        kind: 'confirmed',
+        title: 'Clinic details saved',
+        icon: 'settings',
+        identity: named,
+        detail: `Every bill and prescription printed from now on carries these. Consultation fee ${money(fee)}.`,
+        dwell: DWELL_ROUTINE,
+      }),
     })
   }
 
@@ -2309,6 +3343,7 @@ export function ClinicSettingsPanel({
       <Card variant="record">
         <CardHeader title="Clinic identity" sub="Printed at the top of every sheet" />
         <CardBody>
+          <Busy on={saveTask.busy} label={saveTask.workingLabel}>
           <form onSubmit={submit} className="space-y-4">
             <FieldRow cols={2}>
               <Field label="Clinic name" required>
@@ -2367,12 +3402,22 @@ export function ClinicSettingsPanel({
               <Input name="footerNote" defaultValue={s.footerNote} />
             </Field>
 
-            <ActionButton type="submit" variant="primary" busy={busy} busyLabel="Saving…">
+            <TaskFailure failure={saveTask.failure} onDismiss={saveTask.dismiss} />
+
+            <ActionButton
+              type="submit"
+              variant="primary"
+              busy={saveTask.busy}
+              busyLabel={saveTask.workingLabel}
+            >
               Save clinic details
             </ActionButton>
           </form>
+          </Busy>
         </CardBody>
       </Card>
+
+      <AdminResult task={saveTask} />
     </Stack>
   )
 }
@@ -2505,7 +3550,27 @@ export function RegistersPanel({ data }: { data: ClinicSnapshot }) {
         </Card>
       </div>
 
-      {result ? (
+      {/* A search, so it loads inline and announces itself. No result overlay:
+          reading a register is not a thing that happened to the clinic, and a
+          popup congratulating somebody on a query is noise on a screen an
+          inspector is standing in front of. */}
+      {loading ? (
+        <Card data-print="hide">
+          <CardHeader title="Schedule H1 register" sub={`${from} to ${to}`} />
+          <CardBody>
+            <p role="status" aria-live="polite" className="text-[13px] text-ink-2">
+              Reading the register…
+            </p>
+            <div aria-hidden="true" className="mt-3 space-y-2">
+              {[0, 1, 2, 3, 4].map((row) => (
+                <div key={row} className="h-[36px] rounded-box bg-paper" />
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {result && !loading ? (
         <>
           {result.unsetMedicines > 0 ? (
             <div data-print="hide">

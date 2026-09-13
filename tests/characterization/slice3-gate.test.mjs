@@ -1,7 +1,7 @@
 /**
  * Slice 3's exit gate: medicine identity, packages, receiving and stock.
  *
- * The list this file works through is `docs/SLICE3_CLINIC_APPROVAL_PACK.md`
+ * The list this file works through is `archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md`
  * §10 — the acceptance checks the owner's answers added — plus the invariants
  * the brief's §7 requires of every migration that touches stock.
  *

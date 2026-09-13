@@ -608,7 +608,7 @@ update jmc.clinic_settings set consultation_fee = 300 where consultation_fee = 0
  * SQL naming a dropped table fails at PARSE time — before any `if exists`
  * could help. `EXECUTE` defers the parse until the branch is actually taken.
  *
- * docs/STAGING.md §3.1 is the same argument from the other direction: a
+ * docs/operations/STAGING.md §3.1 is the same argument from the other direction: a
  * migration applied by a route nobody planned for should fail loudly or not at
  * all, never half-way.
  */

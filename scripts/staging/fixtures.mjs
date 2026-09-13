@@ -387,7 +387,7 @@ export const FIXTURE_PATIENTS = {
 /**
  * Four, and the reason they differ is `return_window_days`.
  *
- * `INVENTORY.md` §6 and the migration that added the column make the point:
+ * `docs/reference/INVENTORY.md` §6 and the migration that added the column make the point:
  * stock expiring in five months from a supplier who takes returns at six is
  * more urgent than stock expiring in three from a supplier who takes none, so
  * the expiring list cannot simply sort by date. That is only testable with
@@ -959,7 +959,7 @@ const FIXTURE_UNMAPPED_BARCODE = { code: '5060337028134', symbology: 'ean13', se
  * Twenty batches, and about half of them are here to be difficult.
  *
  * `quantity` is never written down. Each batch carries its movements and
- * `available_quantity` is their sum, because `INVENTORY.md` §1 says the ledger
+ * `available_quantity` is their sum, because `docs/reference/INVENTORY.md` §1 says the ledger
  * is the truth and the batch figure is a cache over it. A fixture that types
  * both numbers separately is a fixture that can disagree with itself, and
  * every reconciliation test written against it is then worthless. The seed
@@ -2283,7 +2283,7 @@ async function assertConsistent(tx) {
   const wrong = []
 
   // 1. The ledger is the truth and the batch figure is a cache over it.
-  //    `INVENTORY.md` §1. A fixture where these disagree makes every
+  //    `docs/reference/INVENTORY.md` §1. A fixture where these disagree makes every
   //    reconciliation test meaningless.
   const drift = await tx`
     select b.batch_number,

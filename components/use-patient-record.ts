@@ -34,20 +34,41 @@ const EMPTY: Omit<PatientRecordView, 'patientId'> = {
  * `loading` is deliberately separate from empty. A patient with no history and
  * a patient whose history has not arrived look identical otherwise, and the
  * screen would flash "no previous visits" at a doctor mid-consultation.
+ *
+ * ── AND `failed` IS SEPARATE FROM BOTH ─────────────────────────────────────
+ *
+ * For the same reason, one step further on. A failed fetch used to be swallowed
+ * into `EMPTY`, so a patient whose history did not arrive — the clinic Wi-Fi in
+ * the corridor, a 500, a timeout — was presented to the doctor as a patient who
+ * has no history: "First recorded visit.", no allergies, no previous
+ * prescription, nothing to review. That is not a slow screen, it is a screen
+ * stating a clinical fact that is false, during a consultation, about somebody
+ * who may well be allergic to what is about to be prescribed.
+ *
+ * So the failure is carried out to the caller, and the screens that show
+ * history say they could not read it rather than saying there is none.
  */
 export function usePatientRecord(patientId: string): {
   record: Omit<PatientRecordView, 'patientId'>
   loading: boolean
+  /**
+   * The history could not be read. What is in `record` is empty because
+   * nothing arrived, NOT because the patient has no history — never present
+   * either as an absence of allergies or as a first visit.
+   */
+  failed: boolean
   /** Re-read after writing something that belongs to this patient. */
   refresh: () => void
 } {
   const [record, setRecord] = useState(EMPTY)
   const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
     if (!patientId) {
       setRecord(EMPTY)
+      setFailed(false)
       return
     }
 
@@ -55,6 +76,7 @@ export function usePatientRecord(patientId: string): {
     // land on top of the patient now on screen.
     let current = true
     setRecord(EMPTY)
+    setFailed(false)
     setLoading(true)
 
     void (async () => {
@@ -62,9 +84,20 @@ export function usePatientRecord(patientId: string): {
         const response = await callApi(`record?patientId=${encodeURIComponent(patientId)}`)
         const result = (await response.json()) as { ok: boolean; record?: PatientRecordView }
         if (!current) return
-        setRecord(result.ok && result.record ? result.record : EMPTY)
+        if (result.ok && result.record) {
+          setRecord(result.record)
+          setFailed(false)
+        } else {
+          // The clinic answered and declined to give the record. Whatever the
+          // reason, this tablet does not know this patient's history.
+          setRecord(EMPTY)
+          setFailed(true)
+        }
       } catch {
-        if (current) setRecord(EMPTY)
+        if (current) {
+          setRecord(EMPTY)
+          setFailed(true)
+        }
       } finally {
         if (current) setLoading(false)
       }
@@ -75,5 +108,5 @@ export function usePatientRecord(patientId: string): {
     }
   }, [patientId, nonce])
 
-  return { record, loading, refresh: () => setNonce((n) => n + 1) }
+  return { record, loading, failed, refresh: () => setNonce((n) => n + 1) }
 }

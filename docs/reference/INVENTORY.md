@@ -66,11 +66,11 @@ stock.
 
 ## 2. Barcode, from the tablet camera
 
-Both screens are tablets (`TABLET.md`). Tablets have cameras. Some medicine
+Both screens are tablets (`docs/reference/TABLET.md`). Tablets have cameras. Some medicine
 packages carry usable barcodes or QR codes, but coverage and payloads are not
 universal. The current Indian mandate applies to defined Schedule H2 products
 and expands in stages; the workflow must always retain fast text search and
-manual verification. See `CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §7.
+manual verification. See `docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §7.
 
 | Where | What it removes |
 |---|---|
@@ -238,7 +238,7 @@ rule 4 — nothing orders itself — absolutely intact.
 | Supplier price history | last 5 purchase prices per drug per supplier | shown on the PO line: "₹42 last time from Kumar, ₹45 from Reddy" |
 
 Everything above is **suggestion only**, rendered as a proposed quantity the
-doctor can edit before the one tap that sends (`WHATSAPP.md` §9). The moment
+doctor can edit before the one tap that sends (`docs/reference/WHATSAPP.md` §9). The moment
 these numbers write a PO by themselves, `PLAN.md` §5.3 rule 4 is gone and one
 bad reorder level costs him real money.
 

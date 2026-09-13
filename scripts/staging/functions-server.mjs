@@ -53,7 +53,7 @@ process.env.CLINIC_SESSION_SECRET ??= 'staging-only-session-secret-not-a-real-on
  * by hand or through the browser suite exercises the real capture path — the
  * consent check, the access rules, the audit, the checksum — against real
  * bytes. It is NOT a test of Supabase's bucket policy, which is a deployment
- * check; see docs/STAGING.md.
+ * check; see docs/operations/STAGING.md.
  *
  * `storage.ts` has no default for this on purpose: unset means "storage is not
  * configured", which the screen says out loud, rather than a photograph

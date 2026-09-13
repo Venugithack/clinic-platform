@@ -1,7 +1,7 @@
 /**
  * The inventory reads that are too big for the poll.
  *
- * `docs/CLAUDE_IMPLEMENTATION_BRIEF.md` §3: "Large history, stock ledgers,
+ * `docs/AGENT_IMPLEMENTATION_BRIEF.md` §3: "Large history, stock ledgers,
  * payment history, and clinical-image bytes are fetched on demand, not added
  * to the whole-clinic polling snapshot." Four tablets asking every fifteen
  * seconds for a stock ledger that grows by a row per sale is how a free

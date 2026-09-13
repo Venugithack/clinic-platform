@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import type { LockScreenStaffView, PinFormat, Role, SessionView } from './types.ts'
+import type { LockScreenStaffView, PinFormat, Role, SessionView, ThemeChoice } from './types.ts'
 import { PIN_LENGTH } from './types.ts'
 import { db, isoNow } from './db.ts'
 import { verifyPassword } from './password.ts'
@@ -70,6 +70,7 @@ type StaffAuthRow = {
   active: number
   pin_format: PinFormat
   can_publish_clinical_templates: number
+  theme: string
 }
 
 /**
@@ -93,6 +94,7 @@ type SessionRow = {
   expires_at: string
   active: number
   can_publish_clinical_templates: number
+  theme: string
 }
 
 /**
@@ -149,7 +151,7 @@ export async function createSession(
   }
 
   const staff = (await db.prepare(`select id,name,username,roles_json,pin_hash,pin_salt,active,pin_format,
-      can_publish_clinical_templates
+      can_publish_clinical_templates, theme
     from staff where id=?`).get(staffId)) as StaffAuthRow | undefined
 
   // The PIN offered has to be the length this account actually holds.
@@ -203,8 +205,17 @@ function toView(row: SessionRow | (StaffAuthRow & { staff_id: string; last_seen:
     roles: JSON.parse(row.roles_json) as Role[],
     lastSeen: row.last_seen,
     canPublishClinicalTemplates: Boolean(Number(row.can_publish_clinical_templates ?? 0)),
+    // Anything the column does not recognise reads as "no choice made", which
+    // resolves against the device. A tablet must never fail to open because a
+    // preference is unfamiliar.
+    theme: THEMES.includes(String(row.theme) as ThemeChoice)
+      ? (String(row.theme) as ThemeChoice)
+      : 'system',
   }
 }
+
+/** The values `staff.theme` may hold, matching `staff_theme_is_known`. */
+const THEMES: readonly ThemeChoice[] = ['system', 'paper', 'night', 'contrast']
 
 export async function getSession(
   rawToken: string | undefined,
@@ -213,7 +224,7 @@ export async function getSession(
   if (!rawToken) return null
   const hashed = tokenHash(rawToken)
   const row = await db.prepare(`select s.staff_id, st.name, st.username, st.roles_json,
-      s.last_seen, s.expires_at, st.active, st.can_publish_clinical_templates
+      s.last_seen, s.expires_at, st.active, st.can_publish_clinical_templates, st.theme
     from sessions s join staff st on st.id=s.staff_id
     where s.token_hash=?`).get(hashed) as SessionRow | undefined
   if (!row || !row.active || row.expires_at <= isoNow()) {

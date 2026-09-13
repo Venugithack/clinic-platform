@@ -1,7 +1,7 @@
 /**
  * The inventory reads that are deliberately not in the poll.
  *
- * `docs/CLAUDE_IMPLEMENTATION_BRIEF.md` §3 keeps stock ledgers and receipt
+ * `docs/AGENT_IMPLEMENTATION_BRIEF.md` §3 keeps stock ledgers and receipt
  * history out of the whole-clinic snapshot, so they live behind
  * `supabase/functions/inventory/index.ts`. That is an Edge Function rather
  * than a shared module, and until now nothing in the database suite could

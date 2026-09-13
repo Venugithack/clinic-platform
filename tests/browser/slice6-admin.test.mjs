@@ -16,8 +16,10 @@ import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
 import { closeBrowser, evaluate, launchBrowser, waitFor } from './support/harness.mjs'
 import {
+  EVERY_SHAPE,
   LANDSCAPE,
   PORTRAIT,
+  allStations,
   clickButton,
   freshPage,
   goToStation,
@@ -91,6 +93,169 @@ async function openReports() {
 const sidewaysScroll = () =>
   Number(evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth'))
 
+// ── the operational overview ───────────────────────────────────────────────
+
+const OVERVIEW = '[data-testid="admin-overview"]'
+const EXCEPTION = '[data-testid="overview-exception"]'
+
+/**
+ * Every exception the administrator is being shown, as the screen has it.
+ *
+ * Note `\\s` below. This string becomes page code and a single backslash is
+ * eaten on the way — the same escape that ate a `\d` in `auth.ts` during Slice
+ * 1 and refused every PIN in the clinic. Doubling it is what puts a real `\s`
+ * in front of the browser.
+ */
+const exceptionRows = () =>
+  listFrom(`JSON.stringify([...document.querySelectorAll('${EXCEPTION}')].map(row => ({
+    id: row.getAttribute('data-exception'),
+    count: (row.querySelector('[data-testid="exception-count"]')?.innerText || '').trim(),
+    action: (row.querySelector('button')?.innerText || '').trim(),
+    text: (row.innerText || '').replace(/\\s+/g, ' ').trim(),
+  })))`)
+
+/** Land on the administrator's first screen. The owner is a doctor too, so
+    the tablet opens on the queue and Overview is one tap away on the rail. */
+async function openOverview() {
+  await goToStation('Overview')
+  await waitFor(`!!document.querySelector('${OVERVIEW}')`, {
+    what: 'the operational overview',
+    timeout: 20_000,
+  })
+}
+
+describe('the operational overview', () => {
+  test('every exception carries a count, a word for it, and the station that settles it', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(OWNER.name, OWNER.pin)
+    await openOverview()
+
+    const rows = exceptionRows()
+    assert.ok(
+      rows.length > 0,
+      `the fixture clinic has people waiting, stock below its reorder level and bills owing, so the overview must list something — screen says:\n${workText().slice(0, 900)}`,
+    )
+
+    for (const row of rows) {
+      // A figure on its own means nothing. Every row is a number AND the word
+      // for what the number counts.
+      assert.match(
+        row.count,
+        /^\d+$/,
+        `exception "${row.id}" must show a count — it showed "${row.count}"`,
+      )
+      assert.ok(
+        row.text.length > row.count.length + 8,
+        `exception "${row.id}" must say what its count counts — it read "${row.text}"`,
+      )
+      // Severity is carried by a word as well as a colour, every time.
+      assert.ok(
+        row.text.includes('Act now') || row.text.includes('Watch'),
+        `exception "${row.id}" states its urgency only in colour — it read "${row.text}"`,
+      )
+    }
+
+    // At least one of them offers the control that resolves it. The plan's
+    // requirement for this screen is "See operational exceptions and move
+    // directly to the responsible control."
+    const withStation = rows.filter((row) => row.action.toLowerCase().startsWith('open '))
+    assert.ok(
+      withStation.length > 0,
+      `no exception offered a station to open — rows were ${rows.map((row) => `${row.id}:${row.action}`).join(', ')}`,
+    )
+  })
+
+  test('a bill under financial review is on the overview, in the words the command refuses in', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(OWNER.name, OWNER.pin)
+    await openOverview()
+
+    const review = exceptionRows().find((row) => row.id === 'financial-review')
+    assert.ok(
+      review,
+      `the fixtures carry an over-refunded bill and a cancelled bill that is not at nothing; both belong on the administrator's first screen — rows were ${exceptionRows()
+        .map((row) => row.id)
+        .join(', ')}`,
+    )
+
+    // Policy register items 50 and 61 fix these words, and `counter.ts`
+    // refuses a counter in them. The administrator meets the same sentence.
+    assert.match(
+      review.text,
+      /financial correction required/i,
+      `the review row must say what the command says — it read "${review.text}"`,
+    )
+    // Named, not merely counted: an administrator opening Billing needs to
+    // know which bills. (`INV-` rather than a regex: a single backslash does
+    // not survive the trip into the page.)
+    assert.ok(
+      review.text.includes('INV-'),
+      `the review row must name the bills it is about — it read "${review.text}"`,
+    )
+    assert.ok(
+      review.action.toLowerCase().includes('billing'),
+      `a bill under review is settled from Billing — the row offered "${review.action}"`,
+    )
+  })
+
+  test('opening an exception moves to its station and does not resolve it', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(OWNER.name, OWNER.pin)
+    await openOverview()
+
+    const opened = evaluate(`(() => {
+      const row = [...document.querySelectorAll('${EXCEPTION}')]
+        .find(r => r.getAttribute('data-exception') === 'financial-review')
+      if (!row) return 'no-row'
+      const button = row.querySelector('button')
+      if (!button) return 'no-button'
+      button.click()
+      return 'ok'
+    })()`)
+    assert.ok(opened.includes('ok'), 'the financial-review row must offer a way to Billing')
+
+    await waitFor(mainSays('bill register'), { what: 'the bill register', timeout: 20_000 })
+
+    // Back again. An exception is a fact about the clinic, not a notification:
+    // it stays until the ledger says otherwise, not until somebody looks at it.
+    await openOverview()
+    assert.ok(
+      exceptionRows().some((row) => row.id === 'financial-review'),
+      'an exception must stay visible until it is resolved, not until it is opened',
+    )
+  })
+
+  test('the overview holds at every shape the plan names', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(OWNER.name, OWNER.pin)
+    await openOverview()
+
+    for (const shape of EVERY_SHAPE) {
+      setViewport(shape)
+      await waitFor(`!!document.querySelector('${OVERVIEW}')`, {
+        what: `the overview at ${shape.name}`,
+      })
+      assert.ok(
+        sidewaysScroll() <= 1,
+        `the overview scrolled sideways by ${sidewaysScroll()}px at ${shape.name}`,
+      )
+      // Nothing a thumb has to hit may be under the touch floor.
+      const short = listFrom(`JSON.stringify([...document.querySelectorAll('${EXCEPTION} button')]
+        .map(b => ({ label: (b.innerText || '').trim(), height: Math.round(b.getBoundingClientRect().height) }))
+        .filter(b => b.height > 0 && b.height < 44))`)
+      assert.deepEqual(
+        short,
+        [],
+        `every control on the overview must clear 44px at ${shape.name} — ${JSON.stringify(short)}`,
+      )
+    }
+  })
+})
+
 describe('the administrator\'s rail', () => {
   test('twenty stations are divided into five sections, and none is lost', async () => {
     setViewport(LANDSCAPE)
@@ -108,7 +273,9 @@ describe('the administrator\'s rail', () => {
     // had before is still reachable, including the ones Slices 3 to 6 added.
     const stations = railStations().map((label) => label.toLowerCase())
     for (const station of [
-      'overview', 'reports', 'staff', 'patients', 'queue', 'consult',
+      // `today` is the queue. The redesign gave each station the name the
+      // person using it actually says out loud, and the doctor says "today".
+      'overview', 'reports', 'staff', 'patients', 'today', 'consult',
       'formulary', 'receiving', 'counter', 'day book', 'clinic',
     ]) {
       assert.ok(
@@ -234,10 +401,14 @@ describe('the doctor review queue', () => {
     await freshPage()
     await signIn(DOCTOR_ONLY.name, DOCTOR_ONLY.pin)
 
-    const doctorRail = railStations().map((label) => label.toLowerCase())
+    // Reachable, not necessarily on the daily bar. Settling a legacy
+    // prescription line is occasional work, so it lives under More — which the
+    // plan allows explicitly, and which is why this asks the union rather than
+    // the three stations a doctor works from all day.
+    const doctorRail = (await allStations()).map((label) => label.toLowerCase())
     assert.ok(
       doctorRail.some((label) => label.startsWith('review')),
-      `a doctor must be offered the review queue — rail is ${doctorRail.join(', ')}`,
+      `a doctor must be able to reach the review queue — reachable is ${doctorRail.join(', ')}`,
     )
 
     await goToStation('Review')
@@ -250,10 +421,12 @@ describe('the doctor review queue', () => {
 
     await freshPage()
     await signIn(PHARMACIST.name, PHARMACIST.pin)
-    const pharmacyRail = railStations().map((label) => label.toLowerCase())
+    // The union again, and here it is the stronger assertion: a station hidden
+    // under More would still be a station a pharmacist could reach.
+    const pharmacyRail = (await allStations()).map((label) => label.toLowerCase())
     assert.ok(
       !pharmacyRail.some((label) => label.startsWith('review')),
-      `only a doctor may settle a signed line — the pharmacy rail is ${pharmacyRail.join(', ')}`,
+      `only a doctor may settle a signed line — a pharmacist can reach ${pharmacyRail.join(', ')}`,
     )
   })
 })

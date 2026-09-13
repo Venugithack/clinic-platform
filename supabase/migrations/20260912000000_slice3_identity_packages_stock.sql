@@ -9,7 +9,7 @@
 -- means "ten strips" or "fifteen strips" depending on a fact the database does
 -- not hold.
 --
--- This migration separates the three, in the order SLICE3_CLINIC_APPROVAL_PACK.md
+-- This migration separates the three, in the order archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md
 -- §6 sets out:
 --
 --   substance  -> clinical drug  -> product      -> package version -> batch -> ledger
@@ -104,7 +104,7 @@ alter table jmc.stock_take_lines
 --
 -- ── ON TERMINOLOGY RIGHTS ──────────────────────────────────────────────────
 --
--- CLAUDE_IMPLEMENTATION_BRIEF.md §Slice 3 and the research document are both
+-- docs/AGENT_IMPLEMENTATION_BRIEF.md §Slice 3 and the research document are both
 -- explicit: do not import or redistribute licensed terminology without
 -- confirming the applicable India/SNOMED/CDCI terms. Nothing is imported here.
 -- These tables are empty on creation and are filled by the clinic's own

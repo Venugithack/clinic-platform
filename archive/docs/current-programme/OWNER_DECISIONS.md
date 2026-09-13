@@ -2,14 +2,15 @@
 
 > **Superseded 11 September 2026:** the owner has now answered this checklist.
 > The authoritative approved/partial/evidence status is recorded in
-> [`OWNER_POLICY_REGISTER.md`](OWNER_POLICY_REGISTER.md). The detail below is
+> [`../../../docs/OWNER_POLICY_REGISTER.md`](../../../docs/OWNER_POLICY_REGISTER.md). The detail below is
 > retained to explain why each question existed and to preserve staging-findings
 > history; its “blocking” labels are no longer the current status.
 
 Slice 0's last work item is "obtain owner sign-off for unresolved choices that
 block a later slice". This is the list, consolidated from
-`CLAUDE_IMPLEMENTATION_BRIEF.md` §10, `PRODUCT_UX_PLAN.md` §18 and
-`CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §15, plus four questions
+`docs/AGENT_IMPLEMENTATION_BRIEF.md` §10,
+`docs/reference/PRODUCT_UX_DISCOVERY.md` §18 and
+`docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §15, plus four questions
 that only appeared once staging was built.
 
 It is ordered by **when the answer is needed**, not by importance. A decision
@@ -287,7 +288,7 @@ scratch. The backup carries `public`, `app` and `jmc`, so that path works.
 
 ## Safe defaults being used until these are answered
 
-From `CLAUDE_IMPLEMENTATION_BRIEF.md` §10, unchanged:
+From `docs/AGENT_IMPLEMENTATION_BRIEF.md` §10, unchanged:
 
 - no automatic stock reservation
 - no automatic substitution

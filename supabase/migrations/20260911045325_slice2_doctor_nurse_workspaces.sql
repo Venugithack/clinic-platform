@@ -38,7 +38,7 @@ alter table jmc.encounters
 -- Everything else in this file is `if not exists`, and `add constraint` has no
 -- such form. Without the guard the file claims to be re-runnable and is not:
 -- applied a second time it stops here, on the constraint rather than on
--- anything that matters. See docs/STAGING.md §3 for why this repository does
+-- anything that matters. See docs/operations/STAGING.md §3 for why this repository does
 -- not assume how a migration will be applied.
 do $$
 begin

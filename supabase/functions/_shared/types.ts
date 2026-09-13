@@ -8,7 +8,25 @@ export interface SessionView {
   lastSeen: string
   /** Clinical authority, distinct from operational admin access. */
   canPublishClinicalTemplates: boolean
+  /**
+   * Which appearance this person chose, wherever they sign in.
+   *
+   * Four people share four tablets and hand them to each other all day, so the
+   * theme belongs to the staff member and not to the device — the pharmacist
+   * who works in the dim back room gets Night shift on whichever tablet the
+   * nurse has just put down. `system` means no choice has been made and the
+   * device's own light or dark setting decides, which is the plan's sign-in
+   * fallback.
+   *
+   * It is a preference and never an authorization. Nothing reads it to decide
+   * what anybody may do.
+   */
+  theme: ThemeChoice
 }
+
+/** The three appearances, plus following the device. */
+export type ThemeChoice = 'system' | 'paper' | 'night' | 'contrast'
+
 
 /**
  * Which length of PIN a staff member currently holds.
@@ -237,6 +255,15 @@ export interface ConsultationDraftView {
   notes: string
   advice: string
   followUpDate?: string
+  /**
+   * The reminder that goes onto the follow-up when this is signed.
+   *
+   * Stored on the draft since 20260917000000. Before that the field existed on
+   * the doctor's sheet and in `sign_consultation`'s payload but had nowhere to
+   * live in between, so every draft save destroyed what had been typed into it
+   * and said "Draft saved for you." while doing so.
+   */
+  followUpNote: string
   items: PrescriptionItemView[]
   createdAt: string
   updatedAt: string

@@ -2,7 +2,7 @@
 
 What the database actually holds, what the tablets actually receive, and every
 conversion in between. This is a characterization document, produced for Slice 0
-of `CLAUDE_IMPLEMENTATION_BRIEF.md` §6. It describes the schema **as it is**, not
+of `docs/AGENT_IMPLEMENTATION_BRIEF.md` §6. It describes the schema **as it is**, not
 as it should be. Nothing here proposes a change.
 
 Every column type, nullability, default, constraint and index in §1 was read out
@@ -20,7 +20,7 @@ through `information_schema.columns`, `pg_constraint`, `pg_indexes` and
 The column, constraint and index listings in §1.1–§1.29 were taken **before**
 `20260909125237_harden_active_clinic.sql` could be applied — at the time it
 could not be applied to a fresh database at all, which is one of the two
-defects Slice 0 found (`docs/STAGING.md` §3.2). It applies now, via the
+defects Slice 0 found (`docs/operations/STAGING.md` §3.2). It applies now, via the
 staging-only legacy stubs, and everything it adds is listed separately in
 §1.31. So a `*_idx` marked "file-only" below is present in staging and in
 production; it is simply not in the snapshot these tables were read from.
@@ -52,9 +52,23 @@ Everyone who can sign in, their roles, and their PIN material.
 | `active` | integer | no | `1` | no check — see §3.8 |
 | `last_login` | text | yes | | |
 | `created_at` | text | no | | |
+| `theme` | text | no | `'system'` | `staff_theme_is_known`: `system \| paper \| night \| contrast` |
 
 PK `id`. Unique `username`. No foreign keys. Indexes: `staff_pkey`,
 `staff_username_key`.
+
+`theme` was added by `20260917000000_staff_theme_and_draft_follow_up.sql`. It
+is the staff member's chosen appearance, on the staff row so that it follows
+the person rather than the tablet — four people share four tablets and hand
+them to each other all day, and a preference kept in a browser gives the next
+person the last person's eyes. `system` means no choice has been made and the
+device's own light or dark setting decides, which is the plan's sign-in
+fallback.
+
+It is a preference and **never an authorization**. Nothing reads it to decide
+what anybody may do, and `set_theme` takes no staff id from its payload — it
+writes to `session.staffId` and nothing else, so there is no shape of request
+that changes somebody else's.
 
 ### 1.2 `pin_attempts`
 
@@ -582,7 +596,7 @@ hard-references the retired application's `public` views and `app.*`
 functions and died on its first statement.
 
 It has since been applied and verified live, with the staging-only legacy
-stubs in place (`docs/STAGING.md` §3.2). Confirmed on 2026-09-10: **29 tables,
+stubs in place (`docs/operations/STAGING.md` §3.2). Confirmed on 2026-09-10: **29 tables,
 RLS enabled on all 29, zero rows in `pg_policies` for `jmc`, zero grants to
 `anon`/`authenticated`/`service_role`, zero `anon` execute grants remaining on
 `app.*`, and 90 indexes in the schema.**
@@ -669,6 +683,16 @@ noted.
 | `roles` | `staff.roles_json` | `JSON.parse` -> `Role[]`, unvalidated |
 | `username` | `staff.username` | direct |
 | `lastSeen` | `sessions.last_seen` | direct. Overwritten with `isoNow()` when `touch` |
+| `canPublishClinicalTemplates` | `staff.can_publish_clinical_templates` | integer -> boolean |
+| `theme` | `staff.theme` | `text`, falling back to `'system'` for any value the client does not recognise — a tablet must never fail to open because a preference is unfamiliar |
+
+`theme` is why `set_theme` ends by assigning `session.theme`. `command/index.ts`
+resolves the session once, before running anything, and builds the snapshot it
+returns from that same object; every other command changes rows the snapshot
+re-reads, but this one changes the signed-in person's own staff row. Without
+that assignment the tablet gets its answer back still carrying the appearance
+it had a moment ago, and the screen and the account disagree until the next
+poll fifteen seconds later.
 
 `StaffView` — `snapshot.ts:288`. Gated on `admin`; **`[]` for everyone else**.
 
@@ -1267,10 +1291,37 @@ Thirteen tables, taking `jmc` from 29 to 42, across two migrations:
 | `clinical_phrase_preferences` | one doctor's favourites and use counts | `set_clinical_phrase_favourite`, and signing |
 | `consultation_templates` · `consultation_template_lines` | versioned personal and clinic templates | `save_clinical_template` |
 | `follow_ups` | the follow-up a signed encounter asked for | `sign_consultation` |
-| `prescription_prints` | one row per physical copy, numbered | `record_prescription_print` |
+| `prescription_prints` | one row per print or reprint REQUESTED, numbered — see below | `record_prescription_print` |
 | `patient_clinical_profiles` | allergy status and clinical flags | `save_patient_clinical_profile` |
 | `vital_review_rules` | the approved "Review this reading" prompts | migration/admin only; never inferred |
 | `observation_events` | the bed timeline: admit, note, instruction, handoff, discharge | `update_bed`, `record_observation`, and the handoff commands |
+
+Two columns were added to this set afterwards, by
+`20260917000000_staff_theme_and_draft_follow_up.sql`:
+
+- **`consultation_drafts.follow_up_note`** (`text not null default ''`). Every
+  other field on the doctor's clinical sheet round-tripped through the draft
+  and this one did not, although `sign_consultation` reads a `followUpNote`
+  from its payload and writes it onto the follow-up it creates. So the field
+  was real, it mattered, and it had nowhere to live between being typed and
+  being signed: the doctor typed a reminder, pressed `Save draft`, the sheet
+  re-hydrated from the server, and the reminder vanished underneath a green
+  "Draft saved for you." `clinicalFields()` now carries it, both the insert and
+  the update path in `save_consultation_draft` write it, and the snapshot
+  projects it back as `ConsultationDraftView.followUpNote`. An empty note still
+  falls back to the advice at signing, exactly as before.
+- **`staff.theme`** — see §1.1.
+
+**`prescription_prints` counts requests, not paper.** The row is written before
+`window.print()` opens the operating system's dialogue, deliberately, so that a
+copy taken during a crash is still on the record. That dialogue never reports
+whether the operator pressed Print or Cancel, whether the tray was empty, or
+whether the clinic printer was awake, so nothing downstream may claim a sheet
+exists. The audit line reads `Print requested for RX-000123, copy 2` and the
+command answers `Print requested. Copy 1 recorded.` The action key stays
+`prescription.printed`, because it is a stable identifier that history and
+reports already use and splitting one thing into two names would lose the join.
+Counting actual paper needs something outside the browser.
 
 ### 5.1 These tables do not follow §3's representation hazards
 
@@ -1307,11 +1358,11 @@ release — `en-2026.09` is the first — carrying the version, the locale, the
 approval reference and the date the owner approved it. Every phrase installed
 by a release points at it. Revising the vocabulary means publishing a new
 release beside this one, never editing the rows of the old one, which is what
-`CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §2.4 requires so that old
+`docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` §2.4 requires so that old
 visits stay intelligible.
 
 **The wording is transcribed, not authored.** All eighty phrases are copied
-verbatim from `SLICE3_CLINIC_APPROVAL_PACK.md` §7.A–D, which §8.C of that
+verbatim from `archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md` §7.A–D, which §8.C of that
 document records as signed off on 11 September 2026 and which
 `OWNER_POLICY_REGISTER.md` A.5 approves. Nothing was reworded on the way into
 the database: what the doctor approved is what the doctor sees. Changing a
@@ -1983,7 +2034,7 @@ It exercises consent, the access rules, the audit, the checksum, the ticket and
 the wrong-patient guards against real bytes. It says nothing about Supabase's
 own bucket policy — that the bucket is private, that anonymous reads are
 refused, that the service key is not exposed — which is a deployment check and
-is recorded in §7.2 of `docs/STAGING.md` as one.
+is recorded in §7.2 of `docs/operations/STAGING.md` as one.
 
 ---
 
@@ -2002,7 +2053,7 @@ cases in `command`. Three reasons, in order of how much they matter:
 1. **They are reads, and the snapshot is not the place for them.** The
    whole-clinic snapshot is polled. A stock valuation that walks every batch,
    or a movement history over four hundred days, does not belong in something
-   that runs every few seconds — `CLAUDE_IMPLEMENTATION_BRIEF.md` §3 says so
+   that runs every few seconds — `docs/AGENT_IMPLEMENTATION_BRIEF.md` §3 says so
    in as many words, and it is why `ledger`, `receipts` and the image list are
    also on demand.
 2. **The role gate is per report, not per function.** Fifteen reports with
@@ -2091,7 +2142,7 @@ they are not responsible for.
 
 It is in the doctor's rail rather than admin's because a non-doctor admin
 resolving a clinical line is precisely the thing the brief forbids. The count
-is the number in `ROLLOUT.md`'s second preflight query, and it is the one that
+is the number in `docs/operations/ROLLOUT.md`'s second preflight query, and it is the one that
 decides how long the cutover takes.
 
 Building it surfaced a gap worth recording, because it is the shape of gap
@@ -2131,7 +2182,7 @@ held. What it did produce:
   pharmacy/payment counter" and named no role, while the code let a nurse do
   it, inherited from the retired application rather than decided. The owner
   settled it on 12 September 2026, and §12 is what changed.
-- **Everything in `ROLLOUT.md` §7**, which is the honest list: no real
+- **Everything in `docs/operations/ROLLOUT.md` §7**, which is the honest list: no real
   supplier document, no real package, no classified formulary, no printer, no
   tablet on clinic Wi-Fi, no Storage bucket, no CI run, and a production
   database role nobody here has read.
@@ -2326,7 +2377,7 @@ the clinic is genuinely down the difference. Nothing here invents a balancing
 entry for it, and no command in this release closes a row on the review queue.
 How the money is recovered or written off, who approves that, and what the GST
 credit/debit-note treatment is where GST applies are the clinic accountant's,
-and they are unanswered: policy register 56 and 57, and `ROLLOUT.md` §7.
+and they are unanswered: policy register 56 and 57, and `docs/operations/ROLLOUT.md` §7.
 
 A cancelled bill that is not at zero is in the same position and it is worth
 being blunt about what that means at the counter. Every repair the application

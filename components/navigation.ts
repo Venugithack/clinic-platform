@@ -1,9 +1,11 @@
 import type { Role } from '@/lib/types'
+import type { IconName } from './ui/Icon'
 
 export type View =
   | 'overview'
   | 'patients'
   | 'queue'
+  | 'due'
   | 'vitals'
   | 'consultation'
   | 'records'
@@ -27,45 +29,49 @@ export type View =
   | 'reports'
   | 'audit'
 
-type NavItem = { id: View; label: string; eyebrow: string }
+type NavItem = { id: View; label: string; eyebrow: string; icon: IconName }
 
 export const NAVIGATION: Record<Role, NavItem[]> = {
   admin: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record' },
-    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
-    { id: 'staff', label: 'Staff', eyebrow: 'Admin control' },
-    { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print' },
-    { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
-    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
-    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
+    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
+    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
+    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },
+    { id: 'staff', label: 'Staff', eyebrow: 'Admin control', icon: 'user' },
+    { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print', icon: 'settings' },
+    { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation', icon: 'bed' },
+    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic', icon: 'rupee' },
+    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close', icon: 'receipt' },
     /*
      * The counter, on the admin rail as well as the pharmacy one.
      *
-     * `dispense_rx`, `otc_sale` and `take_payment` all authorize admin — the
-     * owner runs this clinic and stands at the counter when the pharmacist is
-     * away — and Slice 4's snapshot sends an admin the queue and the bills.
-     * Without this entry the data arrived and the station did not, so the one
-     * person who most needs to cover the counter was the one person with no
-     * way to reach it.
+     * `take_payment` authorizes admin — the owner runs this clinic and stands
+     * at the counter when the pharmacist is away — and Slice 4's snapshot sends
+     * an admin the queue and the bills. Without this entry the data arrived and
+     * the station did not, so the one person who most needs to cover the
+     * counter was the one person with no way to reach it.
+     *
+     * Handing over medicine and ringing up an OTC sale are still the
+     * pharmacist's alone (policy register item 17); the counter itself shows an
+     * administrator only what an administrator may do.
      */
-    { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
-    { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
-    { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages' },
-    { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received' },
-    { id: 'opening', label: 'Opening count', eyebrow: 'Blind opening count' },
-    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
-    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
-    { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
-    { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
-    { id: 'printer', label: 'Printer', eyebrow: 'Tablet printing' },
-    { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1' },
-    { id: 'audit', label: 'Activity', eyebrow: 'Accountability' },
+    { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter', icon: 'counter' },
+    { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory', icon: 'pack' },
+    { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages', icon: 'tag' },
+    { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received', icon: 'truck' },
+    { id: 'opening', label: 'Opening count', eyebrow: 'Blind opening count', icon: 'clipboard' },
+    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off', icon: 'alert' },
+    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf', icon: 'boxes' },
+    { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network', icon: 'users' },
+    { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders', icon: 'bag' },
+    { id: 'printer', label: 'Printer', eyebrow: 'Clinic printing', icon: 'printer' },
+    { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1', icon: 'lock' },
+    { id: 'audit', label: 'Activity', eyebrow: 'Accountability', icon: 'shield' },
   ],
   doctor: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'queue', label: 'Queue', eyebrow: "Today's flow" },
-    { id: 'consultation', label: 'Consult', eyebrow: 'Doctor workspace' },
+    { id: 'queue', label: 'Today', eyebrow: "Today's flow", icon: 'queue' },
+    { id: 'consultation', label: 'Consult', eyebrow: 'Doctor workspace', icon: 'stethoscope' },
+    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },
+    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
     // The nurse's station, on the doctor's rail, for the days there is no
     // nurse. Slice 1's gate is that a doctor alone can register a patient,
     // create the visit, record what vitals he can and open the consultation
@@ -77,14 +83,13 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     // For a staff member holding both roles this entry and the nurse's are
     // the same station and `navigationFor` keeps one of them; either label is
     // accurate, so which one wins does not matter.
-    { id: 'vitals', label: 'Vitals', eyebrow: 'When the nurse is away' },
-    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
-    { id: 'records', label: 'Records', eyebrow: 'Clinical record' },
+    { id: 'vitals', label: 'Vitals', eyebrow: 'When the nurse is away', icon: 'pulse' },
+    { id: 'records', label: 'Records', eyebrow: 'Clinical record', icon: 'history' },
     // Old prescription lines nobody can read. Only a doctor may say what one
     // of them authorized, so only a doctor is offered the station.
-    { id: 'review', label: 'Review', eyebrow: 'Lines only a doctor can settle' },
-    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count' },
-    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record' },
+    { id: 'review', label: 'Review', eyebrow: 'Lines only a doctor can settle', icon: 'alert-circle' },
+    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count', icon: 'boxes' },
+    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
   ],
   /*
    * No Billing and no Day book.
@@ -100,28 +105,29 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
    * rail is the union of both, so nothing is taken from that person.
    */
   nurse: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'queue', label: 'Queue', eyebrow: "Today's flow" },
-    { id: 'vitals', label: 'Vitals', eyebrow: 'Nursing station' },
-    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry' },
-    { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation' },
-    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record' },
+    { id: 'due', label: 'Due now', eyebrow: 'Everything waiting on you', icon: 'clock' },
+    { id: 'vitals', label: 'Vitals', eyebrow: 'Nursing station', icon: 'pulse' },
+    { id: 'beds', label: 'Observation', eyebrow: 'Four-bed observation', icon: 'bed' },
+    { id: 'queue', label: 'Today', eyebrow: "Today's flow", icon: 'queue' },
+    { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },
+    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
+    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
   ],
   pharmacy: [
-    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today' },
-    { id: 'counter', label: 'Counter', eyebrow: 'Pharmacy counter' },
-    { id: 'inventory', label: 'Inventory', eyebrow: 'Batch inventory' },
-    { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages' },
-    { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received' },
-    { id: 'opening', label: 'Opening count', eyebrow: 'Blind opening count' },
-    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off' },
-    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf' },
-    { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network' },
-    { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders' },
-    { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic' },
-    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close' },
-    { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1' },
-    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record' },
+    { id: 'counter', label: 'Counter', eyebrow: 'Sell, supply and collect', icon: 'counter' },
+    { id: 'inventory', label: 'Stock', eyebrow: 'Batch inventory', icon: 'boxes' },
+    { id: 'billing', label: 'History', eyebrow: 'Bills and payments', icon: 'receipt' },
+    { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
+    { id: 'formulary', label: 'Formulary', eyebrow: 'Medicines & packages', icon: 'tag' },
+    { id: 'receiving', label: 'Receiving', eyebrow: 'Goods received', icon: 'truck' },
+    { id: 'opening', label: 'Opening count', eyebrow: 'Blind opening count', icon: 'clipboard' },
+    { id: 'expiring', label: 'Expiring', eyebrow: 'Return or write off', icon: 'alert' },
+    { id: 'stocktake', label: 'Stock-take', eyebrow: 'Count the shelf', icon: 'boxes' },
+    { id: 'suppliers', label: 'Suppliers', eyebrow: 'Supply network', icon: 'users' },
+    { id: 'orders', label: 'Orders', eyebrow: 'Purchase orders', icon: 'bag' },
+    { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close', icon: 'rupee' },
+    { id: 'registers', label: 'Registers', eyebrow: 'Schedule H1', icon: 'lock' },
+    { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
   ],
 }
 
@@ -133,14 +139,60 @@ export const ROLE_LABEL: Record<Role, string> = {
 }
 
 /**
+ * The three stations each clinical role works out of all day.
+ *
+ * Everything else that role is authorized for stays authorized and stays
+ * reachable, one tap away under **More**. This is an arrangement of the same
+ * capabilities and never a reduction of them: `moreFor` is defined as
+ * "`navigationFor` minus these", so a station cannot be dropped by being
+ * forgotten here — it can only move.
+ *
+ * The administrator has no primary set. That role investigates exceptions
+ * across the whole clinic rather than repeating one job, and the plan keeps its
+ * detailed grouped rail for exactly that reason.
+ */
+const PRIMARY: Partial<Record<Role, readonly View[]>> = {
+  doctor: ['queue', 'consultation', 'patients'],
+  nurse: ['due', 'vitals', 'beds'],
+  pharmacy: ['counter', 'inventory', 'billing'],
+}
+
+/**
+ * The first screen after sign-in.
+ *
+ * The plan's governing rule is that the next patient or task is already in
+ * front of the staff member, so nobody lands on a summary of a clinic they are
+ * about to work in. Every role but the administrator opens on its own work.
+ *
+ * Precedence runs clinical-first for a person holding several roles. Dr.
+ * Jayamurugan is doctor AND admin; the job he opens the tablet to do is the
+ * queue, and Overview is one tap away on a rail he already has.
+ */
+const LANDING: Record<Role, View> = {
+  doctor: 'queue',
+  nurse: 'due',
+  pharmacy: 'counter',
+  admin: 'overview',
+}
+
+const LANDING_ORDER: readonly Role[] = ['doctor', 'nurse', 'pharmacy', 'admin']
+
+export function landingFor(roles: Role[]): View {
+  for (const role of LANDING_ORDER) {
+    if (roles.includes(role)) return LANDING[role]
+  }
+  return 'overview'
+}
+
+/**
  * The admin rail, in sections.
  *
- * A doctor's rail is seven stations and a pharmacist's is thirteen; an
- * administrator's is twenty, and twenty tracked-caps words in one column is a
- * list you read rather than a building you know your way around. The brief's
- * Slice 6 names the five divisions — people and access, clinic operations,
- * inventory, finance, settings — so those are the headings, and nothing is
- * renamed, moved between roles or hidden to produce them.
+ * A doctor's rail is nine stations and a pharmacist's is fourteen; an
+ * administrator's is twenty-one, and twenty-one words in one column is a list
+ * you read rather than a building you know your way around. The brief's Slice 6
+ * names the five divisions — people and access, clinic operations, inventory,
+ * finance, settings — so those are the headings, and nothing is renamed, moved
+ * between roles or hidden to produce them.
  *
  * Overview and Reports sit above the first heading on purpose. Neither belongs
  * to one division: Overview is the whole clinic today, and Reports answers
@@ -148,15 +200,26 @@ export const ROLE_LABEL: Record<Role, string> = {
  * one under a heading would be filing it under the wrong heading four fifths
  * of the time.
  *
- * Only the administrator gets headings. The other three rails are short and
- * task-ordered already, and a heading over two entries is furniture.
+ * These sections are also what **More** is built from for the other three
+ * roles, so a secondary menu arrives already grouped rather than as a second
+ * flat list.
  */
 const ADMIN_GROUPS = [
   { ids: ['overview', 'reports'] },
   { heading: 'People and access', ids: ['staff', 'audit'] },
   {
     heading: 'Clinic operations',
-    ids: ['patients', 'queue', 'vitals', 'consultation', 'records', 'review', 'beds', 'registers'],
+    ids: [
+      'patients',
+      'queue',
+      'due',
+      'vitals',
+      'consultation',
+      'records',
+      'review',
+      'beds',
+      'registers',
+    ],
   },
   {
     heading: 'Inventory',
@@ -203,6 +266,30 @@ export function navigationFor(roles: Role[]): NavItem[] {
 }
 
 /**
+ * The three or four stations on the daily bar, for a role that has a primary
+ * set. An administrator gets none, because the administrator gets the rail.
+ */
+export function primaryFor(roles: Role[]): NavItem[] {
+  if (roles.includes('admin')) return []
+  const byId = new Map(navigationFor(roles).map((item) => [item.id, item]))
+  const wanted = new Set<View>()
+  for (const role of roles) for (const id of PRIMARY[role] ?? []) wanted.add(id)
+
+  const items: NavItem[] = []
+  for (const id of wanted) {
+    const item = byId.get(id)
+    if (item) items.push(item)
+  }
+  return items
+}
+
+/** Everything a session may reach that is not already on the daily bar. */
+export function moreFor(roles: Role[]): NavGroup[] {
+  const onBar = new Set(primaryFor(roles).map((item) => item.id))
+  return groupsOf(navigationFor(roles).filter((item) => !onBar.has(item.id)))
+}
+
+/**
  * The same stations `navigationFor` returns, divided for the rail.
  *
  * Non-administrators get one unheaded group holding their flat rail unchanged,
@@ -214,7 +301,10 @@ export function navigationFor(roles: Role[]): NavItem[] {
 export function navigationGroupsFor(roles: Role[]): NavGroup[] {
   const items = navigationFor(roles)
   if (!roles.includes('admin')) return [{ items }]
+  return groupsOf(items)
+}
 
+function groupsOf(items: NavItem[]): NavGroup[] {
   const byId = new Map(items.map((item) => [item.id, item]))
   const groups: NavGroup[] = []
 

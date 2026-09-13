@@ -8,6 +8,9 @@ the current repository.
 Use the [project README](../../README.md) for the current entry point and
 [docs/README.md](../../docs/README.md) for the current technical architecture.
 
+- `current-programme/` contains superseded decision and milestone documents
+  from the current redesign. The live decisions are indexed from
+  `../../docs/README.md`.
 - `BUILD.md` is the milestone log for the retired application.
 - `GO_LIVE.md` is an obsolete cutover runbook.
 - `HOSTING.md` records the original free-hosting analysis.

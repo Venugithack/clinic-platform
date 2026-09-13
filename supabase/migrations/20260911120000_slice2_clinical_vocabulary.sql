@@ -5,13 +5,13 @@
 -- from `scripts/staging/fixtures.mjs` — eleven phrases that exist to prove the
 -- plumbing and that no owner ever approved. A clinic-wide suggestion list a
 -- developer wrote into a fixture file is exactly what
--- CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md §1.3 says must not happen:
+-- docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md §1.3 says must not happen:
 -- preloaded clinical content is safe only when it is versioned and
 -- clinician-reviewed.
 --
 -- This migration carries the four starter lists the owner approved — complaint,
 -- assessment, dosage-direction and advice. The wording is transcribed verbatim
--- from `docs/SLICE3_CLINIC_APPROVAL_PACK.md` §7.A–D, which §8.C of that document
+-- from `archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md` §7.A–D, which §8.C of that document
 -- and OWNER_POLICY_REGISTER.md A.5 record as approved on 11 September 2026. It
 -- is not re-worded here: what the doctor signed off is what the doctor sees.
 -- The release id lets a later revision be a new release beside this one rather

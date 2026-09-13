@@ -4,7 +4,7 @@
 **Prepared 11 September 2026**
 
 This is the short approval companion to
-`CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`. It converts the owner's
+`docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`. It converts the owner's
 answers into implementation rules and gives the doctor a proposed English
 starter vocabulary to approve, edit, or reject.
 

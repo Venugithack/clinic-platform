@@ -6,12 +6,49 @@ Schedule H1 register, and a stock-take that does not tell you the answer before
 you count.
 
 **This document describes the application that is in this repository now.** It
-used to describe a different one — a Next server with RLS, plpgsql transitions,
-509 pgTAP assertions, Playwright gates and a bash dev-stack. That application
-was deleted. It is in the git history and nowhere else. If you are reading a
-sentence in `docs/` about `lib/db/`, `lib/offline/`, device tokens in
-localStorage or `pnpm test`, you are reading about the dead one; see
-[The rest of this folder](#the-rest-of-this-folder).
+is the first document for a person or AI agent to read. Use the map below to
+find the current decision source for the task instead of treating every plan as
+equally current.
+
+## Documentation map
+
+### Current core documents
+
+| Document | Use it for |
+|---|---|
+| **This file** | Current architecture, runtime, setup, deployment, tests, and known gaps |
+| [`UI_UX_PLAN.md`](UI_UX_PLAN.md) | Target role workspaces, prescription-counter flow, loading, completion feedback, windows, icons, themes, and UI acceptance gates |
+| [`OWNER_POLICY_REGISTER.md`](OWNER_POLICY_REGISTER.md) | Owner-approved clinic and product policy; this is authoritative when a workflow depends on an owner decision |
+| [`SCHEMA_AND_TYPES.md`](SCHEMA_AND_TYPES.md) | Current database, API, and shared type contract |
+| [`AGENT_IMPLEMENTATION_BRIEF.md`](AGENT_IMPLEMENTATION_BRIEF.md) | Implementation constraints, slice order, safety boundaries, invariants, and definition of done |
+
+### Read by task
+
+| Task | Read next |
+|---|---|
+| UI/UX or a doctor, nurse, pharmacy, or admin workspace | `UI_UX_PLAN.md`, then the relevant material in [`reference/`](reference/) and the interactive files in [`design/`](design/) |
+| Clinical vocabulary or medicine identity | [`reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`](reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md) |
+| Packages, stock, FEFO, costing, or expiry | [`reference/INVENTORY.md`](reference/INVENTORY.md) plus the medicine-identity research |
+| Tablet hardware or touch interaction | [`reference/TABLET.md`](reference/TABLET.md); current interface decisions still come from `UI_UX_PLAN.md` |
+| WhatsApp | [`reference/WHATSAPP.md`](reference/WHATSAPP.md), with time-sensitive policy rechecked before release |
+| Staging, rollout, or PIN recovery | The applicable runbook in [`operations/`](operations/) |
+| Product rationale from the design sessions | [`reference/PRODUCT_UX_DISCOVERY.md`](reference/PRODUCT_UX_DISCOVERY.md); later core documents take precedence |
+| Why an earlier decision was raised | [`../archive/docs/current-programme/`](../archive/docs/current-programme/) |
+| Comparing the simpler earlier interface | `hospital al in one platform/`, when that local reference folder is present |
+
+### When documents differ
+
+1. Source code, migrations, and tests show what the application does now.
+2. `OWNER_POLICY_REGISTER.md` records approved product policy.
+3. `UI_UX_PLAN.md` records the target interface and workflow.
+4. `SCHEMA_AND_TYPES.md` and `AGENT_IMPLEMENTATION_BRIEF.md` define the current
+   technical contract and delivery constraints.
+5. `reference/` explains specialist research and earlier discovery.
+6. `archive/` and `hospital al in one platform/` preserve history and comparison
+   material.
+
+If two current sources still conflict, record and resolve the conflict instead
+of silently choosing one.
 
 ---
 
@@ -234,13 +271,13 @@ It is rewritten here against what `npm run` actually does today.
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
 | `npm run test:db` | **288 tests** over seventeen files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, and the counter authorization matrix — plus concurrency tests that open separate connections and race them. |
-| `npm run test:browser` | **37 journeys** through a real Chrome against the built export. `docs/STAGING.md` §5 lists them. |
+| `npm run test:browser` | **37 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Applies the migrations to a database that already has history, then re-applies the backfills to prove they are idempotent. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
 
 `test:db`, `test:browser`, `staging:rehearse` and `staging:drill` all refuse any
 database that is not a loopback scratch database — `scripts/staging/guard.mjs`,
-and `docs/STAGING.md` §2 explains why that guard is not optional here.
+and `docs/operations/STAGING.md` §2 explains why that guard is not optional here.
 
 The backend typecheck, which CI runs and `npm run typecheck` does not:
 
@@ -261,13 +298,13 @@ held either, failing before it typechecks a line. Deno is not a dependency here;
 `check` (types, unit tests, build, backend types), `database` (migrations,
 `test:db`, the restore drill) and `browser`. **The `browser` job has never
 run** — nothing in this programme has been pushed — so it is a job that
-reports, not a gate, until it has been green twice. `docs/STAGING.md` §6 says
+reports, not a gate, until it has been green twice. `docs/operations/STAGING.md` §6 says
 the same at more length.
 
 **No test has ever touched the clinic's data.** The fixtures are synthetic and
 small. Nothing here proves a migration behaves against two years of real rows;
 `staging:rehearse` proves it against a *representative* history this repository
-made up. `docs/ROLLOUT.md` §2 is the set of count-only queries that ask the real
+made up. `docs/operations/ROLLOUT.md` §2 is the set of count-only queries that ask the real
 database the same questions, and they have not been run either.
 
 **Nothing here tests hardware.** No printer, no tablet, no clinic Wi-Fi. Print
@@ -278,7 +315,7 @@ nothing about paper.
 through `storage.ts`, which writes to a directory in staging and to Supabase
 Storage in the clinic. Every rule *this application* enforces is exercised;
 that the bucket is private and refuses an anonymous read is a deployment check,
-in `docs/STAGING.md` §7.2.
+in `docs/operations/STAGING.md` §7.2.
 
 **Backups run; the archive itself has never been restored from.**
 `.github/workflows/backup.yml` dumps five times a day plus a nightly and a
@@ -295,27 +332,102 @@ merge to `main`.
 
 ---
 
-## 7. The rest of this folder
+## 7. Documentation and history
 
-The retired application's documents now live under `../archive/docs/`. Some are
-still valuable because the design reasoning did not stop being true when the
-code changed, but they are historical context rather than operating
-instructions.
+The top of `docs/` contains only the five current core documents in the map
+above. Supporting material is grouped by purpose:
 
-| File | State |
-|---|---|
-| `../archive/docs/PLAN.md` · `../archive/docs/PROPOSAL.md` | pre-build design and the client proposal. The *product* reasoning still holds. The architecture (RLS, plpgsql transitions, Supabase Realtime) describes the retired application |
-| `PRODUCT_UX_PLAN.md` | the consolidated owner-session workflow and delivery plan for doctor, nurse, pharmacy, admin, payment, printing, and clinical images |
-| `CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md` | current evidence and implementation recommendation for clinical autocomplete, diagnoses/aetiology, CDCI, medicine identity, package SKUs, batches, barcodes, and partial dispensing |
-| `CLAUDE_IMPLEMENTATION_BRIEF.md` | the coding handoff: mandatory reading, agent boundaries, phased gates, invariants, safety rules, and definition of done |
-| `INVENTORY.md` | the unit model, FEFO, costing, and expiry return window. Read it with the later clinical/medicine research where package identity, barcode coverage, or substitution is involved |
-| `WHATSAPP.md` | Meta policy and the deep-link route. Still applies, and independent of either architecture. Verify the policy dates against Meta rather than this file |
-| `TABLET.md` | the interaction brief. Still useful; its auth section describes device tokens, which are gone |
-| `../archive/docs/HOSTING.md` | the ₹0 argument. The conclusion held; the route changed completely (Workers, then the split in §1). **§5's backups are described as running and are not** — see §6 |
-| `../archive/docs/BUILD.md` | 85 KB of milestone-by-milestone build log for the retired application. Every command, path and gate in it is dead. History, not instructions |
-| `../archive/docs/GO_LIVE.md` | a cutover runbook whose first step is `pnpm test:go-live`, a script that does not exist |
-| `../archive/docs/REVIEW.md` | a consistency review of documents that have since been superseded twice |
-| `../archive/docs/NEXT.md` | a session handover from 29 Aug 2026. Accurate about that morning; overtaken by the rewrite |
+```text
+docs/
+  README.md                     current system and documentation index
+  UI_UX_PLAN.md                 target interface and role workflows
+  OWNER_POLICY_REGISTER.md      approved owner decisions
+  SCHEMA_AND_TYPES.md           current data and API contract
+  AGENT_IMPLEMENTATION_BRIEF.md implementation constraints and sequence
+  reference/                    specialist research and discovery
+  operations/                   staging, rollout, and recovery runbooks
+  design/                       interactive UI concepts
+```
 
-The root `README.md` is now the short entry point for setup, commands, project
-structure, and deployment. This document remains the detailed source of truth.
+`../archive/docs/current-programme/` contains superseded decision and milestone
+documents from this programme. The other files under `../archive/docs/`
+describe a retired application. The local `../hospital al in one platform/`
+folder preserves the earlier, simpler interface for comparison when it is
+available. None of these historical sources is an operating instruction.
+
+### Complete documentation inventory
+
+This is the full inventory of the 46 Markdown documents and three HTML design
+references kept for current work, operations, orientation, and historical
+comparison. Generated files and dependency documentation are excluded.
+
+```text
+Repository entry documents
+  AGENTS.md
+  CLAUDE.md
+  README.md
+
+Current core documents
+  docs/README.md
+  docs/UI_UX_PLAN.md
+  docs/OWNER_POLICY_REGISTER.md
+  docs/SCHEMA_AND_TYPES.md
+  docs/AGENT_IMPLEMENTATION_BRIEF.md
+
+Current specialist references
+  docs/reference/PRODUCT_UX_DISCOVERY.md
+  docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md
+  docs/reference/INVENTORY.md
+  docs/reference/TABLET.md
+  docs/reference/WHATSAPP.md
+
+Current operations
+  docs/operations/STAGING.md
+  docs/operations/ROLLOUT.md
+  docs/operations/PIN_RESET_RUNBOOK.md
+
+Current interactive design references
+  docs/design/clinic-visual-workflow.html
+  docs/design/clinic-workspace.html
+
+Superseded documents from the current programme
+  archive/docs/current-programme/OWNER_DECISIONS.md
+  archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md
+
+Retired-application history
+  archive/docs/README.md
+  archive/docs/BUILD.md
+  archive/docs/GO_LIVE.md
+  archive/docs/HOSTING.md
+  archive/docs/NEXT.md
+  archive/docs/PLAN.md
+  archive/docs/PROPOSAL.md
+  archive/docs/REVIEW.md
+
+Earlier hospital all-in-one prototype
+  hospital al in one platform/AGENTS.md
+  hospital al in one platform/ARCHITECTURE.md
+  hospital al in one platform/ARCHITECTURE-REVIEW.md
+  hospital al in one platform/BUILD-PLAN.md
+  hospital al in one platform/CLAUDE.md
+  hospital al in one platform/DEPLOYMENT.md
+  hospital al in one platform/hospital-platform-plan.md
+  hospital al in one platform/jayamurugan clinic/README.md
+  hospital al in one platform/MEDICATION-REMINDERS.md
+  hospital al in one platform/PATIENT-APP-PLAN.md
+  hospital al in one platform/PHARMACY.md
+  hospital al in one platform/PILOT-SLICE.md
+  hospital al in one platform/PILOT-V1.md
+  hospital al in one platform/PLATFORM-PLAN.md
+  hospital al in one platform/PLATFORM-REVIEW.md
+  hospital al in one platform/prototype-build-prompt.md
+  hospital al in one platform/README.md
+  hospital al in one platform/RUNNING.md
+  hospital al in one platform/WARD-ROUND.md
+  hospital al in one platform/WHATSAPP-CHAT.md
+  hospital al in one platform/scripts/control-panel/panel.html
+```
+
+The root `README.md` is the short entry point for setup, commands, project
+structure, and deployment. This document remains the detailed technical source
+and the index for all other documentation.

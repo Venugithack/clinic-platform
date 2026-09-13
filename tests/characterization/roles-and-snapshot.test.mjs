@@ -225,7 +225,7 @@ describe('who may do what', () => {
 
     // Widening check-in does not widen anything else. The pharmacy counter
     // and the cash drawer are somebody else's job, and the capability matrix
-    // in PRODUCT_UX_PLAN.md §5.5 says so.
+    // in docs/reference/PRODUCT_UX_DISCOVERY.md §5.5 says so.
     await assert.rejects(as(staff.doctor, 'dispense_rx', { prescriptionId: 'x' }), /role cannot perform/)
     await assert.rejects(as(staff.doctor, 'take_payment', { invoiceId: 'x' }), /role cannot perform/)
   })

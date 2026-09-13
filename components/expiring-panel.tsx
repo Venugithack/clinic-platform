@@ -11,8 +11,11 @@ import {
   CardBody,
   CardHeader,
   ConfirmButton,
+  DWELL_MAJOR,
   EmptyState,
   PageHeader,
+  TaskFailure,
+  TaskResult,
   Table,
   TBody,
   TD,
@@ -20,12 +23,13 @@ import {
   THead,
   TR,
   clinicToday,
+  useTask,
 } from '@/components/ui'
 
 /**
  * Stock that is going off, and the three things you can do about it.
  *
- * INVENTORY.md §6: return it to the supplier, dispense it first, or write it
+ * docs/reference/INVENTORY.md §6: return it to the supplier, dispense it first, or write it
  * off at cost. The list is split the way that decision is actually made rather
  * than sorted by expiry date — because the deadline that matters is usually not
  * the expiry.
@@ -47,6 +51,23 @@ export function ExpiringPanel({
 }) {
   const busy = useBusy()
   const today = clinicToday()
+
+  /*
+   * Stock leaving the shelf is a consequential act, and the plan says so.
+   *
+   * Writing a batch off destroys stock and records a loss at cost; returning it
+   * sends it back to a supplier; settling a credit note decides whether money
+   * is coming back at all. Each of these used to be a bare `void run(...)`
+   * behind the global busy flag, so every control on the screen greyed out at
+   * once, the outcome arrived as one line in the shell strip far from the row
+   * it was about, and an answer lost on the clinic Wi-Fi read as "nothing
+   * happened" about stock that may well have moved.
+   *
+   * One task rather than four: only one of these can be in flight, because each
+   * one now goes through a confirmation that blocks while it runs. The working
+   * label is set per invocation, so it still names the exact operation.
+   */
+  const task = useTask()
 
   const rows = useMemo(() => {
     const supplierById = new Map(data.suppliers.map((s) => [s.id, s]))
@@ -122,6 +143,19 @@ export function ExpiringPanel({
         sub={`${returnable.length} still returnable · ${others.length} to dispense or write off`}
       />
 
+      {/*
+       * A refusal, or an answer that never came back. Neither dismisses itself,
+       * and the second one says the outcome is unknown rather than that nothing
+       * happened — stock this screen moves may well have moved even when the
+       * reply was lost on the way home.
+       *
+       * No `onRetry`: none of these three commands carries an idempotency key,
+       * so a blind second press could write off the same batch twice. Checking
+       * the shelf first is the honest instruction, and it is what the
+       * unconfirmed state says.
+       */}
+      <TaskFailure failure={task.failure} />
+
       {openCredits.length > 0 ? (
         <Card variant="record">
           <CardHeader
@@ -150,25 +184,75 @@ export function ExpiringPanel({
                     <TD num>₹{entry.expectedCredit.toFixed(2)}</TD>
                     <TD>
                       <div className="flex gap-2" data-print="hide">
-                        <Button
+                        <ConfirmButton
                           size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void run('settle_return', { returnId: entry.id, status: 'credited' })
+                          busy={task.busy}
+                          busyLabel={task.workingLabel}
+                          disabled={busy && !task.busy}
+                          title={`Credit note ${entry.noteNumber} settled?`}
+                          question={
+                            <>
+                              {entry.supplierName} has credited the return of{' '}
+                              {entry.quantity} of {entry.medicineName}. The note closes and
+                              the money is recorded as received.
+                            </>
+                          }
+                          confirmLabel="Record the credit"
+                          onConfirm={() =>
+                            task.run({
+                              working: `Settling ${entry.noteNumber}…`,
+                              request: () =>
+                                run('settle_return', { returnId: entry.id, status: 'credited' }),
+                              confirmed: () => ({
+                                kind: 'confirmed',
+                                title: 'Credit recorded',
+                                identity: `${entry.noteNumber} · ${entry.supplierName}`,
+                                detail: `Credited for ${entry.quantity} of ${entry.medicineName}.`,
+                                icon: 'rupee',
+                                dwell: DWELL_MAJOR,
+                              }),
+                            })
                           }
                         >
                           Credited
-                        </Button>
-                        <Button
+                        </ConfirmButton>
+                        <ConfirmButton
                           size="sm"
                           variant="ghost"
-                          disabled={busy}
-                          onClick={() =>
-                            void run('settle_return', { returnId: entry.id, status: 'rejected' })
+                          busy={task.busy}
+                          busyLabel={task.workingLabel}
+                          disabled={busy && !task.busy}
+                          title={`Credit note ${entry.noteNumber} refused?`}
+                          question={
+                            <>
+                              {entry.supplierName} has refused the return of{' '}
+                              {entry.quantity} of {entry.medicineName}. The note closes with
+                              no money coming back, and what was expected against it is not
+                              collectable.
+                            </>
+                          }
+                          confirmLabel="Record the refusal"
+                          confirmVariant="danger"
+                          onConfirm={() =>
+                            task.run({
+                              working: `Settling ${entry.noteNumber}…`,
+                              request: () =>
+                                run('settle_return', { returnId: entry.id, status: 'rejected' }),
+                              // Amber. Nothing here completed happily — the stock
+                              // has gone and the money is not coming back.
+                              confirmed: () => ({
+                                kind: 'partial',
+                                title: 'Refusal recorded',
+                                identity: `${entry.noteNumber} · ${entry.supplierName}`,
+                                detail: `No credit for ${entry.quantity} of ${entry.medicineName}. What was expected against this note is not collectable.`,
+                                icon: 'alert',
+                                dwell: DWELL_MAJOR,
+                              }),
+                            })
                           }
                         >
                           Rejected
-                        </Button>
+                        </ConfirmButton>
                       </div>
                     </TD>
                   </TR>
@@ -191,7 +275,7 @@ export function ExpiringPanel({
               direction="A batch appears here when its supplier accepts returns and the deadline is approaching. Set each supplier's return window on the Suppliers screen — with none set, everything falls through to write-off."
             />
           ) : (
-            <ExpiringTable rows={returnable} run={run} busy={busy} showReturn />
+            <ExpiringTable rows={returnable} run={run} busy={busy} showReturn task={task} />
           )}
         </CardBody>
       </Card>
@@ -208,10 +292,12 @@ export function ExpiringPanel({
               direction="Batches appear here as they approach expiry, or as soon as their supplier's return window closes."
             />
           ) : (
-            <ExpiringTable rows={others} run={run} busy={busy} showReturn={false} />
+            <ExpiringTable rows={others} run={run} busy={busy} showReturn={false} task={task} />
           )}
         </CardBody>
       </Card>
+
+      <TaskResult outcome={task.outcome} onDismiss={task.dismiss} />
 
       {data.writeoffs.length > 0 ? (
         <Card>
@@ -268,11 +354,20 @@ function ExpiringTable({
   run,
   busy,
   showReturn,
+  task,
 }: {
   rows: ExpiringRow[]
   run: ActionRunner
   busy: boolean
   showReturn: boolean
+  /**
+   * The panel's one task, passed down rather than started here.
+   *
+   * Two tables are drawn — returnable, and dispense-first — and a batch can
+   * only be in one of them, so a task per table would be two spinners for one
+   * shelf. The result overlay belongs to the panel that owns both.
+   */
+  task: ReturnType<typeof useTask>
 }) {
   return (
     <Table>
@@ -309,18 +404,41 @@ function ExpiringTable({
             <TD>
               <div className="flex gap-2" data-print="hide">
                 {showReturn ? (
-                  <Button
+                  <ConfirmButton
                     size="sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void run('return_to_supplier', {
-                        batchId: row.batch.id,
-                        quantity: row.batch.availableQuantity,
+                    busy={task.busy}
+                    busyLabel={task.workingLabel}
+                    disabled={busy && !task.busy}
+                    title="Return this batch to the supplier?"
+                    question={
+                      <>
+                        {row.batch.availableQuantity} of {row.batch.medicineName}, batch{' '}
+                        {row.batch.batchNumber}, leaves the shelf and goes back to the
+                        supplier. A credit note is raised for what is expected back.
+                      </>
+                    }
+                    confirmLabel="Return it"
+                    onConfirm={() =>
+                      task.run({
+                        working: `Returning ${row.batch.medicineName}…`,
+                        request: () =>
+                          run('return_to_supplier', {
+                            batchId: row.batch.id,
+                            quantity: row.batch.availableQuantity,
+                          }),
+                        confirmed: () => ({
+                          kind: 'confirmed',
+                          title: 'Returned to the supplier',
+                          identity: `${row.batch.medicineName} · batch ${row.batch.batchNumber}`,
+                          detail: `${row.batch.availableQuantity} left the shelf. The credit note is on the returns list.`,
+                          icon: 'truck',
+                          dwell: DWELL_MAJOR,
+                        }),
                       })
                     }
                   >
                     Return all
-                  </Button>
+                  </ConfirmButton>
                 ) : null}
 
                 {/* Two gestures, because this destroys stock and the number it
@@ -328,7 +446,9 @@ function ExpiringTable({
                 <ConfirmButton
                   size="sm"
                   variant="ghost"
-                  disabled={busy}
+                  busy={task.busy}
+                  busyLabel={task.workingLabel}
+                  disabled={busy && !task.busy}
                   title="Write off this batch?"
                   question={
                     <>
@@ -340,10 +460,24 @@ function ExpiringTable({
                   confirmLabel="Write it off"
                   confirmVariant="danger"
                   onConfirm={() =>
-                    void run('write_off_stock', {
-                      batchId: row.batch.id,
-                      quantity: row.batch.availableQuantity,
-                      reason: 'expiry',
+                    task.run({
+                      working: `Writing off ${row.batch.medicineName}…`,
+                      request: () =>
+                        run('write_off_stock', {
+                          batchId: row.batch.id,
+                          quantity: row.batch.availableQuantity,
+                          reason: 'expiry',
+                        }),
+                      // Amber, and it names the loss. Destroying stock is not a
+                      // green completion even when it is the right call.
+                      confirmed: () => ({
+                        kind: 'partial',
+                        title: 'Written off',
+                        identity: `${row.batch.medicineName} · batch ${row.batch.batchNumber}`,
+                        detail: `${row.batch.availableQuantity} destroyed and recorded as a loss at cost. This cannot be undone.`,
+                        icon: 'alert',
+                        dwell: DWELL_MAJOR,
+                      }),
                     })
                   }
                 >

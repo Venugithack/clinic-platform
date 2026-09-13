@@ -7,44 +7,59 @@
    register, the pre-printed case sheet, the token board, the whiteboard bed
    board. All four are ruled structure holding transcribed facts.
 
-   Two rules that hold the whole system together:
+   Three rules that hold the whole system together:
    1. NO ELEVATION. Hierarchy is rule weight, never shadow.
         1px rule   = an ordinary boundary
         2px ink    = a record / document
         ink fill   = active right now
    2. COLOUR IS SEMANTIC. `active` marks the one thing happening now; free /
       attn / stop are reserved for status. Nothing decorative is ever coloured.
+   3. COLOUR IS NEVER ALONE. Every status carries a word, and usually a shape.
+      Read this file in grayscale and the clinic still works.
 
    The one deliberate departure from the reference: every control is sized for
    a finger. The reference is a mouse-driven demo with 24px buttons; this runs
-   on 768–1024px tablets, so controls are floored at 44px (`--tap`) and the
-   type scale is nudged up a step. The visual language is unchanged — the same
-   rules, the same ink, the same tracked caps — only the touch geometry grows.
+   on 768–1024px tablets, so controls are floored at 44px and the type scale is
+   nudged up a step.
+
+   ── WHY THE COLOURS ARE TWO LAYERS ─────────────────────────────────────────
+
+   Every colour is declared twice: once as a `--jmc-*` value under a theme
+   selector, and once inside `@theme inline` as the `--color-*` name Tailwind
+   builds `bg-paper` / `text-ink` / `border-rule` out of. `inline` is what makes
+   the utility resolve `var(--jmc-paper)` at the point of use rather than baking
+   the hex in at build time — which is the whole mechanism by which a theme can
+   change on a tablet that has already loaded the stylesheet.
+
+   The pay-off is that a theme is this file and nothing else. No component
+   anywhere in the application writes a colour: three hundred-odd `bg-paper`s
+   and `text-ink`s all follow, and Night shift and High contrast are twelve
+   lines each rather than a sweep through twenty files.
 --------------------------------------------------------------------------- */
 
-@theme {
-  /* Surfaces — the desk is warm and coloured, the document is white */
-  --color-paper: #e7e6e0;
-  --color-paper-2: #dcdbd3;
-  --color-sheet: #fcfcfb;
+@theme inline {
+  /* Surfaces — the desk is quiet and coloured, the document is white */
+  --color-paper: var(--jmc-paper);
+  --color-paper-2: var(--jmc-paper-2);
+  --color-sheet: var(--jmc-sheet);
 
   /* Ink */
-  --color-ink: #191c1a;
-  --color-ink-2: #5a6260;
-  --color-ink-3: #8c918d;
-  --color-rule: #c9c8c0;
+  --color-ink: var(--jmc-ink);
+  --color-ink-2: var(--jmc-ink-2);
+  --color-ink-3: var(--jmc-ink-3);
+  --color-rule: var(--jmc-rule);
 
-  /* The single chromatic accent. Active state only — never a heading. */
-  --color-active: #c2620e;
-  --color-active-wash: #f6ead9;
+  /* The primary control, the current location, and the thing happening now. */
+  --color-active: var(--jmc-active);
+  --color-active-wash: var(--jmc-active-wash);
 
   /* Status. Reserved. Never borrowed for emphasis. */
-  --color-free: #2f6b4f;
-  --color-free-wash: #e2ece5;
-  --color-attn: #7a5b12;
-  --color-attn-wash: #f1ead6;
-  --color-stop: #a11d22;
-  --color-stop-wash: #f5e2e2;
+  --color-free: var(--jmc-free);
+  --color-free-wash: var(--jmc-free-wash);
+  --color-attn: var(--jmc-attn);
+  --color-attn-wash: var(--jmc-attn-wash);
+  --color-stop: var(--jmc-stop);
+  --color-stop-wash: var(--jmc-stop-wash);
 
   --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, 'Courier New', monospace;
@@ -53,14 +68,123 @@
   --radius-box: 2px;
 }
 
+/* ── Theme 1: Paper and ink ────────────────────────────────────────────────
+   The default, and the clinic's identity. Values are the "Shared visual
+   system" table in docs/UI_UX_PLAN.md. `[data-theme='paper']` repeats the
+   bare `:root` block so that choosing the default explicitly still wins over
+   a device preference. */
+:root,
+[data-theme='paper'] {
+  --jmc-paper: #f0f5f3;
+  --jmc-paper-2: #e4ede9;
+  --jmc-sheet: #ffffff;
+
+  --jmc-ink: #213b32;
+  --jmc-ink-2: #586e63;
+  --jmc-ink-3: #7d8f86;
+  --jmc-rule: #d6e2db;
+
+  --jmc-active: #176751;
+  --jmc-active-wash: #e3f0ea;
+
+  --jmc-free: #176751;
+  --jmc-free-wash: #e3f0ea;
+  --jmc-attn: #a35c00;
+  --jmc-attn-wash: #fbeedc;
+  --jmc-stop: #b42318;
+  --jmc-stop-wash: #fbe6e3;
+
+  /*
+   * Focus has its own colour on purpose.
+   *
+   * It cannot borrow amber or red, because on this system those two words mean
+   * "still owed" and "blocked", and a ring that says one of those about the
+   * control a nurse has merely tabbed onto is a lie told several hundred times
+   * a shift. So focus is the darkest ink, drawn 2px outside the control on the
+   * surrounding surface where it always has contrast to spend.
+   */
+  --jmc-focus: #0f2d24;
+  --jmc-ring: 2px;
+
+  color-scheme: light;
+}
+
+/* ── Theme 2: Night shift ──────────────────────────────────────────────────
+   For the room with the lights down. Low-glare surfaces, warm text, and the
+   same three status meanings — lifted in luminance so they survive a dark
+   ground, never re-assigned. */
+[data-theme='night'] {
+  --jmc-paper: #121815;
+  --jmc-paper-2: #1a231f;
+  --jmc-sheet: #1b2420;
+
+  --jmc-ink: #e8efe9;
+  --jmc-ink-2: #a6b7ae;
+  --jmc-ink-3: #7f918a;
+  --jmc-rule: #31403a;
+
+  --jmc-active: #4fb08c;
+  --jmc-active-wash: #16302a;
+
+  --jmc-free: #4fb08c;
+  --jmc-free-wash: #16302a;
+  --jmc-attn: #e0a458;
+  --jmc-attn-wash: #33291a;
+  --jmc-stop: #f2857a;
+  --jmc-stop-wash: #3a211f;
+
+  --jmc-focus: #9fe3c6;
+  --jmc-ring: 2px;
+
+  color-scheme: dark;
+}
+
+/* ── Theme 3: High contrast ────────────────────────────────────────────────
+   Stronger boundaries, maximum text contrast, a thicker focus ring. Every
+   value here is at or beyond WCAG AAA against its surface. */
+[data-theme='contrast'] {
+  --jmc-paper: #ffffff;
+  --jmc-paper-2: #f0f0f0;
+  --jmc-sheet: #ffffff;
+
+  --jmc-ink: #000000;
+  --jmc-ink-2: #1c1c1c;
+  --jmc-ink-3: #3a3a3a;
+  --jmc-rule: #000000;
+
+  --jmc-active: #0a4634;
+  --jmc-active-wash: #dcece6;
+
+  --jmc-free: #0a4634;
+  --jmc-free-wash: #dcece6;
+  --jmc-attn: #6b3800;
+  --jmc-attn-wash: #f7e9d7;
+  --jmc-stop: #8c0d06;
+  --jmc-stop-wash: #f9e1df;
+
+  --jmc-focus: #000000;
+  --jmc-ring: 3px;
+
+  color-scheme: light;
+}
+
+/*
+ * A dark ground inside a light theme — the navigation rail, and anything else
+ * that inverts. Focus would otherwise draw near-black ink on near-black ink.
+ * Put `data-ground="dark"` on the container and every ring inside it flips.
+ */
+[data-ground='dark'] {
+  --jmc-focus: var(--jmc-paper);
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
   }
 
   body {
-    background-color: var(--color-paper);
-    color: var(--color-ink);
+    background-color: var(--jmc-paper);
+    color: var(--jmc-ink);
     font-family: var(--font-sans);
     /* One step up from the reference's 14px — read at arm's length on a
        tablet propped on a counter, not at 60cm on a desk. */
@@ -80,13 +204,13 @@
   }
 
   ::selection {
-    background-color: var(--color-ink);
-    color: var(--color-paper);
+    background-color: var(--jmc-ink);
+    color: var(--jmc-paper);
   }
 
   /* Staff work with a keyboard in front of a patient. Never remove focus. */
   :focus-visible {
-    outline: 2px solid var(--color-active);
+    outline: var(--jmc-ring) solid var(--jmc-focus);
     outline-offset: 2px;
     border-radius: 1px;
   }
@@ -101,27 +225,102 @@
   input[type='radio'] {
     width: 22px;
     height: 22px;
-    accent-color: var(--color-active);
+    accent-color: var(--jmc-active);
     flex: 0 0 auto;
+  }
+
+  /*
+   * Entered values are 16px, everywhere.
+   *
+   * Two reasons, and the second one is the one that bites. It is the size a
+   * transcribed batch number has to be to be checked against the box in
+   * somebody's other hand — and below 16px iOS Safari zooms the page on focus,
+   * which on a tablet in portrait throws the field being typed into off the
+   * side of the screen.
+   */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
 
-/* Small tracked caps. Labels a form field, a column, a section — the printed
-   part of a case sheet, as opposed to the written-in part. */
+/*
+ * A small label. Names a form field, a column, a section — the printed part of
+ * a case sheet, as opposed to the written-in part.
+ *
+ * It used to be 11px uppercase tracked at 0.16em, which is the reference
+ * system's voice, and at 96 call sites it was also this application's voice for
+ * every field label, every column header, every card and modal title. Two
+ * things were wrong with that on a clinic tablet: tracked caps make long words
+ * ("PREVIOUSLY SUPPLIED") eat a column they do not deserve, and 11px is below
+ * what the plan asks of a label carried at arm's length. Sentence case at 13px
+ * reads faster and takes less room, and because the whole application labels
+ * through this one utility, it is this edit and no other.
+ */
 @utility eyebrow {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  line-height: 1.2;
-  color: var(--color-ink-2);
+  letter-spacing: 0;
+  line-height: 1.25;
+  color: var(--jmc-ink-2);
 }
 
 /* A ruled blank: what you write a value onto. */
 @utility blank {
-  background-color: var(--color-sheet);
-  border-bottom: 1.5px solid var(--color-ink);
+  background-color: var(--jmc-sheet);
+  border-bottom: 1.5px solid var(--jmc-ink);
   border-radius: 2px 2px 0 0;
+}
+
+/* Tabular numerals, asked for by name where the default is not enough. */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────────
+   Brief, and always attached to something that just happened. The reduced
+   motion block below switches all of it off; nothing may depend on an
+   animation running in order to become visible or readable. */
+
+@keyframes jmc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes jmc-mark {
+  from {
+    transform: scale(0.84);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes jmc-rise {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.jmc-spin {
+  animation: jmc-spin 900ms linear infinite;
+}
+
+.jmc-mark {
+  animation: jmc-mark 260ms ease-out 1;
+}
+
+.jmc-rise {
+  animation: jmc-rise 160ms ease-out 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -131,6 +330,17 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /*
+   * The ring stops turning, so it stops being a spinner and has to be a mark
+   * instead: a complete, quiet circle beside the words that are doing the
+   * actual explaining. A frozen three-quarter arc reads as a page that has
+   * hung, which is the opposite of what it is there to say.
+   */
+  .jmc-spin {
+    animation: none !important;
+    opacity: 0.55;
   }
 }
 
@@ -175,8 +385,27 @@
     display: block !important;
   }
 
+  /*
+   * Paper is always paper, whichever theme the tablet is wearing.
+   *
+   * Night shift on an A4 sheet is a black rectangle and a cartridge, and the
+   * printer honours background colours from some dialogs and not others — so
+   * the document forces its own ink rather than hoping.
+   */
+  html,
   body {
-    background: #fff;
+    --jmc-paper: #ffffff;
+    --jmc-paper-2: #ffffff;
+    --jmc-sheet: #ffffff;
+    --jmc-ink: #000000;
+    --jmc-ink-2: #333333;
+    --jmc-ink-3: #555555;
+    --jmc-rule: #999999;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  body {
     font-size: 12px;
   }
 
