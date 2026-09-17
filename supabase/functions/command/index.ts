@@ -1,3 +1,4 @@
+import { CommandRefusal } from '../_shared/command-input.ts'
 import { runCommand } from '../_shared/commands.ts'
 import { currentRevision } from '../_shared/db.ts'
 import { readSnapshot } from '../_shared/snapshot.ts'
@@ -42,6 +43,20 @@ Deno.serve(async (request) => {
     // sold here" — arrives as an exception and must reach the screen intact.
     const message =
       error instanceof Error ? error.message : 'The request could not be completed.'
+
+    // A few refusals also need the tablet to DO something — rotate a stale
+    // reference, stop offering a retry — and deciding that by matching on the
+    // text of a message is how a reworded sentence becomes a silent behaviour
+    // change. Those carry a code. Every existing caller reads `message` and
+    // never looks for this, which is what makes adding it safe.
+    //
+    // Only a `CommandRefusal` is trusted to carry one. A Postgres error has a
+    // `code` of its own — `23505` for a duplicate key — and forwarding that
+    // would put an SQLSTATE in a field the contract says holds clinic
+    // vocabulary, where a tablet might one day switch on it.
+    if (error instanceof CommandRefusal) {
+      return json({ ok: false, message, code: error.code }, 400)
+    }
     return json({ ok: false, message }, 400)
   }
 })

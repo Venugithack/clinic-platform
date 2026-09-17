@@ -10,7 +10,7 @@
  *   3. the static export, built against the local functions — not `next dev`,
  *      because NEXT_PUBLIC_FUNCTIONS_URL is baked in at build time and the
  *      export is what Cloudflare actually serves
- *   4. the nine Edge Functions on 127.0.0.1:54321
+ *   4. the thirteen Edge Functions on 127.0.0.1:54321
  *   5. the page on 127.0.0.1:54330
  *   6. node --test over tests/browser
  *
@@ -31,6 +31,8 @@
  * production.
  */
 import { execFileSync, spawn } from 'node:child_process'
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { requireStagingUrl } from './guard.mjs'
 import { up, STAGING_URL } from './up.mjs'
 
@@ -134,12 +136,43 @@ async function main() {
   console.log('  http://127.0.0.1:54330')
 
   step('journeys')
+
+  /*
+   * Every journey file by default, or the ones named on the command line.
+   *
+   * `npm run test:browser -- slice5-images` runs one file against the same
+   * staging database, the same build and the same servers as the full gate.
+   * That is for working on a failing journey: the suite takes nine minutes and
+   * a browser, and re-running all of it to see one test fail again is how
+   * somebody ends up debugging by guess. It is not a way to pass the gate —
+   * the gate is the whole glob, and CI passes no arguments.
+   *
+   * A filter is matched as a substring of the filename so `slice4` and
+   * `slice4-counter.test.mjs` both work; one that matches nothing is refused
+   * loudly rather than quietly running zero tests and reporting success.
+   */
+  const filters = process.argv.slice(2).filter((arg) => !arg.startsWith('-'))
+  let targets = ['tests/browser/*.test.mjs']
+  if (filters.length > 0) {
+    const available = readdirSync(join(process.cwd(), 'tests', 'browser'))
+      .filter((file) => file.endsWith('.test.mjs'))
+    targets = available
+      .filter((file) => filters.some((filter) => file.includes(filter)))
+      .map((file) => `tests/browser/${file}`)
+    if (targets.length === 0) {
+      console.error(`No journey file matches ${filters.join(', ')}. Available:`)
+      for (const file of available) console.error(`  ${file}`)
+      stopEverything()
+      process.exit(1)
+    }
+    console.log(`  running ${targets.length} of ${available.length} journey files`)
+  }
+
   const tests = spawn(
     process.execPath,
-    // Every journey file, one at a time. They share one browser and one
-    // database, so concurrency here is two tests signing in as different
-    // people into the same tab.
-    ['--test', '--test-concurrency=1', 'tests/browser/*.test.mjs'],
+    // One at a time. They share one browser and one database, so concurrency
+    // here is two tests signing in as different people into the same tab.
+    ['--test', '--test-concurrency=1', ...targets],
     { stdio: 'inherit', env: { ...process.env, STAGING_DB_URL: url } },
   )
 

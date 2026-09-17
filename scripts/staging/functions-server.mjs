@@ -1,5 +1,5 @@
 /**
- * The nine Edge Functions, served locally against the staging database.
+ * The thirteen Edge Functions, served locally against the staging database.
  *
  * A browser journey needs a backend, and this repository has no local one:
  * `docs/README.md` §3 says so and names the consequence — `npm run dev` talks

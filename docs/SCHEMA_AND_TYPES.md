@@ -131,9 +131,11 @@ Today's queue, plus anything still waiting from another day.
 | `status` | text | no | | check in `('waiting','in_consult','done','cancelled')` |
 | `created_at` | text | no | | |
 
-Indexes: `appointments_pkey` only. Nothing indexes `scheduled_at` or `status`,
-and the snapshot filters on both on every poll.
-(`appointments_patient_id_idx` is file-only.)
+Indexes at the time this was read: `appointments_pkey` only. Nothing indexed
+`scheduled_at` or `status`, and the snapshot filters on both on every poll.
+(`appointments_patient_id_idx` is file-only.) **Superseded:** `20260919000000`
+and `20260920000000` added five more, and this table gained five columns in the
+second of them — see [§14](#14-backend-programme-slice-2-the-future-and-the-way-out-of-an-attempt).
 
 ### 1.6 `vitals`
 
@@ -1207,6 +1209,13 @@ So the *minting* is fixed — `appointment_token_seq` hands each number to exact
 one caller — but the *table* is not constrained, the historic duplicates are
 still there, and nothing detects or reports them. Any slice that adds the index
 must first find and resolve the duplicates.
+
+**Half closed by `20260920000000`.** A unique index now covers the OPEN rows
+only — `where status in ('waiting','in_consult')` — which is exactly the part
+of this that is a clinical safeguard rather than untidiness, and the migration
+finds open duplicates first and refuses with a sentence naming them rather than
+with a constraint violation. Historical duplicates among finished visits remain
+and remain unconstrained, deliberately. See [§14.4](#144-two-unique-indexes-one-of-them-able-to-refuse).
 
 ### 3.8 `active integer` is a boolean
 
@@ -2389,3 +2398,784 @@ and there is no command in this release that finishes the sentence. The code's
 job was to stop creating these silently, to stop hiding the ones that already
 exist, and — after the first attempt — to stop refusing the one step that walks
 an over-refund back. That much is done. The rest is the accountant's.
+
+---
+
+## 13. Backend programme Slice 1: one key, and seven indexes
+
+Added 14 September 2026 by Slice 1 of
+[`reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md).
+Two migrations, two columns, one unique index, one check, seven plain indexes,
+and
+no new table.
+
+### 13.1 The two columns on `encounters`
+
+| Column | Type | Null | What it holds |
+|---|---|:-:|---|
+| `idempotency_key` | `text` | yes | The name one attempt at one consultation was signed under. Unique clinic-wide. |
+| `request_fingerprint` | `text` | yes | SHA-256 of the material consultation request, as 64 hex characters. |
+
+Both nullable, because every encounter signed before `20260918000000` has
+neither and inventing one would be inventing evidence about a visit that already
+happened. Every row written since carries both: `completeConsultation` mints a
+key of its own when the tablet does not send one, so the pair is absent only on
+history.
+
+```sql
+create unique index encounters_idempotency_key on jmc.encounters (idempotency_key);
+alter table jmc.encounters add constraint encounters_key_carries_fingerprint
+  check (idempotency_key is null or request_fingerprint is not null);
+```
+
+Postgres treats NULLs as distinct in a unique index, which is what lets the
+historical rows coexist with the constraint. The check is validated on creation
+rather than `NOT VALID`, because every existing row has both columns null and
+therefore satisfies it.
+
+**Why two columns and not one.** A key alone answers "have I seen this?" and
+then hands back whatever it finds. Welded to the wrong request it stops being a
+retry guard and becomes a way to lose work — which is precisely what the counter
+met when one payment key was minted per session rather than per bill, and the
+clinic answered a payment on the second invoice with the first invoice's
+receipt. The fingerprint is what lets the server refuse a mismatch out loud
+instead of replying with the wrong encounter.
+
+### 13.2 What identifies one attempt, in two parts
+
+A key that has already been spent is checked twice, and the two checks answer
+different questions and produce different refusals.
+
+**The binding — who and which visit.** The patient, the doctor and the
+appointment, read off the encounter the key already names and compared against
+the request. Nothing is hashed here — the encounter stores all three columns,
+so the comparison is against the row itself. Most differences are
+`ATTEMPT_NAMES_ANOTHER_CONSULTATION`: the reference belongs to somebody else's
+consultation, this request is provably not a retry of it, and the tablet should
+mint a fresh one. One is not — a request naming a visit where the encounter has
+none is `CONSULTATION_SIGNED_WITHOUT_THIS_VISIT`, and the tablet must **not**
+rotate on it, because that writes the same consultation twice.
+
+**The binding is judged first, and that has a consequence worth knowing.** A
+request refused on the binding never has its fingerprint compared, so restoring
+an edited sheet cannot clear `CONSULTATION_SIGNED_WITHOUT_THIS_VISIT` while the
+live visit is still on screen — a byte-perfect sheet is refused with the same
+code. What clears it is closing the queue row, which is also what the
+`unlinked_consultation` obligation asks for.
+
+**The fingerprint — what was written.** Everything else that reaches a durable
+record: all twelve `clinicalFields()` values, every prescription line's
+`medicineId`, dose, unit, frequency, timing, route, duration, directions,
+instructions and quantity, the fee decision (waive / override amount / reason),
+and — only when there are lines to carry them — `validUntil`, `supplyInParts`
+and `validityReason`. A difference is `CONSULTATION_ALREADY_SIGNED`: this *is*
+the consultation the key named, it committed, and signing is immutable.
+
+The split matters because the responses differ. A stale reference invites a new
+one; an edited sheet must not, because a fresh key there writes a second
+encounter and a second fee for one visit.
+
+**The appointment is part of the binding, and the request carries it twice.**
+`appointmentId` is the visit on screen now; `openedVisitId` is the visit the
+attempt was opened against and never changes. Both are optional, so a caller
+that sends neither behaves exactly as it did before this slice.
+
+They are separate because each covers what the other cannot, and this took four
+versions to get right. Dropping the appointment from the identity altogether
+made one patient's Monday and Thursday the same consultation. Sending only the
+opened value left a walk-in's consultation succeeding while the visit the
+doctor had just created sat in the queue as `waiting`, attached to nothing.
+Sending only the live value let an attempt whose visit had been **cancelled**
+under it retry as a direct consultation — the cancellation bypassed, the
+encounter unlinked, ₹300 charged. Sending both, and keeping them apart, is what
+is implemented.
+
+A first signing resolves the visit inside the transaction: the live one wins
+when there is one, and otherwise the opened one is read `for update` and signed
+against if it is still `waiting` or `in_consult`. If it has been cancelled,
+closed or removed, the signing is refused with `ATTEMPT_VISIT_NO_LONGER_ACTIVE`
+rather than quietly becoming a direct consultation.
+
+**That row lock is also a second serialization point**, and it needed its own
+recovery. Two tablets signing one **queued** patient under one key do not meet
+the unique index: the loser waits on the appointment lock, wakes to a visit the
+winner has just set to `done`, and has written nothing for the index to refuse.
+It used to be told the visit was "already finished or does not belong to this
+patient" — false in both halves, with its own consultation sitting in the
+clinic. Every refusal on that path now re-reads the key first, and a caller
+that finds its own consultation replays through the same path the index race
+uses.
+
+Deliberately excluded, and each for a reason:
+
+| Excluded | Why |
+|---|---|
+| The patient, the doctor and the appointment | Not excluded — checked as the binding above, against the encounter's own columns, so that a stale reference and an edited sheet get different answers. |
+| `medicineName`, `genericName`, `strength`, `dosageForm`, `medicineCode` | Copied onto the line from the formulary at signing. They are not the doctor's request, and an admin correcting a shelf label between a lost reply and its retry must not turn that retry into a refusal. |
+| The clinic's default consultation fee | Read inside the transaction. What belongs to the request is the doctor's *decision* about the fee, not the number the clinic happened to hold. |
+| Validity fields when there are no prescription lines | The command ignores them then, and a field the command ignores cannot be a material difference. |
+
+The hash is taken over canonical JSON — every object key sorted, arrays left in
+order — so it is a property of the facts rather than of the order somebody wrote
+them in. `JSON.stringify` preserves insertion order, and a fingerprint built on
+that would begin refusing honest retries the first time a field was reordered in
+the object literal.
+
+### 13.3 The seven indexes
+
+No column, no table, no stored status. `20260919000000` adds only these:
+
+| Index | On | For |
+|---|---|---|
+| `patients_normalized_name` | `lower(regexp_replace(name,'\s+',' ','g')) text_pattern_ops` | Name prefix search. `text_pattern_ops` because the default collation's btree cannot serve `like 'prefix%'`. |
+| `patients_phone_digits` | `right(regexp_replace(phone,'\D','','g'), 10)` | Phone match, normalized the way `find_possible_duplicates` has always normalized it. |
+| `appointments_open_idx` | `(scheduled_at) where status in ('waiting','in_consult')` | The open queue. Partial, because the open rows are a vanishing fraction after year one. |
+| `appointments_token_idx` | `(token)` | Searching by the slip in somebody's hand. Two things about it. A btree on the bare column cannot serve `upper(token) = …`, so the search folds only the caller's input (`token = upper($1)`) — tokens are generated uppercase, so that is equivalent and reachable; written the other way round the index was maintained on every arrival and used by nothing. And §3.7 — `token` still has no *unique* index, duplicates being a known condition of the carried-over data, so a token lookup must tolerate more than one row. |
+| `encounters_patient_recent` | `(patient_id, created_at desc)` | The latest encounter for a patient. |
+| `vitals_patient_recent` | `(patient_id, recorded_at desc)` | Whether anything was recorded today. |
+| `follow_ups_open_due` | `(due_date) where status = 'open'` | The clinic-wide due list. Not a duplicate of `follow_ups_doctor_open_due_idx`, which leads on `doctor_id` and cannot serve a query that does not filter on it. |
+
+### 13.4 Two things the search does to stay honest
+
+**A typed name is escaped before it reaches a LIKE.** `%`, `_` and `\` are
+LIKE's own vocabulary and a search box takes whatever it is given, so all three
+are replaced with their escaped forms and every LIKE built from the result
+names its escape character explicitly rather than inheriting the server
+default. Unescaped, `%` matches the whole register and the cap decides which
+twenty-five come back, and `_` widens an exact-looking prefix without saying
+so. The same rule already governed the counter's outcome lookup; it now governs
+the one place where the input is a person's name.
+
+**A patient appears once.** The passes are a `union all` of four branches and a
+patient can satisfy more than one, so the result is `distinct on (h.id)`
+ordered by rank — the row kept is the strongest evidence for showing that
+person, and `matched_on` then reports it truthfully. Without it the same person
+came back twice in a list whose whole job is to tell two people apart.
+
+Both are asserted, including the case of a patient genuinely named `R_D Kumar`
+being found by typing `R_D` while `Radha Kumar` is not.
+
+Expression indexes rather than stored normalized columns, deliberately. A stored
+copy of a name is a second name that can fall out of step with the first;
+Postgres maintains an expression index from the row itself, and a query written
+with the identical expression uses it. Both expressions are `IMMUTABLE`, which is
+what makes them indexable at all.
+
+**What is not indexed.** A surname typed on its own matches in the middle of a
+name, which no btree can serve. That case is a sequential scan with a hard cap of
+25 rows on the output. `pg_trgm` would fix it and is not installed on this
+database — there is no `create extension` anywhere in the migration set (§1) —
+and installing one is a deployment decision rather than a read model's.
+
+### 13.5 What Slice 1 did not add
+
+No table. No mutable workflow-status column: every stage, obligation and count
+the `workspace` endpoint reports is derived from the authoritative record at read
+time. Nothing joined the clinic snapshot — its five unbounded collections
+(`patients`, `medicines`, `batches`, `suppliers`, `orders`) did not become six.
+No new `text` timestamp, and no new `real` money column, both of which §3 exists
+to warn about.
+
+One limitation is structural and worth stating beside the schema rather than
+only in the contract: **`jmc.vitals` still carries a patient and a time and
+nothing that ties a reading to a visit** — no `appointment_id`, no
+`encounter_id`. So "were this visit's vitals taken" is not a question this schema
+can answer, and the read model reports "was anything recorded for this patient
+today" in those words instead. For a patient who attends twice in one day the two
+are not the same. Adding the foreign key is the honest fix and belongs to a slice
+that may change that table.
+
+---
+
+## 14. Backend programme Slice 2: the future, and the way out of an attempt
+
+`20260920000000_slice2_appointments_and_reconciliation.sql`,
+`20260921000000_slice2_acceptance_correction.sql`,
+`20260922000000_same_attendance_closes_the_visit.sql` and
+`20260923000000_a_reconciled_visit_stays_reconciled.sql`. Six new tables, five new
+columns on `jmc.appointments`, seven on `jmc.appointment_events`, three new
+unique indexes, three composite foreign keys, two check constraints added, one
+index dropped and one constraint replaced. Owner policy items 65–74.
+
+> Slice 2 was returned unaccepted during review and corrected six times. It was
+> **accepted on 17 September 2026** after §14.15 and a 758/758 database gate.
+> §14.9–§14.15 retain the review history; where sections disagree, the later
+> section is the current behaviour.
+
+### 14.1 The one decision the whole migration rests on
+
+**`jmc.appointments` is not the appointment table. It is the arrival table**,
+and the name is a fossil from the first schema. Every row in it is somebody
+standing in the clinic with a token; `scheduled_at` is when they turned up
+rather than when they were expected; and `snapshot.ts` sends every row of it
+for today, all four statuses, to every tablet in the building with no role
+boolean in front of it (§2.4, and `capabilities.ts` says so in as many words).
+
+So a booking for next Tuesday is not a row in it. Owner item 70 — "A future
+booking does not enter the live queue until check-in" — and a row in
+`appointments` *is* the live queue. The alternative was a fifth status value,
+which every reader in `components/` would have had to learn: `care-workspaces.tsx`
+and `shared-panels.tsx` each hold an exhaustive `Record<status, tone>` that
+would fail to compile, and eight more places compare `!== 'done' && !== 'cancelled'`
+and would silently treat the new value as an active visit.
+
+`jmc.appointment_bookings` is therefore the future, `jmc.appointments` stays
+the present, and `check_in_appointment` is the only door between them.
+
+### 14.2 The five tables
+
+| | |
+|---|---|
+| `appointment_types` | Owner item 65. `duration_minutes` default 15 (owner item 65), check `> 0 and <= 480` — the ceiling is an implementation safety bound and **not** item 65, which said nothing about a maximum. Unique on `lower(trim(name))` **where active**, so a retired type may share a name with its replacement. |
+| `provider_availability` | Owner item 71. A window is recurring (`weekday` + `effective_from`, optional `effective_to`) or dated (`on_date`), never both — a check enforces exactly one. `kind` is `open` or `blocked`; blocked subtracts. Retired rather than deleted. |
+| `appointment_bookings` | Owner items 66–70. `scheduled_at timestamptz`, `duration_minutes` **copied** from the type, `status in ('booked','cancelled','no_show','checked_in')`, `overbooked`, `outside_availability` and `overbooked_reason` under one symmetric check (§14.9), `idempotency_key` + `request_fingerprint` with a unique index — the booking's own copy of the reference it was made under, beside the authoritative `appointment_command_receipts` row (§14.9). |
+| `appointment_events` | Owner item 68. Append-only, `reject_signed_line_change()` on update and delete. Exactly one of `booking_id`/`arrival_id` per row, enforced by `check ((booking_id is null) <> (arrival_id is null))`. Eight event names. |
+| `consultation_attempt_resolutions` | Owner items 72–74. Append-only, unique on `idempotency_key`. See §14.5. |
+
+The duration is copied rather than joined because owner item 65 says "A type
+change does not rewrite the duration already recorded for an existing booking"
+— the same reasoning that snapshots the consultation fee onto the encounter
+(§9.5) rather than reading `clinic_settings` back a month later. There is no
+join to go stale.
+
+`appointment_bookings` carries no `arrival_id`. The arrival is found through
+`appointments.booking_id`, so one booking can never disagree with itself about
+which queue row it became.
+
+### 14.3 What `appointments` gained
+
+| Column | Type | Note |
+|---|---|---|
+| `booking_id` | text, FK -> `appointment_bookings(id)` | Null for a walk-in, which is most rows. |
+| `urgent` | boolean not null default false | Owner item 70. |
+| `urgent_reason` | text not null default `''` | |
+| `urgent_by` | text, FK -> `staff(id)` | |
+| `urgent_at` | timestamptz | |
+
+Plus `check (urgent = false or (length(trim(urgent_reason)) > 0 and urgent_by
+is not null and urgent_at is not null))` — a priority with nobody's name and no
+sentence behind it is not the reviewable override item 70 asks for.
+
+Nothing is backfilled. Every existing row takes `false` and an empty reason,
+which is what every existing row means.
+
+### 14.4 Two unique indexes, one of them able to refuse
+
+**`appointments_one_live_arrival_per_booking`** — unique on `booking_id`
+`where booking_id is not null and status <> 'cancelled'`. This is what makes
+"retrying check-in returns the same arrival and never creates two queue
+entries" a guarantee rather than a hope. `status <> 'cancelled'` is not a
+loophole: owner item 68 lets a doctor reschedule after check-in, and the honest
+way to record that is to cancel the queue row the patient is no longer standing
+in and let the moved booking check in again.
+
+**`appointments_open_token_unique`** — unique on `token`
+`where status in ('waiting','in_consult')`. This closes §3.7, and it closes
+exactly the part of it that is a clinical safeguard. `20260909125224` declined
+to constrain the column at all, on the ground that "a migration that fails on
+the damage it exists to stop helps nobody", and that is right about the whole
+table and too broad about the open rows: the harm it describes — "two waiting
+patients simply hold JMC-0004, and one of them is called in for the other's
+consultation" — needs both rows to be OPEN. Historical duplicates among
+finished visits are untidy; duplicates among the eleven people in the corridor
+are the wrong patient in the consulting room.
+
+The migration **can refuse**, and does so with a sentence rather than a
+constraint name: a `do $$` block finds open duplicates first and raises naming
+each token and how many rows hold it, because the operator has to resolve the
+queue before the index can be created and a SQLSTATE does not say which rows to
+look at.
+
+**`appointments_token_idx` is dropped.** `20260919000000` added it for exactly
+one query, the patient search's token branch, and that query filters
+`status in ('waiting','in_consult')` — which is the partial index's predicate.
+The full index would go on costing a write on every arrival the clinic ever
+records in order to answer nothing, which is the condition
+`workspace-performance.test.mjs` was written to catch; its plan assertion now
+names the partial index and asserts the old one is gone.
+
+### 14.5 The reconciliation record, and the four things it is not
+
+`consultation_attempt_resolutions` is one append-only row per consultation
+attempt: what the server established about that attempt's outcome, and what a
+doctor then determined. `idempotency_key` is unique, so an attempt is resolved
+once — a repeat replays, a different determination is refused, and two doctors
+resolving at the same moment produce one row.
+
+`idempotency_key` is deliberately **not** a foreign key to anything. The whole
+point of the table is that the key may name nothing at all, which is precisely
+the `not_committed` case.
+
+Seven constraints and one deferred trigger say what it may not be. Four are
+from `20260920000000`; `20260922000000` added a fifth which
+`20260923000000` then **replaced**, because a check on a boolean the writer
+sets can only ever ask whether the writer said so — see
+[§14.11](#1411-the-third-acceptance-correction-16-september-2026):
+
+```sql
+check ((prior_outcome = 'committed') = (encounter_id is not null))
+check (resolution <> 'same_attendance' or prior_outcome = 'committed')
+check (resolution <> 'abandoned_attempt' or prior_outcome = 'not_committed')
+check (subject_visit_closed = false
+       or (subject_visit_id is not null and resolution = 'same_attendance'))
+
+constraint resolutions_disposition_is_one_of_three
+  check (subject_visit_disposition in ('closed_now', 'already_done', 'not_applicable'))
+
+constraint resolutions_disposition_follows_the_determination
+  check (case when resolution = 'same_attendance' and subject_visit_id is not null
+              then subject_visit_disposition in ('closed_now', 'already_done')
+              else subject_visit_disposition = 'not_applicable' end)
+
+constraint resolutions_closed_flag_follows_disposition
+  check (subject_visit_closed = (subject_visit_disposition = 'closed_now'))
+
+constraint resolutions_abandoned_names_no_visit
+  check (resolution <> 'abandoned_attempt' or subject_visit_id is null)
+```
+
+**And a closure is not checked at all — recording it is what performs it.**
+
+`appointment_events_closure_is_genuine` fires `before insert` on every
+`closed_on_reconciliation` row. It locks the determination the event names and
+the visit the event names, refuses a visit that is not `waiting` or
+`in_consult`, **updates that visit to `done`**, and fills in `from_status` from
+the row it locked. The event cannot describe a transition that did not happen,
+because inserting the event is the transition.
+
+It also refuses an event whose `actor_id` is not the determination's own
+`resolved_by`, and **overwrites `reason` and `detail`** from that determination
+exactly as it overwrites both statuses. A closure is performed by the doctor who
+determined it, in the words they used; every one of those is read from the
+stored row rather than taken from whoever is writing. Nothing a caller supplies
+survives into the record.
+
+`jmc.close_visit_for_reconciliation(resolution_id)` takes **one argument**. It
+locks that determination, derives the visit, the actor, the reason and the
+prescription the consultation was signed as, and inserts the event. It returns
+what actually happened — `closed_now`, `already_done` for a visit that was
+already finished, and a refusal for a cancelled one.
+`appointment_events_one_closure_per_resolution` allows one proof per
+determination.
+
+**Why this rather than a better check.** Four reviews found the same shape one
+layer down each time. `20260920000000` trusted a boolean. `20260922000000`
+checked that boolean. This migration's first draft checked that an event existed
+and that its `to_status` was honest — and the fourth review wrote the row the
+check was looking for, beside a visit already `done` for unrelated reasons, with
+the suite's own test calling that forgery "the true one".
+
+The fourth attempt answered with *provenance*: a transaction-local setting the
+closing function set and the trigger checked. The fifth review called
+`set_config()` itself, which any session may do, and the forgery worked again. A
+convention is not a capability.
+
+There is nothing left to assert. The only way to write the event is to move the
+visit, and the only way to move it that way is to write the event.
+
+`resolutions_subject_is_what_it_claims`, a **deferred** constraint trigger,
+remains for what the function cannot see — a determination that is wrong about a
+visit nobody forged anything about:
+
+- a `same_attendance` naming a visit requires that visit to be `done`;
+- `closed_now` requires exactly one closure proof carrying this resolution's id;
+- `already_done` requires none — **and requires the visit to have no
+  consultation of its own.** Owner item 75 links retrospectively to a visit that
+  was left finished, not to one that was seen: if a signing under a fresh
+  reference won the visit lock and wrote its own encounter and fee, recording
+  that visit as the same attendance as an earlier consultation would hide the
+  duplicate rather than resolve it. The encounter the determination is about is
+  excluded, because a consultation signed against its own visit is ordinary;
+- a `new_attendance` naming a visit requires it to be `waiting` or
+  `in_consult`, because owner item 74 keeps it available to consult.
+
+- It is **not an edit of a signed encounter.** `same_attendance` records the
+  link here and leaves `encounters.appointment_id` exactly as the doctor signed
+  it. Owner item 72's first clause.
+- It is **not a second consultation.** Nothing in the command writes an
+  encounter, an invoice, an invoice line, a prescription or a follow-up. No
+  constraint can say that; `slice2-reconciliation.test.mjs` asserts the
+  complete side-effect set on every branch instead.
+- It is **not an automatic release.** `prior_outcome` is what the server
+  established under a lock, and there is no value for "probably".
+- It is **not a guess about which visit is which.** The subject visit is named
+  by the doctor, because owner item 74 says reception creating a second queue
+  row is not evidence of a second consultation.
+
+### 14.6 The advisory lock, and why the schema needs one at all
+
+`ATTEMPT_LOCK_NAMESPACE` (in `_shared/idempotency.ts`, so both halves pick the
+same number) is taken on `hashtext(idempotencyKey)` as the first statement of
+the signing transaction and, as a **try**-lock, of the resolution transaction.
+
+The unique index on `encounters.idempotency_key` serializes two signings. It
+cannot serialize a signing against a RESOLUTION, because the two write
+different tables and neither collides with the other — and that pair is exactly
+what owner item 73 fails closed on. Without the lock, a doctor resolving an
+attempt reads "no encounter carries this key", concludes nothing committed,
+records **New attendance**, releases the reference, and the signing that was in
+flight the whole time commits a moment later. The next press then writes a
+second encounter and a second ₹300 fee.
+
+So a signing WAITS for a resolution, briefly. A resolution does not wait for a
+signing: it refuses with `ATTEMPT_OUTCOME_NOT_ESTABLISHED`, because "somebody
+is signing under this reference right now" is the definition of an outcome that
+cannot be established. `workspace?view=reconciliation` tests the same lock
+without waiting, so the read reports `unknown` rather than a confident
+`not_committed` that is about to stop being true.
+
+Both take it before any row lock, so the ordering is identical in both and
+neither can deadlock against the other. The booking commands use a second,
+separate namespace on the doctor, so a calendar conflict and a consultation
+attempt never wait on each other.
+
+### 14.7 What Slice 2 did not add
+
+No new `text` timestamp and no new `real` money column — in either migration. Nothing joined the
+clinic snapshot — its five unbounded collections did not become six; the one
+field added to an existing snapshot row is `appointments.urgent`, a boolean,
+and the reason behind it is deliberately withheld because that collection has
+no role gate in front of it.
+
+`jmc.vitals` still cannot be tied to a visit (§13.5), and this slice did not
+change it: the honest fix is a foreign key on a table this slice had no reason
+to open.
+
+### 14.8 A correction to §1.5 and §3.7
+
+§1.5 says "Indexes: `appointments_pkey` only. Nothing indexes `scheduled_at` or
+`status`". That was true when it was written and stopped being true at
+`20260919000000`. As of `20260920000000` the table carries:
+
+`appointments_pkey`, `appointments_patient_id_idx`, `appointments_open_idx`
+(partial on `scheduled_at` where open), `appointments_open_token_unique`
+(partial unique on `token` where open), `appointments_one_live_arrival_per_booking`
+(partial unique on `booking_id`), and `appointments_urgent_by_idx`.
+
+§3.7's last sentence — "Any slice that adds the index must first find and
+resolve the duplicates" — is now what the migration does, for the open rows,
+with a named refusal. The historical duplicates among finished visits are still
+there and are still unconstrained, deliberately.
+
+
+### 14.9 The acceptance correction, 16 September 2026
+
+Slice 2 was returned unaccepted. The reviewer reproduced six faults against the
+guarded loopback database that 632 passing tests did not see. Three of them
+needed the schema.
+
+**`jmc.appointment_command_receipts`.** One row per completed appointment
+command, written in the same transaction as its effect, unique on
+`idempotency_key`, append-only by trigger, and holding the ORIGINAL outcome as
+`jsonb` beside the request fingerprint and what the command touched.
+
+It exists because four commands were deciding "have I already done this?" by
+reading the booking's CURRENT state, and that is a guess that expires — the
+whole reason a retry arrives late is that the state moved. A lost reply to
+"move to 11:00", arriving after somebody moved the appointment to 12:00, moved
+it back to 11:00. A lost check-in, arriving after a reschedule, minted a second
+queue token and dragged the booking back into `checked_in`. The programme's
+rule says *stores*, not derives.
+
+One trap worth recording, because it made the mechanism silently useless before
+any test could see it: the driver serializes a parameter bound to a `json`
+column by JSON-stringifying it, so an already-stringified value went in
+stringified twice and came back a JSON string scalar. The insert casts
+`?::text::jsonb` and the read tolerates both shapes.
+
+**Seven columns on `jmc.appointment_events`.** `appointment_type_before/after`,
+`duration_before/after`, `overbooked`, `outside_availability` and
+`override_reason`. A reschedule that changed the appointment type left a
+history saying the time had moved and nothing else, and an override applied
+during a reschedule was validated and then discarded entirely — the booking
+kept whatever flags the ORIGINAL booking had decided. Owner item 68 asks for
+the prior state, the actor, the time and the reason; what the transition
+changed and what had to be overridden to make it ARE the transition.
+
+**One symmetric override rule, replacing an asymmetric one.**
+`20260920000000` required a reason for `overbooked` and required nothing for
+`outside_availability`, although the column comment beside it described the
+reason as covering both:
+
+```sql
+check (case when overbooked or outside_availability
+            then length(trim(overbooked_reason)) > 0
+            else overbooked_reason = '' end)
+```
+
+Both directions matter. The second half is what stops a reschedule into a clear
+slot clearing the flags and leaving the old reason standing, which reads on a
+screen as an override that is not there.
+
+The constraint it replaces was created WITHOUT a name, so Postgres called it
+`appointment_bookings_check` — and the correction's first attempt dropped a name
+that had never existed, leaving the weaker rule in place beside the stronger
+one. It is found by its definition now. The migration rehearsal caught that, by
+setting `overbooked = true` with no reason and being refused by the wrong
+constraint.
+
+**Three composite foreign keys.** `consultation_attempt_resolutions` could
+record that one patient's queue row was the same attendance as another
+patient's consultation; the command checked the encounter and neither visit.
+`(opened_visit_id, patient_id)` and `(subject_visit_id, patient_id)` now
+reference `appointments (id, patient_id)`, and `(encounter_id, patient_id)`
+references `encounters (id, patient_id)`, with unique indexes added on both
+parents to make those references possible.
+
+Checking it in the command is necessary and not sufficient: the constraint is
+the guarantee and cannot be forgotten, and the command is the sentence a doctor
+reads, which a constraint violation is not. Both are there.
+
+**And one attribution removed.** The 480-minute ceiling on an appointment type
+was written under a heading citing owner item 65. Item 65 decided the
+fifteen-minute default and the per-type override and said nothing about a
+maximum. The bound stays; a column comment now says it is an implementation
+safety bound and that no owner decision selected it.
+
+### 14.10 The second acceptance correction, 16 September 2026
+
+Returned again. Four findings, five reproduced failures; one needed the schema.
+
+**`resolutions_same_attendance_closes_its_visit`, in
+`20260922000000_same_attendance_closes_the_visit.sql`.** Forward-only; nothing
+already applied was edited.
+
+```sql
+check (case when resolution = 'same_attendance' and subject_visit_id is not null
+            then subject_visit_closed
+            else not subject_visit_closed end)
+```
+
+Read both ways round: a same-attendance that NAMES a visit has closed it, and
+nothing else may claim to have closed one. The second half was already true in
+`20260920000000` and is restated so that one constraint carries the whole rule
+rather than a reader having to find two and notice that together they mean
+something neither says.
+
+`20260920000000` enforced only that weaker half, so a determination naming a
+visit that was **already cancelled or finished** was accepted, recorded with
+`subject_visit_closed = false`, and then described on the doctor's next press
+as a visit they had closed. A false sentence in a clinical record — and one
+that had already spent the reference's single resolution on its way to being
+said, leaving the doctor with no way back. Owner item 72 defines Same
+attendance as creating the link *and* closing the leftover visit; it does not
+describe one that closes nothing.
+
+The command refuses it now with `SUBJECT_VISIT_NOT_OPEN`, before anything is
+written. The constraint is the other half, for the same reason as the composite
+keys above: the constraint is the guarantee and cannot be forgotten, the
+command is the sentence somebody reads, and a constraint violation is not that
+sentence. The migration names any offending rows before adding the constraint
+rather than migrating past them, because each one is a clinical determination
+with a doctor's name on it.
+
+**The three that did not need schema**, recorded here because §14.9's account
+of the receipt is otherwise read as stronger than it is:
+
+- *A receipt is read before anything MUTABLE happens*, not "before anything
+  else". The role check and canonicalising the caller's own values run first;
+  the ninety-day horizon, the doctor roster and today's date now run inside the
+  receipt's transaction. Before this, a reschedule that succeeded yesterday was
+  refused with "that day is in the past", and a nurse's exact retry was refused
+  with "say which doctor this appointment is with" after a locum joined — both
+  about work that had already committed. The fingerprint is built from what the
+  caller SENT; the resolved doctor is stored as result identity instead.
+- *`superseded` describes the whole effect.* It compared the scheduled instant
+  alone, so a second reschedule to the same time with a longer type replayed
+  the thirty-minute outcome, reported the current duration as forty-five and
+  said `superseded: false`. The appointment type is compared by id, because two
+  types may run the same number of minutes. A creation and an update no longer
+  share a rule.
+- *The reconciliation read mirrors the command's precedence from one table.* A
+  cross-patient `openedVisitId` made one determination of three unavailable,
+  so two buttons were offered that the command refused.
+
+### 14.11 The third acceptance correction, 16 September 2026
+
+Returned a third time. Four findings, one of which reopened the
+duplicate-consultation and duplicate-fee path this slice exists to close.
+
+**`20260923000000_a_reconciled_visit_stays_reconciled.sql`.** Forward-only.
+Nothing already applied is edited; one constraint added by `20260922000000` is
+dropped and replaced by rules that say what it meant to say.
+
+**A reconciled visit could be put back in the queue.** `set_appointment_status`
+moves any visit to any status, so a visit closed as the same attendance could
+be set back to `waiting` by a nurse tidying the queue and then signed again
+under a fresh reference — no idempotency guard applies to a new key.
+Reproduced: **two encounters, two fee lines, ₹600 for one attendance**, through
+the door built to prevent exactly that.
+
+`appointments_reconciled_visits_stay_closed` is a `before update` trigger on
+`jmc.appointments`: a visit named by a `same_attendance` determination never
+returns to `waiting` or `in_consult`, whatever moves it. The command refuses it
+too, with a sentence and `VISIT_RECONCILED_AND_CLOSED`, and `sign_consultation`
+refuses one by name rather than falling through to "that visit is already
+finished". A `new_attendance` subject is deliberately untouched — owner item 74
+keeps that one available to consult.
+
+**The closure constraint checked a boolean, not a closure.** Described above.
+The replacement is the deferred trigger, and the schema document's earlier
+claim that no other database route could record a false closure was simply
+wrong; it is corrected in place.
+
+**`20260922000000`'s pre-flight was unusable.** It named the offending rows and
+said to "close or cancel the visits they name, and record the correction" —
+but the resolution row is immutable, so closing the visit afterwards changes
+nothing about it, and the unique key on `idempotency_key` forbids a replacement
+determination. It named a problem and no way out of it. The new migration's
+three pre-flights each print the statement that makes the record true again,
+and none of them touches a resolution: the visits are brought into line with
+what a doctor determined about them.
+
+**A new attendance accepted a visit nobody could consult**, and could be
+recorded without naming one at all while visits stood in the queue. Both are
+refused now, by the command and by the deferred trigger.
+
+**And the owner decision of the same day**, item 75 of
+`OWNER_POLICY_REGISTER.md`: `subject_visit_disposition`, three values, so that
+a retrospective link to a visit already `done` can be recorded without claiming
+a closure that did not happen. `subject_visit_closed` is kept in step by
+`resolutions_closed_flag_follows_disposition` and means exactly what it always
+meant.
+
+**One thing a reader should know about re-running.** `20260922000000`'s
+pre-flight encodes the policy as it stood before item 75, so it reads an
+`already_done` row as hollow. A database that has adopted the decision does not
+re-run that migration. Migrations are applied once and recorded, so this costs
+nothing in the clinic; it is written down because the migration rehearsal
+applies everything twice, and its fixture uses a `closed_now` closure for that
+reason.
+
+### 14.12 The independent review of the third correction
+
+Five findings, read out of the source by a reviewer who did not write it, plus
+one the lead found while checking the trigger's coverage. All six are fixed in
+`20260923000000` and its commands before the migration was ever applied outside
+the scratch database.
+
+**A reconciled visit could still be cancelled.** The trigger blocked the return
+to `waiting` and `in_consult` — the money path — and let `done → cancelled`
+through, leaving a determination saying the patient was seen at that visit
+beside a queue row saying the visit never happened. No second fee is reachable
+that way, because signing needs an open visit, which is exactly why it would
+have gone unnoticed. `done` is the only status a reconciled visit may still
+take; the determination's own closure is an update the trigger sees, with the
+resolution already written, so that one is permitted and nothing else is.
+
+A test in this round had asserted the cancellation was allowed, as a guard
+against over-correction. It asserted a defect. It now asserts the rule.
+
+**The deferred trigger counted events without reading them.** It asked for a
+row with the right `event`, `arrival_id` and `resolution_id` and looked no
+further, so an event claiming the visit went to `cancelled`, or came from a
+status it was never in, satisfied a constraint whose entire purpose is that a
+closure is an event rather than a boolean. `to_status` and `from_status` are
+checked now.
+
+**The migration's own remediation SQL wrote a false transition.** Its `UPDATE`
+matched visits in `waiting` or `in_consult` and the paired `INSERT` hardcoded
+`from_status = 'waiting'`, so an operator running the statement this migration
+offers as "the statement that makes the record true again" would have written a
+false transition into the audit trail it exists to make trustworthy. It is one
+statement now, and `RETURNING` gives each visit's status as it was before.
+
+**The read did not tell a `new_attendance` to name its visit.** The correction
+gave that determination a `SUBJECT_VISIT_REQUIRED` refusal and left its `detail`
+branching on whether anything had been signed. See §12.3.
+
+**And one message said two things.** `RESOLUTION_MESSAGES` took a boolean, so
+`already_done` — the whole of owner item 75 — read exactly like a determination
+that named no visit at all. It takes the disposition now.
+
+### 14.13 The fourth acceptance correction, 16 September 2026
+
+Returned a fourth time. Four blocking defects and one integrity race, all five
+reproduced before anything was edited.
+
+**The migration could not upgrade a single real row.** Both
+`consultation_attempt_resolutions` and `appointment_events` carry `before
+update` triggers that raise unconditionally, so the backfill in the first draft
+of `20260923000000` would have failed on any clinic that had recorded a
+reconciliation between `20260922000000` and it. The rehearsal was green because
+it had no such rows.
+
+It now seeds exactly those rows — a `same_attendance` with
+`subject_visit_closed`, its visit `done`, and a closure event with nothing
+pointing back at the determination — applies the two migrations in sequence, and
+asserts the upgrade happened. The backfill disables the two triggers for the
+width of its own statements, inside the migration's transaction, as the table
+owner, deriving every value from what is already stored.
+
+**The printed recovery SQL could not work.** It read the prior status from an
+`UPDATE ... RETURNING`, which returns the row as it now is, so every event it
+wrote would have said `done -> done` and been rejected by the very rules the
+recovery exists to satisfy. It now prints a call to
+`close_visit_for_reconciliation`, which reads the status itself.
+
+**`closed_now` was still forgeable.** Described above. The answer is that the
+database performs the closure rather than checking a claim about one.
+
+**The lock read combined locks held by different backends.** A resolution holds
+both namespaces on one connection; a signing holds the attempt lock alone. The
+query asked whether each lock was held anywhere, so a doctor signing on one
+connection while another resolved on a second was reported as "nothing is being
+signed" — the one sentence owner item 73 must never produce. It groups by `pid`
+now, and a backend holding the attempt lock without the resolution lock is a
+signing, which wins.
+
+**And `already_done` could paper over a duplicate.** The race: a signing under a
+fresh reference wins the visit lock, writes its own encounter and its own ₹300,
+and leaves the visit `done`. The reconciliation then wakes, sees `done`, and
+records that visit as the same attendance as the earlier consultation. It did
+not cause the duplicate; it wrote a false determination over it and hid the
+condition reconciliation exists to expose. Refused now by the command with
+`SUBJECT_VISIT_ALREADY_CONSULTED`, which says the patient has been charged twice
+and the duplicate needs correcting on its own, and by the deferred trigger
+whatever route is taken.
+
+### 14.14 The fifth acceptance correction, 16 September 2026
+
+Three integrity blockers, all reproduced.
+
+**`closed_now` was still forgeable**, because the guard was a GUC. The
+correction is section 5 above: recording the closure performs it. There is no
+setting to spoof.
+
+**The recovery command did not exist when the migration printed it.** The
+pre-flight told an operator to call `jmc.close_visit_for_reconciliation()`,
+which the same migration creates two hundred lines further down — so the remedy
+was unavailable at exactly the moment it was needed, and the rehearsal could not
+notice because its only legacy row was already valid. The message now prints
+SQL that uses nothing but the schema in force before this migration, and the
+rehearsal seeds a hollow row, observes the refusal, executes the printed
+statement **verbatim**, and applies the migration again. If the message ever
+stops matching what works, that check fails.
+
+**The closure event could name the wrong staff member.** The function took
+`p_actor`, `p_reason` and `p_detail` from its caller and believed them; the
+review closed a doctor's determination with a nurse's id and the event named the
+nurse. The function takes the determination's id alone now, and the trigger
+checks `actor_id` against `resolved_by` independently of it.
+
+### 14.15 The sixth acceptance correction, 17 September 2026
+
+One blocking finding, tightly bounded.
+
+**The audit text was still the writer's.** The trigger derived the transition,
+the visit, the actor and both statuses, and took `reason` and `detail` from
+whoever inserted the row — so a genuine closure, performed by the right doctor
+against the right visit, could carry a fabricated reason in an append-only
+clinical record. Owner item 72 keeps the doctor's reason; this kept whatever
+arrived.
+
+It reads the determination's `reason` and `encounter_id` now, derives the
+prescription number itself, and overwrites both fields. The closing function no
+longer builds the detail, so there is one construction of that sentence rather
+than two that can drift apart.
+
+Two cleanups came with it. The rehearsal's recovery check ran a duplicated copy
+of the printed SQL and matched one phrase of the message; it now cuts the
+statement out of the refusal text itself and executes those characters, so
+"verbatim" is a fact rather than a claim. And `docs/README.md` said thirty-six
+unit tests where the gate reports thirty-eight.

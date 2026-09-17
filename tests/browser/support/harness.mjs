@@ -4,7 +4,7 @@
  * Three things, in this order, and the order matters:
  *
  *   1. the staging database, with fixtures — brought up by the runner
- *   2. the nine Edge Functions, on 127.0.0.1:54321
+ *   2. the thirteen Edge Functions, on 127.0.0.1:54321
  *   3. the page itself, built as a static export and served from out/
  *
  * The page is the BUILT export rather than `next dev`, because the export is

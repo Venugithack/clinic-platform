@@ -13,16 +13,20 @@ name: CI
 #   the backend   Deno. The Edge Functions in supabase/functions/, deployed
 #                 beside the database and talking to Postgres directly.
 #
-# So this job checks the four things that can be checked without a database —
-# the page's types, the unit tests, that the export builds, and the backend's
-# types — and deliberately claims nothing about the rest.
+# The `check` job below checks the four things that can be checked without a
+# database — the page's types, the unit tests, that the export builds, and the
+# backend's types.
 #
-# What that leaves uncovered is worth saying plainly, because it is most of the
-# clinic. There is no database test suite in this repository and no end-to-end
-# test: nothing here applies a migration, proves a query names a column that
-# exists, or signs a tablet in. The two files in tests/ are the entire automated
-# suite. A CI that pretends to cover the data layer is worse than one that
-# admits it does not.
+# It used to be the whole file, and the paragraph here used to say so: no
+# database suite, no end-to-end test, the two files in tests/ are everything.
+# That is no longer true and the comment outlived it. There are now two more
+# jobs below — `database` applies every migration to a real PostgreSQL 17 and
+# runs the characterization suite and the restore drill, and `browser` drives
+# the built export through a real Chrome.
+#
+# What is still worth saying plainly is which of them has ever run. `browser`
+# has not: nothing in this programme has been pushed. A job that reports is not
+# a gate until it has been green twice.
 
 on:
   push:

@@ -299,3 +299,36 @@ through dispense into the ledger (§4), and `consumption_velocity`,
 Cutting either one now would not be a descope but a retraction: the code exists,
 and the sentence promising it is in the document he is about to be sent. If the
 budget has to move, it has to move somewhere else.
+
+> **Correction, 14 September 2026 — that paragraph is about the retired
+> application, and half of it is no longer true of this one.**
+>
+> §10 above, like this document's references to `PLAN.md`, `PROPOSAL.md` and
+> `HOSTING.md`, describes the M3 of the *predecessor* build. In the current
+> application:
+>
+> - **§4 did ship.** Cost per base unit, MRP and their bases live on the batch,
+>   the receipt-time snapshot is immutable, and dispensing records which batch
+>   each unit left from. `docs/SCHEMA_AND_TYPES.md` §8 is the contract.
+> - **§8 did not.** `consumption_velocity`, `supplier_lead_time`,
+>   `stockout_history`, `supplier_price_history` and `reorder_suggestions` are
+>   created by **no migration in this repository**. Those five names appear in
+>   exactly one place in `supabase/` — a 33-name list of the retired
+>   application's `public` views being hardened in
+>   `20260909125237_harden_active_clinic.sql:93-104` — and
+>   `scripts/staging/legacy-stubs.sql` replaces all 33 with permanently empty
+>   stubs on any fresh database. No Edge Function reads any of them.
+>
+> What the current application actually does is min/max: a medicine is low when
+> pickable on-hand is at or below a manually set `reorder_level`, and a draft
+> order asks for `target_stock − on_hand` (`commands.ts:2343`). It does not use
+> consumption, measured lead time, variability, open purchase orders, stockout
+> history or price history.
+>
+> So the sentence *"the code exists"* must not be relied on, and §8 must not be
+> sold as present. Rebuilding it deliberately — in `jmc`, explainable, never
+> ordering anything by itself — is Slice 9 of
+> [`CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md),
+> and the evidence behind this correction is item 5 of
+> [`BACKEND_PROGRAMME_REGISTER.md`](BACKEND_PROGRAMME_REGISTER.md) §3. Do not
+> restore the retired `public` views to make this prose true.

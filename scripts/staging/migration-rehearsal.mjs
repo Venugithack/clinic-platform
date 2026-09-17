@@ -1,5 +1,6 @@
 /**
- * Rehearse the Slice 2 migrations against a clinic that already has history.
+ * Rehearse every migration from Slice 2 onwards against a clinic that already
+ * has history.
  *
  * ── WHY THIS EXISTS ────────────────────────────────────────────────────────
  *
@@ -12,9 +13,9 @@
  * of signed prescriptions, once, with no undo.
  *
  * This builds the schema as it stands *before* Slice 2, puts deliberately
- * awkward history into it, applies the two Slice 2 migrations exactly the way
- * `apply-migrations.mjs` does — in a transaction — and then reads out what
- * happened to each row.
+ * awkward history into it, applies every migration from Slice 2 onwards
+ * exactly the way `apply-migrations.mjs` does — in a transaction — and then
+ * reads out what happened to each row.
  *
  * Three of the cases here are not hypothetical shapes. They are what a
  * hand-maintained `items_json` column accumulates: an item pointing at a
@@ -43,35 +44,133 @@ const MIGRATIONS = join(process.cwd(), 'supabase', 'migrations')
 const STUBS = join(process.cwd(), 'scripts', 'staging', 'legacy-stubs.sql')
 
 /**
- * The migrations under rehearsal. Everything else builds the "before".
+ * Where the rehearsal starts. Everything before this builds the "before".
  *
- * Every slice from 2 onwards, because each one builds on the last: Slice 3's
- * package tables hang off `medicines`, and Slice 4's supply view reads Slice
- * 2.1's `prescription_lines_effective`. Applying them as part of the "before"
- * would mean rehearsing them against a schema that does not yet exist.
+ * Every slice from 2 onwards is rehearsed, because each one builds on the
+ * last: Slice 3's package tables hang off `medicines`, and Slice 4's supply
+ * view reads Slice 2.1's `prescription_lines_effective`. Applying them as part
+ * of the "before" would mean rehearsing them against a schema that does not
+ * yet exist.
+ *
+ * This is a boundary rather than a list, and that is the whole point. It used
+ * to be a list of seven filenames, and three migrations written afterwards —
+ * `20260915`, `20260916`, `20260917` — were not added to it. They did not
+ * quietly go unrehearsed: they fell into the "before" set, where
+ * `20260915_financial_edge_states.sql` builds a view over `jmc.invoices`, a
+ * table Slice 4 creates and the rehearsal deliberately holds back. So the
+ * whole script died on `relation "jmc.invoices" does not exist` and had been
+ * dead since the day the first of those three was written. A boundary cannot
+ * be forgotten by the next migration the way a list can.
  */
-const SLICE2 = [
-  '20260911045325_slice2_doctor_nurse_workspaces.sql',
-  '20260911120000_slice2_clinical_vocabulary.sql',
-  '20260911190000_slice2_1_unresolved_prescription_history.sql',
-  '20260911210000_slice2_1_1_resolution_scope.sql',
-  '20260912000000_slice3_identity_packages_stock.sql',
-  '20260913000000_slice4_dispensing_billing_payments.sql',
-  '20260914000000_slice5_clinical_images.sql',
-]
+const REHEARSED_FROM = '20260911045325_slice2_doctor_nurse_workspaces.sql'
 
 /**
- * The ones whose backfills are re-applied, to prove running them twice over
- * rows they have already processed changes nothing. See the note at the
- * re-application step for why this is not the whole list.
+ * The ones applied once, like a real deployment, rather than twice.
+ *
+ * Everything else under rehearsal is applied a second time, because a backfill
+ * is the thing that can run twice by accident and do damage — see the note at
+ * the re-application step. A migration lands here only when Postgres genuinely
+ * refuses the second application, and the reason goes beside it.
  */
-const BACKFILLS = [
-  '20260911045325_slice2_doctor_nurse_workspaces.sql',
-  '20260911120000_slice2_clinical_vocabulary.sql',
-  '20260911190000_slice2_1_unresolved_prescription_history.sql',
-  '20260911210000_slice2_1_1_resolution_scope.sql',
-  '20260913000000_slice4_dispensing_billing_payments.sql',
-]
+const APPLY_ONCE = new Map([
+  [
+    '20260912000000_slice3_identity_packages_stock.sql',
+    'converts money columns from real to numeric and then builds views over ' +
+    'two of them; the second application asks Postgres to alter a column a ' +
+    'view already depends on, which it refuses even though the conversion ' +
+    'itself would be a no-op.',
+  ],
+])
+
+/**
+ * Every view the rehearsed set defines more than once.
+ *
+ * `invoice_balances` and `patient_balances` are written three times across
+ * Slices 4, 20260915 and 20260916, and `financial_review_queue` twice. Each
+ * rewrite widens them — `patient_balances` ends up with three more columns
+ * than Slice 4 gave it — so re-applying the earlier file asks Postgres to
+ * replace a wide view with a narrow one, which is "cannot drop columns from
+ * view". That is not a defect in either migration; it is what supersession
+ * looks like when you run the set twice.
+ *
+ * So the second pass drops these three first and lets the same migrations
+ * rebuild them. Nothing else is dropped: the tables, the rows and every
+ * backfill's work stay exactly where they are, which is the only reason the
+ * second pass is worth running at all.
+ *
+ * Read out of the files rather than listed, so the next migration to rewrite
+ * one of these views is handled without anybody remembering to come here.
+ */
+function supersededViews(files) {
+  const seen = new Map()
+  for (const file of files) {
+    const sql = readFileSync(join(MIGRATIONS, file), 'utf8')
+    for (const [, name] of sql.matchAll(/create\s+(?:or\s+replace\s+)?view\s+(jmc\.\w+)/gi)) {
+      seen.set(name, (seen.get(name) ?? 0) + 1)
+    }
+  }
+  return [...seen].filter(([, count]) => count > 1).map(([name]) => name)
+}
+
+/*
+ * A reconciliation written by the clinic BETWEEN `20260922000000` and
+ * `20260923000000`, which is the only interval in which one can exist in the
+ * shape `20260923000000` has to upgrade: `subject_visit_closed` true, no
+ * disposition column yet, and a closure event with nothing pointing back at the
+ * determination that wrote it.
+ *
+ * Seeded here because the first draft of that migration could not upgrade a
+ * single one — both tables carry `before update` triggers that raise
+ * unconditionally, so its backfill would have failed on any real clinic. The
+ * rehearsal was green because it had no such rows. The fourth acceptance review
+ * found it, and this is what stops it being found again.
+ */
+const LEGACY_RECONCILIATION = `
+insert into jmc.appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
+values ('a-legacy','p-1','JMC-0006','Left over','2024-02-06T09:30:00Z','done','2024-02-06T09:30:00Z');
+
+insert into jmc.consultation_attempt_resolutions
+  (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+   encounter_id, subject_visit_id, subject_visit_closed, reason, request_fingerprint)
+select 'car-legacy', 'k-legacy', 'p-1', 's-doc', 'same_attendance', 'committed',
+       e.id, 'a-legacy', true, 'One attendance, recorded before the upgrade', 'legacy'
+  from jmc.encounters e where e.patient_id = 'p-1' order by e.created_at limit 1;
+
+insert into jmc.appointment_events
+  (id, arrival_id, event, from_status, to_status, reason, detail, actor_id)
+values ('ae-legacy','a-legacy','closed_on_reconciliation','waiting','done',
+        'One attendance, recorded before the upgrade','Same attendance','s-doc');
+`
+
+/*
+ * And a HOLLOW one: a determination that says it closed a visit, beside a visit
+ * still standing in the queue. `20260920000000` could write this; nothing since
+ * can, and `20260923000000` refuses to apply while one exists.
+ *
+ * Seeded because the review found the recovery path unusable and the rehearsal
+ * unable to notice: it printed a call to a function the migration had not
+ * created yet, and the only legacy row here was already valid, so the refusal
+ * and its remedy were never exercised.
+ */
+const HOLLOW_RECONCILIATION = `
+insert into jmc.appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
+values ('a-hollow','p-1','JMC-0008','Still waiting',now(),'waiting',now());
+
+insert into jmc.consultation_attempt_resolutions
+  (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+   encounter_id, subject_visit_id, subject_visit_closed, reason, request_fingerprint)
+select 'car-hollow', 'k-hollow', 'p-1', 's-doc', 'same_attendance', 'committed',
+       e.id, 'a-hollow', true, 'Closed, allegedly', 'hollow'
+  from jmc.encounters e where e.patient_id = 'p-1' order by e.created_at limit 1;
+`
+
+/** Rows to seed immediately before a given migration is applied. */
+const SEED_BEFORE = new Map([
+  ['20260923000000_a_reconciled_visit_stays_reconciled.sql', LEGACY_RECONCILIATION],
+])
+
+/** The migration whose refusal and recovery path are walked end to end. */
+const HOLLOW_AT = '20260923000000_a_reconciled_visit_stays_reconciled.sql'
 
 const ok = (label) => console.log(`  ok   ${label}`)
 const note = (label) => console.log(`  note ${label}`)
@@ -110,6 +209,24 @@ values ('e-1','p-1','s-doc','Viral fever','Fluids','','2024-02-01T10:00:00Z'),
        ('e-2','p-2','s-doc','Chest infection','Rest','','2024-02-02T10:00:00Z'),
        ('e-3','p-1','s-doc','Review','','','2024-02-03T10:00:00Z'),
        ('e-4','p-2','s-doc','Follow up','','','2024-02-04T10:00:00Z');
+
+-- ── the queue, as a clinic that has been open for months actually holds it ──
+--
+-- Slice 2 alters this table: five columns, and a unique index over the OPEN
+-- rows' tokens. Applied to an empty table, every one of those is true of
+-- nothing. In the clinic they run over two years of arrivals, once.
+--
+-- The last two share JMC-0004, which is exactly the damage migration
+-- 20260909125224 declined to constrain the column for: "duplicate tokens are precisely what
+-- such a database is likely to be holding". They are FINISHED, so the partial
+-- unique index must tolerate them — which is the whole design claim, and it is
+-- untrue of a plain unique index on the column.
+insert into jmc.appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
+values ('a-1','p-1','JMC-0001','Fever','2024-02-01T09:30:00Z','done','2024-02-01T09:30:00Z'),
+       ('a-2','p-2','JMC-0002','Cough','2024-02-02T09:30:00Z','done','2024-02-02T09:30:00Z'),
+       ('a-3','p-1','JMC-0003','Review','2024-02-03T09:30:00Z','waiting','2024-02-03T09:30:00Z'),
+       ('a-4','p-2','JMC-0004','Rash','2024-02-04T09:30:00Z','done','2024-02-04T09:30:00Z'),
+       ('a-5','p-1','JMC-0004','Rash again','2024-02-05T09:30:00Z','cancelled','2024-02-05T09:30:00Z');
 `
 
 export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehearsal' }) } = {}) {
@@ -122,10 +239,14 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     await sql.unsafe('drop schema if exists public cascade')
     await sql.unsafe('create schema public')
 
+    const all = readdirSync(MIGRATIONS).filter((file) => file.endsWith('.sql')).sort()
+    const earlier = all.filter((file) => file < REHEARSED_FROM)
+    const rehearsed = all.filter((file) => file >= REHEARSED_FROM)
+    if (rehearsed[0] !== REHEARSED_FROM) {
+      throw new Error(`${REHEARSED_FROM} is not in supabase/migrations — the boundary has moved.`)
+    }
+
     await sql.begin((tx) => tx.unsafe(readFileSync(STUBS, 'utf8')))
-    const earlier = readdirSync(MIGRATIONS)
-      .filter((file) => file.endsWith('.sql') && !SLICE2.includes(file))
-      .sort()
     for (const file of earlier) {
       await sql.begin((tx) => tx.unsafe(readFileSync(join(MIGRATIONS, file), 'utf8')))
     }
@@ -133,10 +254,58 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
 
     await sql.unsafe(LEGACY_CLINIC)
     await sql.unsafe(LEGACY_PRESCRIPTIONS)
-    console.log('seeded 4 legacy prescriptions carrying 5 legacy items')
+    console.log('seeded 4 legacy prescriptions carrying 5 legacy items, and 5 legacy arrivals')
 
     // ── the migrations under rehearsal ─────────────────────────────────────
-    for (const file of SLICE2) {
+    for (const file of rehearsed) {
+      const seed = SEED_BEFORE.get(file)
+      if (seed) {
+        await sql.unsafe(seed)
+        console.log(`seeded the rows ${file} has to upgrade`)
+      }
+
+      if (file === HOLLOW_AT) {
+        /*
+         * The refusal and its remedy, walked end to end.
+         *
+         * A hollow row is seeded, the migration is expected to REFUSE, the SQL
+         * it prints is run exactly as printed, and the migration is applied
+         * again and expected to succeed. That is the whole of the recovery
+         * path, and nothing in it may reference an object this migration has
+         * not created yet.
+         */
+        await sql.unsafe(HOLLOW_RECONCILIATION)
+        let refused = ''
+        await sql.begin((tx) => tx.unsafe(readFileSync(join(MIGRATIONS, file), 'utf8')))
+          .then(
+            () => { throw new Error(`${file} applied over a hollow reconciliation; it must refuse.`) },
+            (error) => { refused = String(error.message) },
+          )
+        assert.match(refused, /record a closure that the queue does not show/)
+
+        /*
+         * Cut out of the refusal, not copied beside it.
+         *
+         * The first version ran a duplicated constant and matched one phrase of
+         * the message, so the printed text and the tested text could drift
+         * apart without anything noticing — which is the whole failure this
+         * check exists to prevent. What runs below is the characters the
+         * migration actually printed.
+         */
+        const marker = 'using only what exists before this migration:'
+        const from = refused.indexOf(marker)
+        const to = refused.indexOf('Then apply this migration again')
+        assert.ok(from > -1 && to > from, 'the refusal must print the statement that repairs it')
+        const printed = refused.slice(from + marker.length, to).trim()
+        assert.match(printed, /^with target as \(/, 'and it must be a statement, not prose')
+
+        await sql.unsafe(printed)
+        const [repaired] = await sql`
+          select status from jmc.appointments where id = 'a-hollow'`
+        assert.equal(repaired?.status, 'done', 'the printed recovery closes the visit')
+        console.log('refused a hollow reconciliation, then accepted the printed recovery')
+      }
+
       await sql.begin((tx) => tx.unsafe(readFileSync(join(MIGRATIONS, file), 'utf8')))
       console.log(`applied ${file}`)
     }
@@ -268,6 +437,218 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
     await assert.rejects(resolve(await lineId('rx-4', 2), { quantity: 5 }), /Cancellation is final/)
     ok('nothing may follow a cancellation')
 
+    // ── the queue Slice 2 alters ───────────────────────────────────────────
+    //
+    // Five columns added to a table that already has arrivals in it, and a
+    // unique index over the open rows' tokens created while two FINISHED rows
+    // share JMC-0004. The partial predicate is the whole reason that is
+    // survivable; a plain unique index on the column would have failed here,
+    // on a clinic that has been open for months, which is precisely what
+    // `20260909125224` refused to risk.
+    // The five that were in the queue BEFORE Slice 2 ran, which is what this
+    // claim is about. `a-6` is seeded later, between `20260922000000` and
+    // `20260923000000`, under a schema that already has these columns.
+    const arrivals = await sql`
+      select id, token, status, urgent, urgent_reason, booking_id
+        from jmc.appointments where id not in ('a-legacy','a-leftover','a-hollow') order by id`
+    assert.equal(arrivals.length, 5)
+    assert.deepEqual(
+      arrivals.map((row) => [row.urgent, row.urgent_reason, row.booking_id]),
+      Array.from({ length: 5 }, () => [false, '', null]),
+      'every arrival already recorded takes the default and nothing is backfilled',
+    )
+    ok('the queue gained its columns over arrivals that were already there')
+
+    const [{ count: openTokenIndexes }] = await sql`
+      select count(*)::int from pg_indexes
+       where schemaname = 'jmc' and indexname = 'appointments_open_token_unique'`
+    assert.equal(openTokenIndexes, 1)
+    const [{ count: staleTokenIndexes }] = await sql`
+      select count(*)::int from pg_indexes
+       where schemaname = 'jmc' and indexname = 'appointments_token_idx'`
+    assert.equal(staleTokenIndexes, 0)
+    const [{ count: sharedToken }] = await sql`
+      select count(*)::int from jmc.appointments where token = 'JMC-0004'`
+    assert.equal(sharedToken, 2)
+    ok('two finished visits may still share a token, and the open rows may not')
+
+    // The other half of that claim, proved rather than argued.
+    await assert.rejects(
+      sql`insert into jmc.appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
+          values ('a-6','p-2','JMC-0003','Fever','2024-02-06T09:30:00Z','waiting','2024-02-06T09:30:00Z')`,
+      /appointments_open_token_unique/,
+    )
+    ok('and a second waiting patient cannot be given a token somebody is already holding')
+
+    // ── the Slice 2 acceptance correction ──────────────────────────────────
+    //
+    // `20260921000000` adds an invariant the first migration documented and
+    // did not enforce, and two the command checked and the schema did not. All
+    // three are asserted against a clinic that already has rows in it, because
+    // that is the only version of them that matters.
+    const [{ count: receiptTables }] = await sql`
+      select count(*)::int from information_schema.tables
+       where table_schema = 'jmc' and table_name = 'appointment_command_receipts'`
+    assert.equal(receiptTables, 1)
+    const [{ relrowsecurity: receiptsSecured }] = await sql`
+      select relrowsecurity from pg_class
+       where relnamespace = 'jmc'::regnamespace and relname = 'appointment_command_receipts'`
+    assert.equal(receiptsSecured, true)
+    const receiptGrants = await sql`
+      select grantee from information_schema.role_table_grants
+       where table_schema = 'jmc' and table_name = 'appointment_command_receipts'
+         and grantee in ('anon', 'authenticated', 'service_role', 'PUBLIC')`
+    assert.equal(receiptGrants.length, 0)
+    ok('the command receipt table landed, with row security and no Data API grant')
+
+    await sql`
+      insert into jmc.appointment_bookings
+        (id, patient_id, doctor_id, scheduled_at, duration_minutes, reason, status, booked_by)
+      values ('ab-1','p-1','s-doc', now() + interval '1 day', 15, 'Review', 'booked', 's-doc')`
+
+    // Either flag needs a sentence.
+    await assert.rejects(
+      sql`update jmc.appointment_bookings set outside_availability = true where id = 'ab-1'`,
+      /override_is_explained/,
+    )
+    await assert.rejects(
+      sql`update jmc.appointment_bookings set overbooked = true where id = 'ab-1'`,
+      /override_is_explained/,
+    )
+    // And a sentence with neither flag is refused too, so a reschedule into a
+    // clear slot cannot clear the flags and leave the old reason standing.
+    await assert.rejects(
+      sql`update jmc.appointment_bookings set overbooked_reason = 'left over' where id = 'ab-1'`,
+      /override_is_explained/,
+    )
+    await sql`
+      update jmc.appointment_bookings
+         set overbooked = true, overbooked_reason = 'Seeing both together'
+       where id = 'ab-1'`
+    ok('an override needs a reason whichever kind it is, and a reason needs an override')
+
+    // A visit belongs to one patient, and the schema says so rather than
+    // trusting the command to remember.
+    await sql`
+      insert into jmc.consultation_attempt_resolutions
+        (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+         subject_visit_id, reason, request_fingerprint)
+      values ('car-1','k-1','p-1','s-doc','new_attendance','not_committed','a-3','By hand','x')`
+    await assert.rejects(
+      sql`
+        insert into jmc.consultation_attempt_resolutions
+          (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+           subject_visit_id, reason, request_fingerprint)
+        values ('car-2','k-2','p-2','s-doc','new_attendance','not_committed','a-3','By hand','x')`,
+      /is_this_patients/,
+    )
+    ok('a reconciliation cannot name a visit that belongs to somebody else')
+
+    // Owner item 72: a same attendance says what it did with the visit it
+    // names, and the schema reads the visit rather than the writer's word.
+    // `20260922000000`, corrected by `20260923000000`.
+    await assert.rejects(
+      sql`
+        insert into jmc.consultation_attempt_resolutions
+          (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+           encounter_id, subject_visit_id, subject_visit_closed, reason, request_fingerprint)
+        values ('car-3','k-3','p-1','s-doc','same_attendance','committed',
+                (select id from jmc.encounters order by created_at limit 1),
+                'a-3', false, 'By hand', 'x')`,
+      /closes_its_visit|disposition_follows_the_determination/,
+    )
+    await assert.rejects(
+      sql`
+        insert into jmc.consultation_attempt_resolutions
+          (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+           subject_visit_id, subject_visit_closed, reason, request_fingerprint)
+        values ('car-4','k-4','p-1','s-doc','new_attendance','not_committed',
+                'a-3', true, 'By hand', 'x')`,
+      /closes_its_visit|closed_flag_follows_disposition|consultation_attempt_resolutions_check/,
+    )
+    ok('a same attendance closes the visit it names, and nothing else closes one')
+
+    // A closure is the visit being closed and an event saying who closed it,
+    // not a boolean somebody set. `a-3` is `waiting`, so this claim is false
+    // and the deferred trigger says so at COMMIT. `20260923000000`.
+    await assert.rejects(
+      sql`
+        insert into jmc.consultation_attempt_resolutions
+          (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+           encounter_id, subject_visit_id, subject_visit_closed, subject_visit_disposition,
+           reason, request_fingerprint)
+        values ('car-5','k-5','p-1','s-doc','same_attendance','committed',
+                (select id from jmc.encounters order by created_at limit 1),
+                'a-3', true, 'closed_now', 'By hand', 'x')`,
+      /rather than done/,
+    )
+    ok('a closure claimed over a visit still in the queue is refused at the table')
+
+    // The reconciliation seeded before this migration was applied, upgraded in
+    // place over append-only history. Without the scoped trigger disable in
+    // section 3 the migration cannot get this far at all.
+    const [legacy] = await sql`
+      select subject_visit_disposition, subject_visit_closed
+        from jmc.consultation_attempt_resolutions where id = 'car-legacy'`
+    assert.equal(legacy?.subject_visit_disposition, 'closed_now')
+    assert.equal(legacy?.subject_visit_closed, true)
+    const [legacyEvent] = await sql`
+      select resolution_id from jmc.appointment_events where id = 'ae-legacy'`
+    assert.equal(legacyEvent?.resolution_id, 'car-legacy',
+      'the closure event now names the determination that wrote it')
+    const [repairedRow] = await sql`
+      select subject_visit_disposition from jmc.consultation_attempt_resolutions
+       where id = 'car-hollow'`
+    assert.equal(repairedRow?.subject_visit_disposition, 'closed_now')
+    const [repairedEvent] = await sql`
+      select resolution_id from jmc.appointment_events
+       where arrival_id = 'a-hollow' and event = 'closed_on_reconciliation'`
+    assert.equal(repairedEvent?.resolution_id, 'car-hollow',
+      'and the event the recovery wrote is matched to its determination by the backfill')
+    ok('a reconciliation written before this migration is upgraded in place')
+
+    /*
+     * And owner item 72's closure survives the queue: a visit reconciled as
+     * the same attendance cannot come back to be consulted and charged again.
+     *
+     * Written through `jmc.close_visit_for_reconciliation`, because that is now
+     * the only thing that may close a visit this way or write the event saying
+     * so. Nothing here forges a closure, because nothing can.
+     */
+    await sql.unsafe(`
+      insert into jmc.appointments (id,patient_id,token,reason,scheduled_at,status,created_at)
+      values ('a-leftover','p-2','JMC-0007','Left over',now(),'waiting',now());
+
+      insert into jmc.consultation_attempt_resolutions
+        (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+         encounter_id, subject_visit_id, subject_visit_closed, subject_visit_disposition,
+         reason, request_fingerprint)
+      select 'car-6','k-6','p-2','s-doc','same_attendance','committed',
+             e.id, 'a-leftover', true, 'closed_now', 'One attendance', 'x'
+        from jmc.encounters e where e.patient_id = 'p-2' order by e.created_at limit 1;
+
+      select jmc.close_visit_for_reconciliation('car-6');
+    `)
+    const [closed] = await sql`
+      select a.status, e.from_status, e.to_status, e.resolution_id
+        from jmc.appointments a
+        join jmc.appointment_events e on e.arrival_id = a.id and e.event = 'closed_on_reconciliation'
+       where a.id = 'a-leftover'`
+    assert.deepEqual(
+      [closed?.status, closed?.from_status, closed?.to_status, closed?.resolution_id],
+      ['done', 'waiting', 'done', 'car-6'],
+      'the function performed the transition and recorded the one that happened',
+    )
+    await assert.rejects(
+      sql`update jmc.appointments set status='waiting' where id='a-leftover'`,
+      /recorded as the same attendance/,
+    )
+    await assert.rejects(
+      sql`update jmc.appointments set status='cancelled' where id='a-leftover'`,
+      /stays closed/,
+    )
+    ok('a reconciled visit cannot be put back into the queue')
+
     // ── the vocabulary ─────────────────────────────────────────────────────
     const [{ count: phrases }] = await sql`select count(*)::int from jmc.clinical_phrases`
     const [{ count: releases }] = await sql`select count(*)::int from jmc.clinical_vocabulary_releases`
@@ -282,28 +663,63 @@ export async function rehearse({ url = stagingUrlFromEnv({ what: 'migration rehe
      * so this should never happen. docs/operations/STAGING.md §3.1 is about what happens
      * when a migration is applied by some other route anyway.
      *
-     * What is re-applied is the set of BACKFILLS, which is what this rehearsal
-     * is for: every one of them must be safe to run twice over rows it has
-     * already processed.
+     * What is re-applied is everything under rehearsal except the files named
+     * in APPLY_ONCE, which is what this rehearsal is for: every backfill must
+     * be safe to run twice over rows it has already processed.
      *
-     * It is deliberately not the whole set, and that limit is worth stating
-     * rather than leaving as an omission. Slice 3 converts every money column
-     * from `real` to `numeric` and then, later in the same file, creates views
-     * over two of those columns. Re-applying it asks Postgres to alter a column
-     * a view already depends on, which it refuses — "cannot alter type of a
-     * column used by a view or rule" — even though the conversion itself would
-     * be a no-op. Slice 4 likewise empties `jmc.bills` rather than dropping it
-     * precisely so that Slice 3's conversion is not left naming a relation that
-     * has gone.
+     * The exclusion is deliberate and worth stating rather than leaving as an
+     * omission. Slice 3 converts every money column from `real` to `numeric`
+     * and then, later in the same file, creates views over two of those
+     * columns. Re-applying it asks Postgres to alter a column a view already
+     * depends on, which it refuses — "cannot alter type of a column used by a
+     * view or rule" — even though the conversion itself would be a no-op.
+     * Slice 4 likewise empties `jmc.bills` rather than dropping it precisely so
+     * that Slice 3's conversion is not left naming a relation that has gone.
      *
      * So: a migration that changes a column type and then builds on it is
-     * applied once, like every migration in a real deployment. A backfill is
-     * applied twice here, because a backfill is the thing that can run twice by
-     * accident and do damage.
+     * applied once, like every migration in a real deployment. Everything else
+     * is applied twice here, because a backfill is the thing that can run twice
+     * by accident and do damage — and because defaulting to "twice" is what
+     * stops a new migration from being left out of this step by silence.
      */
-    for (const file of BACKFILLS) {
+    const superseded = supersededViews(rehearsed)
+    for (const view of superseded) {
+      await sql.unsafe(`drop view if exists ${view} cascade`)
+    }
+    const reapplied = rehearsed.filter((file) => !APPLY_ONCE.has(file))
+    for (const file of reapplied) {
       await sql.begin((tx) => tx.unsafe(readFileSync(join(MIGRATIONS, file), 'utf8')))
     }
+    /*
+     * Rebuilt, and rebuilt to the LAST definition rather than the first.
+     *
+     * Existence alone would pass if the second pass had stopped at Slice 4's
+     * narrower view, which is the failure this whole step risks introducing.
+     * `void_with_balance_invoices` exists only in 20260916's `patient_balances`
+     * (owner policy item 61), so asking for it by name is asking whether the
+     * set converged. And `drop view` takes the view's grants with it, so the
+     * revoke that keeps the private schema out of the Data API is checked too:
+     * a rehearsal that silently left three views readable by `anon` would be
+     * worse than no rehearsal.
+     */
+    for (const view of superseded) {
+      const [{ count: present }] = await sql`
+        select count(*)::int from pg_views
+         where schemaname = 'jmc' and viewname = ${view.replace('jmc.', '')}`
+      assert.equal(present, 1, `${view} was not rebuilt by the second application`)
+
+      const [{ count: exposed }] = await sql`
+        select count(*)::int from information_schema.role_table_grants
+         where table_schema = 'jmc' and table_name = ${view.replace('jmc.', '')}
+           and grantee in ('public', 'anon', 'authenticated', 'service_role')`
+      assert.equal(exposed, 0, `${view} came back with grants the harden migration revokes`)
+    }
+    const [{ count: convergedColumns }] = await sql`
+      select count(*)::int from information_schema.columns
+       where table_schema = 'jmc' and table_name = 'patient_balances'
+         and column_name = 'void_with_balance_invoices'`
+    assert.equal(convergedColumns, 1,
+      'the rebuilt patient_balances is Slice 4’s, not 20260916’s — the set did not converge')
     const [{ count: stillPhrases }] = await sql`select count(*)::int from jmc.clinical_phrases`
     const [{ count: stillLines }] = await sql`select count(*)::int from jmc.prescription_lines`
     const [{ count: stillResolutions }] =

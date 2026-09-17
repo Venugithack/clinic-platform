@@ -13,13 +13,13 @@ missing.
 
 ## 1. What you get
 
-Four commands, no Supabase account, no Deno, no `supabase/config.toml`:
+Five commands, no Supabase account, no Deno, no `supabase/config.toml`:
 
 ```bash
 npm run staging:up       # a PostgreSQL 17 container, the migrations, the fixtures
 npm run test:db          # the characterization suite against it
 npm run staging:drill    # the real backup and restore scripts, rehearsed
-npm run staging:rehearse # the Slice 2 migrations, over a clinic that has history
+npm run staging:rehearse # every migration from Slice 2 on, over a clinic with history
 npm run staging:down     # stop it (add :destroy to remove it entirely)
 ```
 
@@ -166,7 +166,7 @@ backend, because the backend has to keep running on Deno unchanged:
 - **The `Deno` global.** Shimmed to `Deno.env.get` over `process.env`, which is
   the only Deno API the shared files use. `scripts/staging/functions-server.mjs`
   additionally replaces `Deno.serve` so that each `index.ts` hands its handler
-  over instead of listening, and mounts the nine of them on one Node server.
+  over instead of listening, and mounts the thirteen of them on one Node server.
 
 **What this is not.** It is not Deno. The code is the same code; the runtime
 under it is not. Deno's permission model, its own `npm:` resolution and its CPU
@@ -187,7 +187,7 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives thirty-seven journeys through Chrome.
+starts the functions and the page, and drives sixty-four journeys through Chrome.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -206,8 +206,8 @@ under 44px at 1024x768 and 768x1024; a real Tab press landing somewhere named
 and visibly marked; every control having an accessible name; a busy state
 while a command is in flight; and a dropped connection reported as words.
 
-Slices 3 to 6 added twenty-two more, each of them a thing no database test
-can see:
+Slices 3 to 6, and then the theme and window work, added thirty-four more,
+each of them a thing no database test can see:
 
 - **Formulary and receiving** — building a package ladder and verifying it
   against the pack; receiving boxes and strips and reading the base-unit
@@ -235,6 +235,33 @@ can see:
   tablet orientation on the widest table this application draws; and the
   review queue offered to a doctor and not to the pharmacy.
 
+Slice 1 of the backend programme added eight more, and they are the only
+journeys in the suite that assert on something invisible: the reference a
+consultation is signed under. They read `sessionStorage` directly rather than a
+mock, because the storage is the mechanism, and nothing about layout, wording
+or colour is asserted in any of them.
+
+Four are about the reference's own life. It is held while the outcome is
+unknown and survives leaving the station and reloading the tablet; it is
+released when the clinic confirms the signing; it is NOT released by discarding
+a draft, because a discard says nothing about whether a signing committed; and
+it IS released by a signing that confirms after the doctor has walked away from
+the screen, which is the case a release written inside a render callback
+silently misses.
+
+Four more are about the visit moving under the doctor mid-attempt, and they
+exist because those defects are in what the panel SENDS — invisible to a
+storage test and to a database test alike, both of which were green while a
+consultation succeeded and the visit it belonged to sat in the queue attached
+to nothing. A walk-in opened from the register, the reply lost, and the doctor
+then creating today's visit: the second press attaches the consultation to that
+visit and closes it. The same, where the first press HAD committed: refused in
+the clinic's own words, nothing charged twice, and the leftover visit carried
+as an obligation. A retry crossing midnight: a replay, not a second fee. And a
+queued visit **cancelled** under the attempt, where the poll takes it off the
+screen: refused with nothing written and nothing charged, rather than quietly
+becoming a direct consultation against a visit somebody had cancelled.
+
 The blind-count journey is the one worth singling out. Its first version
 passed without proving anything — the start screen and the counting screen
 share a heading, so a wait on the title was satisfied before the count began.
@@ -256,7 +283,7 @@ over zero rows. A backfill over zero rows proves nothing at all. In the clinic
 they run over two years of signed prescriptions, once, with no undo.
 
 So this builds the schema as it stood *before* Slice 2, puts deliberately
-awkward history into it, applies the two Slice 2 migrations the way
+awkward history into it, applies every migration from Slice 2 onwards the way
 `apply-migrations.mjs` does, and reads out what happened to each row. The
 awkward cases are not invented shapes; they are what a hand-maintained JSON
 column accumulates: an item pointing at a medicine row somebody later removed,
@@ -266,6 +293,18 @@ It confirms numbering is gapless and unique, that the sequence does not hand
 the next patient a number already printed on a slip, that identity snapshots
 come from the formulary rather than from parsing a name, and that a later
 rename does not reach back into signed history.
+
+It also found something about itself. Until 14 September 2026 the set under
+rehearsal was a hard-coded list of seven filenames, and the three migrations
+written after Slice 5 were never added to it — so they fell into the "before"
+set, where `20260915_financial_edge_states.sql` builds a view over
+`jmc.invoices`, a table Slice 4 creates and this script deliberately holds
+back. The whole rehearsal died on `relation "jmc.invoices" does not exist`, and
+had been dead since the day the first of those three was written: every
+migration from `20260915` on had never been rehearsed at all. The boundary is
+now a position rather than a list, so a new migration is rehearsed by default
+instead of by somebody remembering. `reference/BACKEND_PROGRAMME_REGISTER.md`
+§4 has the detail.
 
 Running it is what found the two defects Slice 2.1 fixes. The Slice 2 backfill
 dropped any item whose medicine row was gone, and turned a missing or zero

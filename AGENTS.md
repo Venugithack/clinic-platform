@@ -21,7 +21,8 @@ approved policy, planned UI/UX, specialist references, operations, and history.
 - Use `docs/reference/` for specialist background and `docs/operations/` for
   staging, rollout, and support procedures.
 
-Files under `archive/` and `hospital al in one platform/` are historical
-references. Do not treat them as current implementation instructions unless a
-current document explicitly points to a preserved decision or the task is to
-compare an earlier design.
+Files under `archive/`, including the local-only
+`archive/local/hospital-all-in-one-reference/`, are historical references. Do not
+treat them as current implementation instructions unless a current document
+explicitly points to a preserved decision or the task is to compare an earlier
+design.

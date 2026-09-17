@@ -14,6 +14,9 @@ import type {
   PrescriptionView,
 } from '@/lib/types'
 import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
+import {
+  abandonConsultationAttempt, openConsultationAttempt, settleConsultationAttempt,
+} from '@/lib/consultation-attempt'
 import { usePatientRecord } from './use-patient-record'
 import { ClinicLetterhead, Stack } from './shared-panels'
 import { ImagesPanel } from './images-panel'
@@ -901,6 +904,23 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
       request: () => run('discard_consultation_draft', { draftId: savedDraft.id }),
     })
     if (result?.ok) {
+      /*
+       * The signing key is deliberately NOT released here.
+       *
+       * Discarding a draft proves a draft row was deleted. It proves nothing
+       * about whether a signing committed — and the sequence that matters is
+       * exactly the one where it did: Finish, reply lost, `Outcome not
+       * confirmed`, then Save draft, then Discard. Releasing the key on that
+       * path lets the next Finish mint a fresh one and write a second
+       * encounter, a second invoice and a second consultation fee, which is
+       * the ₹600 bill this whole mechanism exists to prevent.
+       *
+       * The cost of keeping it is a refusal if the doctor then writes a
+       * genuinely different consultation for the same patient in the same tab.
+       * That is the safe direction to fail in, and the recovery is to check
+       * what the clinic actually recorded — which is what the unconfirmed
+       * message already asks for.
+       */
       setSheet(EMPTY_SHEET)
       setItems([])
       setHydrated('')
@@ -956,9 +976,43 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
   async function confirmSign() {
     const feeAtSigning = feeWords
     const waivedAtSigning = feeChoice === 'waive'
+    /*
+     * The attempt names the consultation; the LIVE visit names where the
+     * patient is now, and both go.
+     *
+     * The correction the second acceptance review forced. The attempt used to
+     * supply the appointment id too — the one it was opened against — and for
+     * a walk-in that is `null` forever. So a doctor who signed from the
+     * register, lost the reply, then created today's visit and pressed again
+     * got a consultation that succeeded while the visit sat in the queue as
+     * `waiting`, attached to nothing. Reproduced on staging in both the
+     * committed and the uncommitted direction before this changed.
+     *
+     * Sending the live value is safe because the server compares the two as a
+     * case analysis: naming no visit is compatible with a stored one (the
+     * ordinary retry), naming one where none is stored gets its own refusal
+     * that the tablet does NOT rotate on, and naming a different one is the
+     * only case that means somebody else's consultation.
+     */
+    const attempt = openConsultationAttempt(patientId, appointment?.id)
     const result = await sign.run({
       working: 'Completing consultation…',
-      request: () => run('sign_consultation', payload()),
+      /*
+       * Both visits go, because they answer different questions.
+       *
+       * `payload()` carries `appointmentId` — the LIVE visit, whatever is on
+       * screen — and it is not restated here, because two sources for one
+       * field is how they come to disagree. `openedVisitId` is the attempt's
+       * own, unchanging record of what this consultation began against, and it
+       * is the one that survives the visit disappearing: without it, a visit
+       * cancelled between a lost reply and the retry was bypassed and the
+       * consultation was written against nothing at all.
+       */
+      request: () => run('sign_consultation', {
+        ...payload(),
+        openedVisitId: attempt.visitId ?? undefined,
+        idempotencyKey: attempt.key,
+      }),
       confirmed: (answer) => {
         const body = answer.data as { prescriptionId?: string; prescriptionNumber?: string; signedAt?: string } | undefined
         const signedAt = body?.signedAt ?? new Date().toISOString()
@@ -994,6 +1048,28 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
         }
       },
     })
+    /*
+     * The attempt is settled here and not inside `confirmed`.
+     *
+     * `useTask` returns early without running `confirmed` when the panel has
+     * unmounted mid-request (`components/ui/task.tsx`), and a doctor stepping
+     * back to Today while a slow signing is in flight is exactly the case the
+     * attempt was moved out of component state to survive. Released there, a
+     * confirmed consultation would leave its attempt behind, and the patient's
+     * next genuine consultation would be refused as a mismatched replay.
+     *
+     * Settled on the response instead, so the rule is the whole rule, and it
+     * is one call in `lib/consultation-attempt.ts` rather than a branch here:
+     * confirmed by the clinic ends the attempt, and nothing else does.
+     */
+    settleConsultationAttempt(
+      patientId,
+      result?.ok
+        ? { status: 'confirmed' }
+        : result?.unconfirmed
+          ? { status: 'unknown' }
+          : { status: 'refused', code: result?.code },
+    )
     if (result?.ok) refresh()
   }
 
@@ -1036,6 +1112,11 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
   }
 
   function nextPatient() {
+    // Belt and braces: a confirmed signing already released it. This covers
+    // leaving a result layer that was reached some other way, and it is the
+    // one release that is a person saying they are done rather than the clinic
+    // confirming anything.
+    if (patientId) abandonConsultationAttempt(patientId)
     setSigned(null)
     setSheet(EMPTY_SHEET)
     setItems([])

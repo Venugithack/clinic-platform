@@ -17,6 +17,31 @@ import type { Role, SessionView } from './types.ts'
 
 export type Payload = Record<string, unknown>
 
+/**
+ * A refusal the tablet has to act on rather than only show.
+ *
+ * Almost every refusal in this application is a sentence and nothing more: the
+ * person reads "Only medicines marked OTC can be sold here", fixes it, and
+ * presses again. A few are different, because the right response is something
+ * the software must do — rotate a stale reference, stop offering a retry — and
+ * deciding that by matching on the text of a message is how a reworded
+ * sentence becomes a silent behaviour change.
+ *
+ * So those carry a code. `command/index.ts` puts it on the refusal beside the
+ * message; every existing caller reads the message and is unaffected, which is
+ * what makes this additive. Codes are SCREAMING_SNAKE and are part of the
+ * contract in `docs/reference/SLICE1_FRONTEND_CONTRACT.md` — renaming one is a
+ * breaking change and adding one is not.
+ */
+export class CommandRefusal extends Error {
+  readonly code: string
+  constructor(message: string, code: string) {
+    super(message)
+    this.name = 'CommandRefusal'
+    this.code = code
+  }
+}
+
 export function value(payload: Payload, key: string) {
   const result = payload[key]
   if (result == null || String(result).trim() === '') throw new Error(`${key} is required.`)

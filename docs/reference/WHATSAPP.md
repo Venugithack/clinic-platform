@@ -2,6 +2,13 @@
 
 Internal reference. Decides §10 of `PLAN.md` and §4 of `PROPOSAL.md`.
 
+> **Current decision status, 17 September 2026:** owner-policy items 76–83 in
+> [`../OWNER_POLICY_REGISTER.md`](../OWNER_POLICY_REGISTER.md) now decide the
+> Slice 3 channel, schedule, consent, failure, recall, template, opt-out and
+> eligibility questions. Those approved policies supersede any recommendation
+> or example choice in this research note. This file remains the provider-risk
+> background and must still be revalidated before production release.
+
 **"Grey area" is not one thing.** It is six unrelated ambiguities that get
 lumped together, and they carry very different risk. Three are survivable design
 constraints, two are traps, one is not grey at all — it is simply against the

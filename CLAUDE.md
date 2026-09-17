@@ -20,8 +20,8 @@ types first, then add the smallest complete contract consistent with
 
 The redesign in `docs/UI_UX_PLAN.md` is **implemented**. All seven slices are
 built and integrated, and the complete gate passes together: `npx tsc --noEmit`,
-`npm test` (9), the static export build, `git diff --check`, `npm run
-test:browser` (56 journeys), `npm run test:db` (316 tests), and `deno check`
+`npm test` (35), the static export build, `git diff --check`, `npm run
+test:browser` (64 journeys), `npm run test:db` (526 tests), and `deno check`
 over every Edge Function.
 
 Two things to know before changing any of it:

@@ -22,6 +22,10 @@ equally current.
 | [`SCHEMA_AND_TYPES.md`](SCHEMA_AND_TYPES.md) | Current database, API, and shared type contract |
 | [`AGENT_IMPLEMENTATION_BRIEF.md`](AGENT_IMPLEMENTATION_BRIEF.md) | Implementation constraints, slice order, safety boundaries, invariants, and definition of done |
 
+Backend programme status: Slices 0–2 are complete and accepted. Messaging
+policies D8–D12c are approved as owner items 76–83, so Slice 3 is ready but has
+not started.
+
 ### Read by task
 
 | Task | Read next |
@@ -31,10 +35,14 @@ equally current.
 | Packages, stock, FEFO, costing, or expiry | [`reference/INVENTORY.md`](reference/INVENTORY.md) plus the medicine-identity research |
 | Tablet hardware or touch interaction | [`reference/TABLET.md`](reference/TABLET.md); current interface decisions still come from `UI_UX_PLAN.md` |
 | WhatsApp | [`reference/WHATSAPP.md`](reference/WHATSAPP.md), with time-sensitive policy rechecked before release |
+| Competitor features, workflows, and market positioning | [`reference/COMPETITIVE_LANDSCAPE_2026.md`](reference/COMPETITIVE_LANDSCAPE_2026.md) |
+| Backend implementation of the competitive and workflow improvements | [`reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md), then the current core documents it requires |
+| What that programme found, what it still has to decide, and in what order | [`reference/BACKEND_PROGRAMME_REGISTER.md`](reference/BACKEND_PROGRAMME_REGISTER.md) — the evidence baseline, work register, decision register and compatibility map |
+| Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The backend exists; the Slice 2 screens do not yet. |
 | Staging, rollout, or PIN recovery | The applicable runbook in [`operations/`](operations/) |
 | Product rationale from the design sessions | [`reference/PRODUCT_UX_DISCOVERY.md`](reference/PRODUCT_UX_DISCOVERY.md); later core documents take precedence |
 | Why an earlier decision was raised | [`../archive/docs/current-programme/`](../archive/docs/current-programme/) |
-| Comparing the simpler earlier interface | `hospital al in one platform/`, when that local reference folder is present |
+| Comparing the simpler earlier interface | `../archive/local/hospital-all-in-one-reference/`, when that ignored local reference folder is present |
 
 ### When documents differ
 
@@ -44,8 +52,7 @@ equally current.
 4. `SCHEMA_AND_TYPES.md` and `AGENT_IMPLEMENTATION_BRIEF.md` define the current
    technical contract and delivery constraints.
 5. `reference/` explains specialist research and earlier discovery.
-6. `archive/` and `hospital al in one platform/` preserve history and comparison
-   material.
+6. `archive/` preserves tracked history and ignored local comparison material.
 
 If two current sources still conflict, record and resolve the conflict instead
 of silently choosing one.
@@ -59,7 +66,7 @@ The application is two programs that never share a process:
 | | | |
 |---|---|---|
 | **the page** | `app/`, `components/`, `lib/` | a **static export**. `next build` writes plain HTML, CSS and JavaScript to `out/`; Cloudflare serves those files. Nothing runs behind them |
-| **the backend** | `supabase/` | **Deno**. Nine Edge Functions deployed beside the database, talking to Postgres directly |
+| **the backend** | `supabase/` | **Deno**. Thirteen Edge Functions deployed beside the database, talking to Postgres directly |
 
 That split is not taste. Each half of it was forced, and each reason is a
 failure that already happened. The prose at the top of `next.config.ts`,
@@ -104,7 +111,7 @@ and dies on sign-out.
 ### How the halves talk
 
 Every request goes to `NEXT_PUBLIC_FUNCTIONS_URL` with
-`Authorization: Bearer <token>`. There are nine endpoints:
+`Authorization: Bearer <token>`. There are thirteen:
 
 | Function | |
 |---|---|
@@ -116,6 +123,10 @@ Every request goes to `NEXT_PUBLIC_FUNCTIONS_URL` with
 | `record` | one patient's history, fetched when somebody opens that patient |
 | `register` | the Schedule H1 register for a date range |
 | `csv` | the drug master, in and out |
+| `reports` | fifteen named reports, each with its own role gate |
+| `inventory` | the stock ledger, goods receipts, a barcode lookup, the formulary — read on demand rather than polled |
+| `images` | clinical image tickets, bytes and metadata. Pharmacy is refused outright |
+| `workspace` | what a workspace opens with — patient search, the patient band, actionable counts and their drill-downs, visit progress, safe-exit obligations, what an idempotency key committed, proven-equivalent products, and the three Slice 2 views: the appointment calendar, a patient's own appointments, and the reconciliation of an unresolved consultation attempt. Read on demand; its roles come from one capability table |
 
 Two properties are worth knowing before you change either half.
 
@@ -139,21 +150,29 @@ app/                    layout, one page, the web manifest — the whole route t
 components/             ClinicApp (the chrome and the ten workspaces) and ui/
 lib/
   api.ts                the ONLY thing that talks to the backend; token handling
-  order-status.ts       delivery state and reorder quantity — pure, and tested
-  types.ts              the snapshot's shape, mirrored from the backend by hand
+  attempt-key.ts        the consultation attempt's browser-storage lifecycle
+  consultation-attempt.ts  client handling for attempt refusal and recovery
+  types.ts              the frontend door to the backend's shared type contract
 public/
   _headers              the four security headers, applied by Cloudflare —
                         a static export has no server to set them
 supabase/
   functions/
-    _shared/            auth · commands (the large one) · db · http · password ·
-                        snapshot · types · whatsapp · order-status
-    <nine dirs>/        index.ts each, one Deno.serve per endpoint
+    _shared/            auth · commands (the large one) · counter · inventory ·
+                        snapshot · types · db · http · password · money ·
+                        packages · images · storage · whatsapp · order-status ·
+                        capabilities · idempotency · workspace ·
+                        appointments · clinic-policy · command-input
+    <thirteen dirs>/    index.ts each, one Deno.serve per endpoint
   migrations/           forward-only SQL, named by timestamp. Creates `jmc`
 scripts/
   set-db-url.mjs        writes DATABASE_URL into .env.local without it passing
                         through a shell whose quoting rules you have to guess
-tests/                  two files. This is the entire automated suite
+tests/
+  *.test.ts             four files of pure unit tests — `npm test`
+  characterization/     the database suite — `npm run test:db`, §6
+  browser/              real-Chrome journeys — `npm run test:browser`, §6
+  support/              the bridge that points both suites at guarded staging
 archive/                material excluded from the build and runtime; see its README
 next.config.ts          output: 'export'
 wrangler.jsonc          no `main`, no Worker — an assets directory and a domain
@@ -178,23 +197,28 @@ npm run dev          # http://localhost:3000, and on the LAN — it binds 0.0.0.
 
 ```bash
 npm run typecheck    # tsc --noEmit. Covers the page. NOT the backend — see §5
-npm test             # node --test, the two files in tests/
+npm test             # node --test, the four unit files in tests/
 npm run build        # writes out/
 ```
 
 `npm run preview` (or `npm start`) serves the built `out/` directory through
 Wrangler on `http://localhost:3000`. Run `npm run build` first.
 
-### The trap: there is no local backend
+### The trap: `npm run dev` is not the sandbox
 
 This repository has no `supabase/config.toml` — it was deleted with the retired
 application — so `supabase start` and `supabase functions serve` are not set up
-here, and there is no local Postgres, no seed and no offline stack of any kind.
+here. What replaced them is `npm run staging:up`: a disposable PostgreSQL 17 in
+Docker with the real migrations and synthetic fixtures, and
+`scripts/staging/functions-server.mjs`, which runs all thirteen real Edge
+Functions under Node. That is a complete offline stack and
+[`operations/STAGING.md`](operations/STAGING.md) is how to drive the application
+against it.
 
-What that means in practice is worth being blunt about: **`npm run dev` points
-at whatever `NEXT_PUBLIC_FUNCTIONS_URL` says, and today that is the deployed
-functions, which are in front of the clinic's live database.** Local development
-is not a sandbox. A command you send from `localhost:3000` while trying
+What it is not is the default. **`npm run dev` points at whatever
+`NEXT_PUBLIC_FUNCTIONS_URL` says, and today that is the deployed functions,
+which are in front of the clinic's live database.** Plain `npm run dev` is not
+a sandbox. A command you send from `localhost:3000` while trying
 something out registers a real patient, moves real stock, or takes a real
 batch off the shelf.
 
@@ -267,12 +291,12 @@ It is rewritten here against what `npm run` actually does today.
 | Command | What it is |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` over the page. Does **not** see `supabase/` — `tsconfig.json` excludes it. |
-| `npm test` | Four unit tests, no database, no network. |
+| `npm test` | Thirty-seven unit tests over four files, no database, no network. |
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
-| `npm run test:db` | **288 tests** over seventeen files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, and the counter authorization matrix — plus concurrency tests that open separate connections and race them. |
-| `npm run test:browser` | **37 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
-| `npm run staging:rehearse` | Applies the migrations to a database that already has history, then re-applies the backfills to prove they are idempotent. |
+| `npm run test:db` | **758 tests** over twenty-seven files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, and the consultation/visit reconciliation against items 72–75 — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, and two doctors reconciling one attempt. |
+| `npm run test:browser` | **64 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
+| `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
 
 `test:db`, `test:browser`, `staging:rehearse` and `staging:drill` all refuse any
@@ -351,15 +375,17 @@ docs/
 
 `../archive/docs/current-programme/` contains superseded decision and milestone
 documents from this programme. The other files under `../archive/docs/`
-describe a retired application. The local `../hospital al in one platform/`
-folder preserves the earlier, simpler interface for comparison when it is
-available. None of these historical sources is an operating instruction.
+describe a retired application. The ignored local
+`../archive/local/hospital-all-in-one-reference/` folder preserves the earlier,
+simpler interface for comparison when it is available. None of these
+historical sources is an operating instruction.
 
 ### Complete documentation inventory
 
-This is the full inventory of the 46 Markdown documents and three HTML design
-references kept for current work, operations, orientation, and historical
-comparison. Generated files and dependency documentation are excluded.
+There are **21 active Markdown documents** and two HTML design references. The
+11 tracked historical Markdown documents are listed separately; ignored local
+archives, generated files, and dependency documentation are deliberately not
+expanded here.
 
 ```text
 Repository entry documents
@@ -375,6 +401,11 @@ Current core documents
   docs/AGENT_IMPLEMENTATION_BRIEF.md
 
 Current specialist references
+  docs/reference/BACKEND_PROGRAMME_REGISTER.md
+  docs/reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md
+  docs/reference/SLICE1_FRONTEND_CONTRACT.md
+  docs/reference/SLICE2_FRONTEND_CONTRACT.md
+  docs/reference/COMPETITIVE_LANDSCAPE_2026.md
   docs/reference/PRODUCT_UX_DISCOVERY.md
   docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md
   docs/reference/INVENTORY.md
@@ -395,6 +426,7 @@ Superseded documents from the current programme
   archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md
 
 Retired-application history
+  archive/README.md
   archive/docs/README.md
   archive/docs/BUILD.md
   archive/docs/GO_LIVE.md
@@ -404,28 +436,8 @@ Retired-application history
   archive/docs/PROPOSAL.md
   archive/docs/REVIEW.md
 
-Earlier hospital all-in-one prototype
-  hospital al in one platform/AGENTS.md
-  hospital al in one platform/ARCHITECTURE.md
-  hospital al in one platform/ARCHITECTURE-REVIEW.md
-  hospital al in one platform/BUILD-PLAN.md
-  hospital al in one platform/CLAUDE.md
-  hospital al in one platform/DEPLOYMENT.md
-  hospital al in one platform/hospital-platform-plan.md
-  hospital al in one platform/jayamurugan clinic/README.md
-  hospital al in one platform/MEDICATION-REMINDERS.md
-  hospital al in one platform/PATIENT-APP-PLAN.md
-  hospital al in one platform/PHARMACY.md
-  hospital al in one platform/PILOT-SLICE.md
-  hospital al in one platform/PILOT-V1.md
-  hospital al in one platform/PLATFORM-PLAN.md
-  hospital al in one platform/PLATFORM-REVIEW.md
-  hospital al in one platform/prototype-build-prompt.md
-  hospital al in one platform/README.md
-  hospital al in one platform/RUNNING.md
-  hospital al in one platform/WARD-ROUND.md
-  hospital al in one platform/WHATSAPP-CHAT.md
-  hospital al in one platform/scripts/control-panel/panel.html
+Local-only comparison material (not tracked or counted above)
+  archive/local/hospital-all-in-one-reference/
 ```
 
 The root `README.md` is the short entry point for setup, commands, project

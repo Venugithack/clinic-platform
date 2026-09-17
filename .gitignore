@@ -3,6 +3,7 @@ node_modules/
 out/
 .wrangler/
 .claude/
+/.local-preview/
 .env
 .env.local
 *.tsbuildinfo
@@ -40,16 +41,3 @@ npm-debug.log*
 # through `npm exec deno@...`. Deno is not a dependency of this repository and
 # CI checks without a lockfile, so an unmanaged one here would only drift.
 deno.lock
-
-# The earlier prototype, kept locally for comparison.
-#
-# `AGENTS.md` and `docs/README.md` both refer to it as a reference that exists
-# only "when that local reference folder is present", which is exactly what it
-# is: somebody's copy of the retired hospital application, sitting beside this
-# one so the two interfaces can be read side by side.
-#
-# It is a gigabyte, fourteen thousand files, and 375MB of its own node_modules,
-# and THIS REPOSITORY IS PUBLIC. It is also another project's source: not ours
-# to publish. `tsconfig.json` already excludes it from the typecheck, where it
-# was contributing 485 errors; this keeps it out of the history as well.
-/hospital al in one platform/

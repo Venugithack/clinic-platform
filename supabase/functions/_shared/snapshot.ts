@@ -796,15 +796,35 @@ export async function readSnapshot(
     phone: text(r.phone), address: '', whatsappConsent: flag(r.whatsapp_consent), createdAt: text(r.created_at),
   }))
 
-  // Anything still waiting or in consult, whatever day it was booked — a
-  // patient sitting in the corridor must never drop off the queue because the
-  // date rolled over — plus everything else from today, so the day reads back.
+  /*
+   * Anything still waiting or in consult, whatever day it was booked — a
+   * patient sitting in the corridor must never drop off the queue because the
+   * date rolled over — plus everything else from today, so the day reads back.
+   *
+   * ── WHY `urgent` IS ORDERED ON AND `urgent_reason` IS NOT SENT ───────────
+   *
+   * Owner item 70: "A doctor may explicitly prioritize an urgent patient, with
+   * a required reason and audit event." Ordering on the flag is what makes
+   * that mean anything — a priority nothing reads is a button that does
+   * nothing — and `urgent desc` cannot move a single existing row, because
+   * every row in every clinic is `false` until a doctor presses the control
+   * that sets it, and that control is a Slice 2 command no screen calls yet.
+   *
+   * The REASON stays behind. This is the one snapshot collection with no role
+   * boolean in front of it (see `capabilities.ts`), so every field on it
+   * reaches a pharmacy tablet every fifteen seconds — and "moved up: chest
+   * pain, looks grey" is a clinical statement the counter has no business
+   * with. The flag says where in the queue somebody is; the sentence behind it
+   * is on the gated read model, for the roles that already read the clinical
+   * record.
+   */
   const appointments: AppointmentView[] = (await all(`select a.*,p.name patient_name from appointments a
     join patients p on p.id=a.patient_id
     where a.status in ('waiting','in_consult') or a.scheduled_at >= ${CLINIC_DAY_START}
-    order by a.scheduled_at`)).map((r) => ({
+    order by a.urgent desc, a.scheduled_at`)).map((r) => ({
       id: text(r.id), patientId: text(r.patient_id), patientName: text(r.patient_name), token: text(r.token),
       reason: text(r.reason), scheduledAt: text(r.scheduled_at), status: text(r.status) as AppointmentView['status'],
+      urgent: flag(r.urgent),
     }))
 
   // Enough for the queue to show each waiting patient their latest reading.

@@ -97,6 +97,17 @@ export interface AppointmentView {
   reason: string
   scheduledAt: string
   status: 'waiting' | 'in_consult' | 'done' | 'cancelled'
+  /**
+   * A doctor moved this patient up the queue — owner policy register item 70.
+   *
+   * Optional because a build older than Slice 2 does not send it and a screen
+   * that reads it must treat absent as false. The REASON is deliberately not
+   * here: this collection has no role gate in front of it, so everything on it
+   * reaches every tablet in the building, and why one patient went first is a
+   * clinical sentence. It is on the gated work list instead —
+   * `workspace?view=list&list=list.today_queue`.
+   */
+  urgent?: boolean
 }
 
 /**

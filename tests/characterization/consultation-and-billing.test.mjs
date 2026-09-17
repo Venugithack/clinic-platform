@@ -136,7 +136,16 @@ describe('saving a consultation', () => {
       'consultation_fee', 'consultation_fee_default',
       'created_at', 'diagnosis', 'diagnosis_status', 'doctor_id', 'examination',
       'fee_reason', 'fee_set_at', 'fee_set_by', 'fee_waived',
-      'follow_up_date', 'id', 'notes', 'patient_id',
+      'follow_up_date', 'id',
+      // Backend programme W1, `20260918000000`. The name one attempt at this
+      // consultation was signed under, and a hash of what that attempt
+      // actually said. Signing the same sheet twice used to produce two
+      // encounters, two invoices and two ₹300 fee lines; the key is what stops
+      // the second, and the fingerprint is what stops the key being answered
+      // with somebody else's consultation. Neither is clinical content and
+      // neither is ever displayed.
+      'idempotency_key',
+      'notes', 'patient_id', 'request_fingerprint',
     ])
   })
 

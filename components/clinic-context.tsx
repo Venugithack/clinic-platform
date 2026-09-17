@@ -18,7 +18,25 @@ import type { CommandResponse } from '@/lib/types'
  * "nobody knows whether this happened" are different things to say to somebody
  * standing at a counter with a patient in front of them.
  */
-export type ActionResult = CommandResponse & { unconfirmed?: boolean }
+export type ActionResult = CommandResponse & {
+  unconfirmed?: boolean
+  /**
+   * A refusal the screen has to ACT on rather than only show.
+   *
+   * Almost every refusal here is a sentence and nothing more: the person reads
+   * it, corrects what it names, and presses again. A few are different, because
+   * the right response is something the software must do — rotate a stale
+   * reference, stop offering a retry — and deciding that by matching on the
+   * text of a message is how a reworded sentence becomes a silent behaviour
+   * change.
+   *
+   * Set by `command/index.ts` from a `CommandRefusal`, and by nothing else; a
+   * Postgres error's own `code` is deliberately not forwarded into it. Optional
+   * because almost no refusal carries one, and the codes that exist are listed
+   * in `docs/reference/SLICE1_FRONTEND_CONTRACT.md`.
+   */
+  code?: string
+}
 
 /** Every write goes through one command endpoint. Names are unchanged. */
 export type ActionRunner = (

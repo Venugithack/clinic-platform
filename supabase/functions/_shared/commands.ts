@@ -5,11 +5,16 @@ import { audit, db, isoNow, transaction } from './db.ts'
 import { hashPassword } from './password.ts'
 import { sendWhatsAppText } from './whatsapp.ts'
 import {
-  booleanValue, numberValue, optional, optionalDate, optionalPositiveInteger,
-  requireChoice, requireRole, sequence, value, type Payload,
+  booleanValue, CommandRefusal, numberValue, optional, optionalDate,
+  optionalPositiveInteger, requireChoice, requireRole, sequence, value,
+  type Payload,
 } from './command-input.ts'
-import { runInventoryCommand } from './inventory.ts'
+import { runAppointmentCommand } from './appointments.ts'
 import { addInvoiceLine, openInvoice } from './counter.ts'
+import {
+  ATTEMPT_LOCK_NAMESPACE, ATTEMPT_RESOLUTION_LOCK_NAMESPACE,
+  isUniqueViolation, requestFingerprint,
+} from './idempotency.ts'
 import { money, parseMoney, rupees } from './money.ts'
 
 /**
@@ -24,6 +29,8 @@ import { money, parseMoney, rupees } from './money.ts'
  * is checked against has to be the number the screen showed.
  */
 const CLINIC_TODAY = `(now() at time zone 'Asia/Kolkata')::date`
+
+type Row = Record<string, unknown>
 
 type Line = { medicineId: string; quantity: number }
 
@@ -341,6 +348,869 @@ async function requireActiveAppointment(patientId: string, appointmentId: string
   }
 }
 
+/**
+ * What makes two signings the same consultation, and what makes them different.
+ *
+ * Every field here reaches a durable record: the encounter, the signed
+ * prescription and its lines, the follow-up, or the fee and the invoice line
+ * behind it. If two calls carrying one idempotency key agree on all of it, the
+ * second is a retry of the first and must be answered with the first's
+ * outcome. If they disagree on any of it, the tablet has reused a key across
+ * two different consultations, and answering that with the earlier encounter's
+ * identity would file one patient's visit under another's.
+ *
+ * ── WHO AND WHICH VISIT ARE CHECKED SEPARATELY, AND BEFORE THIS ────────────
+ *
+ * The doctor, the patient and the visit are not in this hash. They are not
+ * omitted — they are checked first, against the encounter the key already
+ * names, by `bindingOf` below, and they produce their own refusal. The reason
+ * is that they answer a different question. A sheet that differs means *this
+ * consultation was already signed and you have changed it*; a visit that
+ * differs means *this key belongs to somebody else's consultation entirely*,
+ * and the second is both more serious and more recoverable. Hashing them
+ * together would collapse the two into one message that is right about neither.
+ *
+ * An earlier version of this left the appointment out of the identity
+ * altogether, reasoning that signing sets the visit to `done`, so a retry
+ * after the fifteen-second poll would have nothing to send and fingerprinting
+ * it would refuse the exact retry this exists for. The observation was correct
+ * and the conclusion was wrong: leaving it out meant one patient's Monday and
+ * Thursday were the same consultation as far as this key was concerned.
+ *
+ * The answer is not that the tablet should send a remembered visit either —
+ * that was the second attempt at this, and for a walk-in the remembered value
+ * is `null` forever, so a consultation could be signed while the visit it
+ * belonged to stayed in the queue. The tablet sends what it has on screen and
+ * `compareBinding` reads the four cases apart.
+ *
+ * The doctor's own snapshots of the medicine — name, generic name, strength,
+ * dosage form, code — are copied onto the prescription line from the formulary
+ * at signing. They are not the doctor's request, and an admin correcting a
+ * shelf label between a lost reply and its retry must not turn that retry into
+ * a refusal. `route` and `dosage` are kept despite falling back to formulary
+ * values, because unlike those five they carry a decision the doctor can make
+ * and often does.
+ *
+ * The clinic's default consultation fee is read inside the transaction. What
+ * belongs to the request is the doctor's DECISION about the fee — charge the
+ * clinic rate, override it, or waive it — not the number the clinic happened
+ * to hold at the moment.
+ *
+ * The prescription validity fields are included only when there are lines to
+ * carry them, which is exactly when they are written. A field the command
+ * ignores cannot be a material difference.
+ */
+function consultationFingerprint(
+  fields: ClinicalFields,
+  items: StructuredLine[],
+  payload: Payload,
+): string {
+  return requestFingerprint({
+    fields,
+    items: items.map((item) => ({
+      medicineId: item.medicineId,
+      doseAmount: item.doseAmount,
+      doseUnit: item.doseUnit,
+      frequency: item.frequency,
+      timing: item.timing,
+      route: item.route,
+      durationValue: item.durationValue,
+      durationUnit: item.durationUnit,
+      dosage: item.dosage,
+      instructions: item.instructions,
+      quantity: item.quantity,
+    })),
+    fee: {
+      waived: booleanValue(payload, 'feeWaived'),
+      override: optional(payload, 'consultationFee'),
+      reason: optional(payload, 'feeReason'),
+    },
+    ...(items.length > 0
+      ? {
+        validity: {
+          validUntil: optionalDate(payload, 'validUntil'),
+          supplyInParts: payload.supplyInParts === undefined
+            ? true
+            : booleanValue(payload, 'supplyInParts'),
+          validityReason: optional(payload, 'validityReason'),
+        },
+      }
+      : {}),
+  })
+}
+
+type SignedConsultation = {
+  encounter_id: string
+  request_fingerprint: string | null
+  created_at: string
+  patient_id: string
+  doctor_id: string
+  appointment_id: string | null
+  prescription_id: string | null
+  prescription_number: string | null
+}
+
+/** The consultation an idempotency key already named, if it named one. */
+async function signedConsultationFor(key: string): Promise<SignedConsultation | undefined> {
+  return await db.prepare(
+    `select e.id as encounter_id, e.request_fingerprint, e.created_at,
+            e.patient_id, e.doctor_id, e.appointment_id,
+            p.id as prescription_id, p.prescription_number
+       from encounters e
+       left join prescriptions p on p.encounter_id = e.id
+      where e.idempotency_key = ?`,
+  ).get(key) as SignedConsultation | undefined
+}
+
+/** Who a request says it is for, and which visit the tablet has open. */
+/**
+ * What a request says it is for: who, and which visit — in two senses.
+ *
+ * `openedVisitId` is the visit the attempt BEGAN against and never changes.
+ * `liveVisitId` is the visit the tablet has on screen at the moment it asks.
+ * They are different facts and the third acceptance review is what proved that
+ * replacing either with the other throws information away.
+ *
+ * Sending only the live one loses the attempt's own identity: a consultation
+ * opened on a visit, whose first request never committed, whose visit was then
+ * cancelled, retried with nothing to send — and the clinic wrote a direct
+ * consultation, bypassing the cancellation and charging ₹300 against no visit
+ * at all. Reproduced on staging before this was changed. Sending only the
+ * opened one loses the visit that appeared afterwards, which was the previous
+ * correction.
+ */
+type AttemptBinding = {
+  patientId: string
+  doctorId: string
+  openedVisitId: string | null
+  liveVisitId: string | null
+}
+
+/**
+ * How a request's binding relates to the consultation its key already named.
+ *
+ * The encounter IS the attempt record once a signing has committed: it carries
+ * the key, and it carries the patient, the doctor and the visit the key was
+ * spent on. Nothing separate has to be written down to bind them, and nothing
+ * can drift out of step with the consultation it describes.
+ *
+ * This is checked before the sheet, because a key that names a different
+ * patient is not a changed consultation — it is a key that does not belong to
+ * this consultation at all, and the two need different words.
+ *
+ * ── WHY THE VISIT IS FOUR CASES AND NOT AN EQUALITY TEST ───────────────────
+ *
+ * The first version compared patient, doctor and visit as one hash, which made
+ * every difference the same kind of difference. Two of the four are not.
+ *
+ * **When the tablet names a live visit, that is what it is asserting this
+ * consultation is about**, and the stored value is read against it:
+ *
+ * - the same visit — compatible;
+ * - the encounter has NO visit — `signed_without_this_visit`. A walk-in signed
+ *   from the register, the reply lost, and the doctor then created today's
+ *   visit, which policy item 3 explicitly allows. Almost certainly the same
+ *   consultation, and emphatically not a licence to sign again: hashed in with
+ *   the others it became `ATTEMPT_NAMES_ANOTHER_CONSULTATION`, which the tablet
+ *   rotates on, which writes a second encounter and a second ₹300 fee;
+ * - a different real visit — `another_consultation`. A second arrival under a
+ *   new token, and the one case a fresh reference is right for.
+ *
+ * **When it names none, the attempt's own identity answers instead.** Signing
+ * sets the appointment to `done` and the poll takes it out of the snapshot, so
+ * the tablet legitimately has nothing live to offer — but it still knows what
+ * it began against, and that is compared rather than treating the silence as a
+ * direct consultation.
+ */
+/*
+ * ── WHY 'another_visit' IS NOT 'another_consultation' (owner item 74) ──────
+ *
+ * Until Slice 2 these were one verdict, and the tablet ROTATED on it: a key
+ * naming a different visit was treated as proof that the attempt in hand
+ * belonged to somebody else's consultation, so a fresh reference was minted
+ * and the next press signed.
+ *
+ * Owner item 74 says that is not proof:
+ *
+ *   > Reception creating B is not, by itself, proof of a second consultation.
+ *
+ * And the case it has in mind is the ordinary one. A signing on queued visit A
+ * commits, the reply is lost, A goes `done` and drops out of the poll, and
+ * reception — seeing the patient still standing there — arrives them again as
+ * visit B. Two real visits, one attendance. Rotating there writes a second
+ * encounter and a second fee, which is W1 reached by minting rather than by
+ * retrying.
+ *
+ * A different PATIENT or DOCTOR is still proof, and still rotates: that key
+ * cannot be a retry of this request whatever else is true, and holding it
+ * would refuse a patient who has done nothing wrong, for ever.
+ *
+ * So the two are separated, and the visit disagreement gets a code the tablet
+ * does not rotate on. What ends it is the doctor saying which it is —
+ * `resolve_consultation_attempt` — rather than the software guessing.
+ */
+type BindingVerdict =
+  | 'compatible'
+  | 'another_consultation'
+  | 'another_visit'
+  | 'signed_without_this_visit'
+
+function compareBinding(original: SignedConsultation, asked: AttemptBinding): BindingVerdict {
+  if (original.patient_id !== asked.patientId) return 'another_consultation'
+  if (original.doctor_id !== asked.doctorId) return 'another_consultation'
+
+  const stored = original.appointment_id ?? null
+
+  if (asked.liveVisitId !== null) {
+    if (stored === asked.liveVisitId) return 'compatible'
+    return stored === null ? 'signed_without_this_visit' : 'another_visit'
+  }
+
+  // Nothing live. The attempt's own identity is the next best thing it has,
+  // and a caller that sends neither is the pre-correction shape: compatible,
+  // because silence from a client that has nothing else to say is not a
+  // disagreement.
+  if (asked.openedVisitId === null) return 'compatible'
+  if (stored === null) return 'compatible'
+  return stored === asked.openedVisitId ? 'compatible' : 'another_visit'
+}
+
+/**
+ * The attempt is settled, and this caller is not the one who settled it.
+ *
+ * Thrown from inside the transaction and carried out of it rather than
+ * answered in place, because the answer — the original encounter, its
+ * prescription number and its signing time — is read after the rollback,
+ * exactly as the unique-index race below is. It is an internal signal and
+ * never reaches a screen.
+ */
+class AttemptSettledElsewhere extends Error {
+  constructor() {
+    // Carries a message only because the unreachable fallback below rethrows
+    // it, and an error with no words is the worst thing to find in a log.
+    super('This consultation was signed by another request holding the same reference.')
+    this.name = 'AttemptSettledElsewhere'
+  }
+}
+
+/**
+ * The advisory-lock namespace one consultation attempt serializes in.
+ *
+ * ── WHY A LOCK, WHEN THERE IS ALREADY A UNIQUE INDEX ───────────────────────
+ *
+ * The index serializes two SIGNINGS. It cannot serialize a signing against a
+ * RESOLUTION, because the two write different tables and neither collides with
+ * the other — and that pair is the one owner item 73 fails closed on:
+ *
+ *   > If the outcome cannot be established, fail closed.
+ *
+ * Without this, a doctor resolving an attempt reads "no encounter carries this
+ * key", concludes nothing committed, records **New attendance**, releases the
+ * attempt — and the signing that was in flight the whole time commits a
+ * moment later. The next press then writes a second encounter and a second
+ * ₹300 fee, which is exactly the harm the resolution existed to avoid.
+ *
+ * So both sides take this lock on the key, first, before anything else in
+ * their transaction. A signing waits for a resolution, briefly. A resolution
+ * does NOT wait for a signing: it uses `pg_try_advisory_xact_lock` and refuses
+ * with `ATTEMPT_OUTCOME_NOT_ESTABLISHED`, because "somebody is signing under
+ * this key right now" is precisely the state in which the prior outcome cannot
+ * be established, and waiting for it would be answering a question that has
+ * not been decided yet.
+ *
+ * Taken before any row lock, in both, so the ordering is the same in both and
+ * neither can deadlock against the other. The number itself is in
+ * `idempotency.ts`, because `workspace.ts` tests the same lock to answer
+ * whether a signing is in flight, and two copies of an agreed number are one
+ * copy too many.
+ */
+
+/** Hold this attempt for the length of the transaction. Signing waits; it does not refuse. */
+async function holdAttempt(idempotencyKey: string): Promise<void> {
+  await db.prepare(
+    `select pg_advisory_xact_lock(${ATTEMPT_LOCK_NAMESPACE}, hashtext(?))`,
+  ).get(idempotencyKey)
+}
+
+/** The doctor's determination about this attempt, if one has been recorded. */
+async function resolutionFor(idempotencyKey: string): Promise<Row | undefined> {
+  return await db.prepare(
+    `select r.id, r.resolution, r.prior_outcome, r.encounter_id, r.subject_visit_id,
+            r.subject_visit_closed, r.subject_visit_disposition,
+            r.reason, r.request_fingerprint, r.resolved_by, r.resolved_at,
+            r.patient_id,
+            s.name as resolved_by_name
+       from consultation_attempt_resolutions r
+       join staff s on s.id = r.resolved_by
+      where r.idempotency_key = ?`,
+  ).get(idempotencyKey) as Row | undefined
+}
+
+/**
+ * This attempt was settled by a person, and nothing was written under it.
+ *
+ * Owner item 73: only an audited resolution or an already-confirmed replay may
+ * release an attempt. The other half of that promise is that the release has
+ * to STICK — a tablet still holding the settled reference, offline in somebody
+ * pocket for an hour, must not be able to sign under it when it reconnects.
+ *
+ * Reached only where the key carries no encounter. Where it carries one, the
+ * replay path answers first and answers better: it hands back the consultation
+ * that exists.
+ */
+function refuseSettledAttempt(resolution: Row, visitNamed: string | null = null): never {
+  const determination = String(resolution.resolution ?? '')
+  const who = String(resolution.resolved_by_name ?? 'a doctor')
+  const closed = String(resolution.subject_visit_id ?? '')
+  const didClose = String(resolution.subject_visit_disposition ?? '') === 'closed_now'
+
+  /*
+   * Same attendance is the one determination a fresh reference must NOT
+   * follow, and it is the reason this branches at all.
+   *
+   * The doctor has said the visit and the consultation are one attendance and
+   * the visit has been closed. Rotating there would leave the tablet with no
+   * live visit to name, so the next press would write a DIRECT consultation
+   * and a second fee for the attendance that was just reconciled — W1 arriving
+   * through the door built to close it.
+   */
+  if (determination === 'same_attendance') {
+    /*
+     * And only if it is THIS visit that was closed.
+     *
+     * The first version said "and closed it" unconditionally, which is false
+     * whenever the determination named no visit or a different one — and worse
+     * than false, because the code it carries does not rotate, so a doctor who
+     * resolved without naming a visit could not sign the one still in front of
+     * them, and the reference's single resolution was already spent. The
+     * independent review walked it end to end.
+     *
+     * A visit the determination did not speak to is a separate matter, and the
+     * reference is settled, so it takes the code the tablet DOES rotate on and
+     * the next press signs it in the ordinary way.
+     */
+    /*
+     * The DISPOSITION, and not the id, and not the boolean either.
+     *
+     * The third review's finding was that this said "and closed it" about a
+     * determination that had closed nothing. The owner decision of 16
+     * September 2026 makes that distinction a real one rather than a defect to
+     * be designed out: a doctor may link retrospectively to a visit that was
+     * already finished, and what is recorded is which of the two happened.
+     *
+     * So there are two sentences here, both true, and the row says which one
+     * to use. `already_done` is exactly the case the earlier version would
+     * have described as a closure the doctor performed.
+     */
+    if (visitNamed !== null && closed !== '' && closed === visitNamed) {
+      if (didClose) {
+        throw new CommandRefusal(
+          `${who} has already recorded that visit as the same attendance as a consultation signed under ` +
+          'this reference, and closed it. Nothing was recorded twice and nothing was charged. Open the ' +
+          'patient’s record to see what was signed.',
+          'ATTEMPT_RECONCILED_AS_SAME_ATTENDANCE',
+        )
+      }
+      throw new CommandRefusal(
+        `${who} has already recorded that visit as the same attendance as a consultation signed under ` +
+        'this reference. The visit was already finished, so nothing about it was changed, nothing was ' +
+        'recorded twice and nothing was charged. Open the patient’s record to see what was signed.',
+        'ATTEMPT_RECONCILED_AS_SAME_ATTENDANCE',
+      )
+    }
+    if (visitNamed === null) {
+      throw new CommandRefusal(
+        `${who} has already recorded the consultation signed under this reference as one attendance. ` +
+        'Nothing was recorded twice and nothing was charged. Open the patient’s record to see what ' +
+        'was signed.',
+        'ATTEMPT_RECONCILED_AS_SAME_ATTENDANCE',
+      )
+    }
+    throw new CommandRefusal(
+      `${who} has already closed this reference as one attendance, and that determination did not name ` +
+      'the visit you have open. Nothing was recorded twice and nothing was charged. Sign again and the ' +
+      'tablet will use a fresh reference.',
+      'ATTEMPT_SETTLED_BY_RECONCILIATION',
+    )
+  }
+
+  /*
+   * New attendance and an abandoned attempt both settle the reference, and
+   * owner item 73 names exactly this as a release: "Only that audited
+   * resolution, or an already-confirmed successful replay, may release the
+   * attempt." So this code is one the tablet DOES rotate on — the doctor has
+   * said, on the record, that the next consultation is a different one.
+   */
+  throw new CommandRefusal(
+    `This reference was closed by ${who} as ` +
+    `${determination === 'new_attendance' ? 'a new attendance' : 'an abandoned attempt'}, ` +
+    'and nothing was recorded under it. Nothing has been changed or charged now either. ' +
+    'Sign again and the tablet will use a fresh reference.',
+    'ATTEMPT_SETTLED_BY_RECONCILIATION',
+  )
+}
+
+/**
+ * Before repeating that a visit cannot be signed: did WE sign it?
+ *
+ * Asked only where a visit has turned out not to be signable, and that is
+ * precisely where it matters. The row lock this transaction has just finished
+ * waiting on was held by whoever closed the visit — and when that whoever is
+ * the other half of this same attempt, two tablets pressing Finish on one
+ * queued patient, the loser is not looking at a visit it may not sign. It is
+ * looking at its own consultation, a millisecond old.
+ *
+ * Without this, that loser was told "That visit is already finished or does
+ * not belong to this patient." Both halves of that sentence are false, the
+ * consultation it asked for exists, and the doctor holding the second tablet
+ * has no way to tell this apart from a real conflict. Reproduced on staging by
+ * the concurrency test that finally exercised the lock — the older one used a
+ * patient with no visit at all, so it never reached this code.
+ */
+async function settledElsewhere(idempotencyKey: string): Promise<void> {
+  if (await signedConsultationFor(idempotencyKey)) throw new AttemptSettledElsewhere()
+}
+
+/**
+/**
+ * Which visit a first signing attaches itself to, and when it must refuse.
+ *
+ * ── THE CASE THIS GOT WRONG, AND WHAT IT COST ────────────────────────
+ *
+ * Slice 2 let the live visit win unconditionally: "the tablet is looking at
+ * it". The acceptance review reproduced what that means when the attempt was
+ * opened against a DIFFERENT visit and nothing has committed under it — the
+ * consultation is signed against B, an encounter and a ₹300 fee are written,
+ * and A is left standing in the queue, having been stepped around without
+ * anybody deciding anything.
+ *
+ * Owner item 74 covers exactly this: "If A did not commit, the doctor
+ * explicitly chooses which active attendance continues; the abandoned path is
+ * preserved in audit." Two live visits and one attempt is not a question the
+ * software may answer. It fails closed, before any clinical or financial
+ * write, and a doctor resolves it.
+ *
+ * ── THE FIVE SHAPES, AND WHY ONLY ONE OF THEM REFUSES ─────────────────
+ *
+ *   opened  live   what it is
+ *   ------  ----   --------------------------------------------------------
+ *   none    none   a patient opened from the register. A direct consultation.
+ *   none    B      a walk-in that acquired a visit mid-attempt. Policy item 3
+ *                  allows creating it, and it is the same consultation: sign
+ *                  against B rather than leave it waiting and unlinked.
+ *   A       none   the ordinary retry. Signing takes the visit out of the
+ *                  snapshot, so having nothing live to send is the SHAPE of a
+ *                  retry rather than a claim that no visit exists.
+ *   A       A      agreement. Sign it.
+ *   A       B      TWO real visits and one attempt that has committed
+ *                  nothing. Refused.
+ *
+ * Every refusal here is preceded by `settledElsewhere`, because each is
+ * reached only after a lock wait, and a lock wait is exactly when the question
+ * "has this attempt already been signed?" changes its answer.
+ */
+/**
+ * A visit already recorded as the same attendance as a signed consultation.
+ *
+ * Owner item 72 closes it and charges nothing again; signing it would do both
+ * of the things that determination exists to prevent. The fourth acceptance
+ * review reached this by reopening the visit through the queue.
+ */
+async function refuseAReconciledVisit(visitId: string, idempotencyKey: string): Promise<void> {
+  const determined = await db.prepare(
+    `select r.id, a.token
+       from consultation_attempt_resolutions r
+       join appointments a on a.id = r.subject_visit_id
+      where r.subject_visit_id = ? and r.resolution = 'same_attendance'
+      limit 1`,
+  ).get(visitId) as Row | undefined
+  if (!determined) return
+
+  await settledElsewhere(idempotencyKey)
+  throw new CommandRefusal(
+    `${String(determined.token ?? 'That visit')} was already recorded as the same attendance as a ` +
+    'consultation signed for this patient, so it has been seen and paid for. Nothing was recorded and ' +
+    'nothing was charged. If the patient is here again, arrive them afresh and consult that visit.',
+    'VISIT_RECONCILED_AND_CLOSED',
+  )
+}
+
+async function visitToSignAgainst(
+  patientId: string,
+  binding: AttemptBinding,
+  idempotencyKey: string,
+): Promise<string> {
+  /*
+   * Asked first, before either visit is read, because the answer does not
+   * depend on their status and because nothing may be written while it is
+   * true. A visit that has since been cancelled does not make this safe: the
+   * attempt still began somewhere else, and which attendance continues is
+   * still the doctor's to say.
+   */
+  if (
+    binding.openedVisitId && binding.liveVisitId
+    && binding.openedVisitId !== binding.liveVisitId
+  ) {
+    await settledElsewhere(idempotencyKey)
+    throw new CommandRefusal(
+      'This consultation was started against a different visit for this patient, and nothing has been ' +
+      'recorded under it yet. Nothing was changed and nothing was charged. If the patient never left ' +
+      'and reception arrived them twice, close it as the same attendance; if they have genuinely come ' +
+      'back, record a new attendance — and the clinic will not decide which it was on its own.',
+      'ATTEMPT_NEEDS_RECONCILIATION',
+    )
+  }
+
+  if (binding.liveVisitId) {
+    /*
+     * The same lock and the same refusal as `requireActiveAppointment`, read
+     * out here rather than called, for one reason: `settledElsewhere` runs a
+     * query, and a query on an ABORTED transaction raises 25P02 instead of
+     * answering. Wrapping the call in try/catch meant that a deadlock or a
+     * statement timeout inside it — a Postgres error, not "the visit is not
+     * active" — left the transaction aborted, and the probe's own failure
+     * became the error the doctor read. Asking only after a SELECT that
+     * succeeded cannot do that.
+     */
+    const live = await db.prepare(
+      `select status from appointments where id=? and patient_id=? for update`,
+    ).get(binding.liveVisitId, patientId) as { status: string } | undefined
+
+    /*
+     * Before the status is even looked at, because the answer does not depend
+     * on it and because a reconciled visit that has somehow been reopened is
+     * the one case where "waiting" is not permission to sign.
+     *
+     * Unreachable while the trigger holds — a same-attendance subject cannot
+     * return to the queue — and here anyway, because the review's finding was
+     * that one guarantee written in one place is a guarantee waiting to be
+     * walked around, and because a doctor meeting this deserves the reason
+     * rather than a constraint name.
+     */
+    await refuseAReconciledVisit(binding.liveVisitId, idempotencyKey)
+
+    if (live && (live.status === 'waiting' || live.status === 'in_consult')) {
+      return binding.liveVisitId
+    }
+    await settledElsewhere(idempotencyKey)
+    throw new Error('That visit is already finished or does not belong to this patient.')
+  }
+  if (!binding.openedVisitId) return ''
+
+  const opened = await db.prepare(
+    `select status from appointments where id=? and patient_id=? for update`,
+  ).get(binding.openedVisitId, patientId) as { status: string } | undefined
+
+  if (!opened) {
+    await settledElsewhere(idempotencyKey)
+    // Two facts share this branch, because the query asks about both at once:
+    // the visit is gone, or it belongs to somebody else. Saying only the first
+    // would be a confident sentence that is sometimes false, and the answer —
+    // refuse, write nothing — is the same either way.
+    throw new CommandRefusal(
+      'This consultation was started against a visit that is no longer in the clinic’s records, ' +
+      'or that belongs to a different patient. Nothing was recorded. Create today’s visit for ' +
+      'this patient and sign again.',
+      'ATTEMPT_VISIT_NO_LONGER_ACTIVE',
+    )
+  }
+
+  if (opened.status === 'waiting' || opened.status === 'in_consult') {
+    // The tablet's snapshot was simply behind. The visit is open; sign against
+    // it rather than quietly making this a consultation with no visit at all.
+    return binding.openedVisitId
+  }
+
+  /*
+   * Cancelled, or finished by somebody else, and nothing was ever recorded
+   * under this reference.
+   *
+   * Signing now would have to become a direct consultation, and that is the
+   * bypass: a cancelled visit would be stepped around, an encounter written
+   * against nothing, and ₹300 charged for an attendance the clinic had been
+   * told did not happen. It refuses instead, and it does NOT carry the code
+   * the tablet rotates on — a fresh reference here writes exactly the
+   * unlinked consultation this refusal exists to prevent.
+   *
+   * The way forward is a clinic act rather than a retry: create today’s visit,
+   * which mints a new attempt through the ordinary rule and signs against it.
+   *
+   * Unless the attempt itself is what closed the visit, which is the twin
+   * above arriving by this door: a second tablet whose `openedVisitId` names
+   * the visit the first tablet has just signed and set to `done`.
+   */
+  await settledElsewhere(idempotencyKey)
+  throw new CommandRefusal(
+    `This consultation was started against a visit that has since been ${opened.status === 'cancelled' ? 'cancelled' : 'closed'}. ` +
+    'Nothing was recorded and nothing was charged. Create today’s visit for this patient and ' +
+    'sign again, so the consultation is attached to the visit it belongs to.',
+    'ATTEMPT_VISIT_NO_LONGER_ACTIVE',
+  )
+}
+
+/**
+ * Answer a retry with what the clinic actually recorded the first time.
+ *
+ * Not with a fresh success. The prescription number, the encounter and the
+ * signing time all have to be the ORIGINAL ones, because the screen behind
+ * this prints them, and a second set of numbers for one visit is the same
+ * fault as a second bill for it.
+ *
+ * Two refusals stand between a caller and that replay, and they are separate
+ * on purpose.
+ *
+ * `ATTEMPT_NAMES_ANOTHER_CONSULTATION` — the key is bound to a different
+ * patient, doctor or visit. This request is provably not a retry of what the
+ * key named, so replaying would file one visit's consultation under another's.
+ * It is safe for the tablet to rotate the reference and try again, because
+ * whatever the key named is settled and this is not it.
+ *
+ * `CONSULTATION_ALREADY_SIGNED` — same patient, same doctor, same visit, and a
+ * different sheet. This IS the consultation the key named; it committed, and
+ * what has changed is what the doctor is now asking to record. Signing is
+ * immutable, so the answer is no, and the answer must NOT invite a rotation:
+ * a fresh key here writes a second encounter and a second fee for one visit,
+ * which is the whole of W1 arriving by another road. The recorded consultation
+ * is named so the doctor can go and look at it.
+ */
+function replayConsultation(
+  original: SignedConsultation,
+  binding: AttemptBinding,
+  fingerprint: string,
+  resolution?: Row,
+) {
+  const verdict = compareBinding(original, binding)
+
+  /*
+   * A doctor has already answered the question this refusal would ask.
+   *
+   * Both of the verdicts below — a different visit, and a visit where the
+   * encounter has none — end in "somebody has to decide which of two things
+   * is true". Once somebody has, repeating the question is the worst possible
+   * answer: the doctor reads the identical refusal they read before
+   * resolving, with no hint that their decision was recorded, and there is no
+   * way forward from the screen at all.
+   *
+   * Found by the independent acceptance review, which walked it as a loop with
+   * no exit. The resolution is looked up beside the encounter and answered
+   * from here instead.
+   */
+  if (resolution && (verdict === 'another_visit' || verdict === 'signed_without_this_visit')) {
+    refuseSettledAttempt(resolution, binding.liveVisitId)
+  }
+
+  if (verdict === 'another_consultation') {
+    throw new CommandRefusal(
+      'That reference belongs to a different consultation — another patient or another doctor. ' +
+      'Nothing was changed. Sign again and the tablet will use a fresh reference.',
+      'ATTEMPT_NAMES_ANOTHER_CONSULTATION',
+    )
+  }
+
+  /*
+   * One attendance or two, and the clinic cannot tell.
+   *
+   * The key named a real visit and the request names a different real visit.
+   * That is either a patient who came back — in which case a second
+   * consultation is right — or a patient who never left, whose first visit was
+   * closed by the signing this key already did and who was then arrived again
+   * by reception while they stood at the desk.
+   *
+   * Owner item 74 decides which way to fail: "Do not automatically mint a new
+   * attempt. First establish the old key's outcome... Reception creating B is
+   * not, by itself, proof of a second consultation." So this refusal carries a
+   * code the tablet does NOT rotate on, nothing is written, nothing is
+   * charged, and the way forward is `resolve_consultation_attempt` — a doctor
+   * saying **Same attendance** or **New attendance**, on the record.
+   */
+  if (verdict === 'another_visit') {
+    const named = original.prescription_number ? ` as ${original.prescription_number}` : ''
+    throw new CommandRefusal(
+      `This reference already signed a consultation${named}, against a different visit for this patient. ` +
+      'Nothing was recorded twice and nothing was charged. If that was this same attendance, close it as ' +
+      'the same attendance; if the patient has genuinely come back, record a new attendance — and the ' +
+      'clinic will not decide which it was on its own.',
+      'ATTEMPT_NEEDS_RECONCILIATION',
+    )
+  }
+
+  /*
+   * Signed already, and not against the visit now open.
+   *
+   * The consultation committed when the tablet could not hear it, and a visit
+   * row has appeared since. Three things are true at once and all three have
+   * to be said: nothing was recorded twice, the consultation exists and is
+   * named, and the visit on screen is still waiting and is attached to
+   * nothing.
+   *
+   * What this deliberately does NOT do is decide what happens to that visit.
+   * Linking it to a consultation that is already signed edits a signed record;
+   * cancelling it decides a visit the doctor deliberately created did not
+   * happen. Both are clinic policy and neither is a read model's to choose, so
+   * the clinic is told exactly what it is holding and a person decides. The
+   * alternatives are written out in the programme register.
+   *
+   * It carries a code, and that code is NOT one the tablet rotates on: a fresh
+   * reference here signs the same consultation a second time, which is the
+   * whole of W1 arriving by the one road still open to it.
+   */
+  if (verdict === 'signed_without_this_visit') {
+    const named = original.prescription_number ? ` as ${original.prescription_number}` : ''
+    throw new CommandRefusal(
+      `This consultation was already signed${named}, before the visit you have open was created, ` +
+      'so it is not attached to that visit. Nothing was recorded twice and nothing was changed. ' +
+      'The visit is still waiting — close it from the queue, or open the patient’s record to see ' +
+      'what was signed.',
+      'CONSULTATION_SIGNED_WITHOUT_THIS_VISIT',
+    )
+  }
+
+  if (original.request_fingerprint !== fingerprint) {
+    const named = original.prescription_number
+      ? ` as ${original.prescription_number}`
+      : ''
+    throw new CommandRefusal(
+      `This visit was already signed${named}, and what you have just sent differs from what was ` +
+      'recorded. Nothing was changed and nothing was recorded twice. A signed consultation ' +
+      'cannot be edited — open the patient’s record to see what was signed.',
+      'CONSULTATION_ALREADY_SIGNED',
+    )
+  }
+
+  return {
+    message: original.prescription_number
+      ? `This consultation was already signed as ${original.prescription_number}. Nothing was recorded twice.`
+      : 'This consultation was already signed. Nothing was recorded twice.',
+    data: {
+      encounterId: original.encounter_id,
+      prescriptionId: original.prescription_id ?? undefined,
+      prescriptionNumber: original.prescription_number ?? undefined,
+      signedAt: original.created_at,
+      duplicate: true,
+    },
+  }
+}
+
+/**
+ * A visit named in a reconciliation belongs to the patient being reconciled.
+ *
+ * Every one of the three determinations may carry an `openedVisitId` and a
+ * `subjectVisitId`, and until the acceptance correction only the encounter was
+ * checked against the patient. So a doctor could record that one patient's
+ * queue row was the same attendance as another patient's consultation, and the
+ * row was accepted, stored, and would have closed the wrong person's visit.
+ *
+ * Read `for update`, because the answer decides whether a visit is about to be
+ * closed and the row must not move underneath that decision.
+ *
+ * The database refuses it too — `20260921000000` adds composite foreign keys
+ * on `(visit, patient)` — and both are wanted. The constraint is the guarantee
+ * and cannot be forgotten; this is the sentence a doctor reads, which a
+ * constraint violation is not.
+ */
+async function visitOfThisPatient(
+  visitId: string,
+  patientId: string,
+  whichOne: string,
+): Promise<Row> {
+  const visit = await db.prepare(
+    `select id, token, status from appointments where id=? and patient_id=? for update`,
+  ).get(visitId, patientId) as Row | undefined
+  if (!visit) {
+    throw new CommandRefusal(
+      `The ${whichOne} was not found, or belongs to a different patient. Nothing was changed.`,
+      'VISIT_NOT_THIS_PATIENTS',
+    )
+  }
+  return visit
+}
+
+/** The three determinations, in the words the audit trail carries. */
+const RESOLUTION_WORDS: Record<string, string> = {
+  same_attendance: 'Same attendance',
+  new_attendance: 'New attendance',
+  abandoned_attempt: 'Abandoned attempt',
+}
+
+/**
+ * What the clinic says back, and what it deliberately does not say.
+ *
+ * None of these says "completed". Nothing clinical or financial happened here
+ * — no encounter, no fee, no prescription — and a sentence that reads like a
+ * confirmation of work done is the one thing this must not be mistaken for.
+ * What each one confirms is a decision having been recorded and a reference
+ * having been let go.
+ */
+/**
+ * What the clinic says back, by what actually happened.
+ *
+ * The disposition rather than a boolean, because owner item 75 made three
+ * outcomes out of two and a boolean collapsed two of them into one sentence:
+ * a retrospective link to a visit already finished read exactly like a
+ * determination that named no visit at all. The independent review found it.
+ */
+type Disposition = 'closed_now' | 'already_done' | 'not_applicable'
+
+const RESOLUTION_MESSAGES: Record<string, (disposition: Disposition) => string> = {
+  same_attendance: (disposition) =>
+    disposition === 'closed_now'
+      ? 'Recorded as one attendance. The consultation already signed stands unchanged, the visit is closed, ' +
+        'and nothing was charged again.'
+      : disposition === 'already_done'
+      ? 'Recorded as one attendance. That visit was already finished, so nothing about it changed; the ' +
+        'consultation already signed stands unchanged and nothing was charged again.'
+      : 'Recorded as one attendance. The consultation already signed stands unchanged and nothing was charged again.',
+  new_attendance: () =>
+    'Recorded as a new attendance. The earlier reference is closed and nothing was charged; the visit is ' +
+    'still open and can be consulted and signed in the ordinary way.',
+  abandoned_attempt: () =>
+    'Recorded as abandoned. Nothing was ever written under that reference and nothing was charged.',
+}
+
+/**
+ * Answer a repeat with the determination that was actually recorded.
+ *
+ * The same shape as `replayConsultation`, and it is here for the same reason:
+ * a doctor whose reply was lost presses again, and a second row would be a
+ * second determination about one attempt — which, where the first closed a
+ * visit, would be a second attempt to close a visit that is already closed.
+ *
+ * A REPEAT is answered. A DIFFERENT determination under the same reference is
+ * refused rather than answered with the first one's words: changing one's mind
+ * about whether a patient attended once or twice is a real thing to do, and
+ * the way to do it is to look at what was recorded, not to have this command
+ * quietly tell you it agrees with you.
+ */
+function replayResolution(existing: Row, fingerprint: string) {
+  const determination = String(existing.resolution ?? '')
+
+  if (String(existing.request_fingerprint ?? '') !== fingerprint) {
+    throw new CommandRefusal(
+      `This reference was already closed by ${String(existing.resolved_by_name ?? 'a doctor')} as ` +
+      `${RESOLUTION_WORDS[determination]?.toLowerCase() ?? determination}, and what you have just sent ` +
+      'differs from that. Nothing was changed. Open the patient’s record to see what was recorded.',
+      'RECONCILIATION_ALREADY_RESOLVED',
+    )
+  }
+
+  return {
+    message: `${RESOLUTION_WORDS[determination] ?? determination} was already recorded for this reference. ` +
+      'Nothing was recorded twice.',
+    data: {
+      resolutionId: String(existing.id ?? ''),
+      resolution: determination,
+      priorOutcome: String(existing.prior_outcome ?? ''),
+      attemptReleased: true,
+      encounterId: existing.encounter_id ? String(existing.encounter_id) : undefined,
+      subjectVisitId: existing.subject_visit_id ? String(existing.subject_visit_id) : undefined,
+      subjectVisitClosed: existing.subject_visit_closed === true,
+      subjectVisitDisposition: String(existing.subject_visit_disposition ?? 'not_applicable'),
+      resolvedAt: String(existing.resolved_at ?? ''),
+      duplicate: true,
+    },
+  }
+}
+
 async function completeConsultation(session: SessionView, payload: Payload) {
   const encounterId = randomUUID()
   const signedAt = isoNow()
@@ -350,19 +1220,115 @@ async function completeConsultation(session: SessionView, payload: Payload) {
   let prescriptionId: string | undefined
   let prescriptionNumber: string | undefined
 
-  await transaction(async () => {
-    const appointmentId = optional(payload, 'appointmentId')
-    await requireActiveAppointment(patientId, appointmentId)
+  /*
+   * The key, and the two things it is not.
+   *
+   * It is not required, because a tablet running the build that is deployed
+   * today does not send one and must keep working until it is replaced. A
+   * caller that sends nothing gets a key of its own here, which protects it
+   * from nothing — that is the honest position and the remaining exposure is
+   * written down in `docs/reference/BACKEND_PROGRAMME_REGISTER.md`. It keeps
+   * the column uniform so that every encounter signed from now on can be found
+   * by the reference it was signed under.
+   *
+   * And it is not the whole guard. `visitToSignAgainst` still refuses a second
+   * signature on a visit that came from the queue, on facts rather than on the
+   * caller's word. The key covers the case that check cannot see — a patient
+   * opened from the register with no visit row open — which is precisely the
+   * case that was charging twice.
+   */
+  const idempotencyKey = optional(payload, 'idempotencyKey') || `consultation:${randomUUID()}`
+  const fingerprint = consultationFingerprint(fields, prescriptionItems, payload)
+
+  /*
+   * What this attempt says it is for, in both senses of "which visit".
+   *
+   * `appointmentId` is what the tablet has on screen now. `openedVisitId` is
+   * what the attempt began against and never changes, and it is additive: a
+   * caller that does not send it behaves exactly as before, which is what
+   * keeps the deployed build working.
+   *
+   * Neither replaces the other, because each answers a question the other
+   * cannot. The live one attaches the consultation to the visit in front of
+   * the doctor — without it, a visit created mid-attempt stayed `waiting` and
+   * unlinked. The opened one says which consultation this is when the live one
+   * has gone — without it, a visit that was cancelled between the lost reply
+   * and the retry was bypassed entirely and ₹300 was charged against nothing.
+   * Both were reproduced on staging.
+   */
+  const binding: AttemptBinding = {
+    patientId,
+    doctorId: session.staffId,
+    openedVisitId: optional(payload, 'openedVisitId') || null,
+    liveVisitId: optional(payload, 'appointmentId') || null,
+  }
+
+  // The courteous path, checked before anything is written; the lock and the
+  // unique index below are the guarantees, and they are what hold when two
+  // tablets submit the same key in the same breath.
+  const already = await signedConsultationFor(idempotencyKey)
+  const settledEarly = await resolutionFor(idempotencyKey)
+  if (already) return replayConsultation(already, binding, fingerprint, settledEarly)
+  if (settledEarly) refuseSettledAttempt(settledEarly)
+
+  const raced = await transaction(async () => {
+    /*
+     * First statement in the transaction, before any row lock and before the
+     * first write.
+     *
+     * It settles this attempt against the two things that can be happening to
+     * it at the same moment: another tablet signing under the same reference,
+     * and a doctor resolving the reference through
+     * `resolve_consultation_attempt`. Both take the same lock in the same
+     * order, so neither can read a half-finished version of the other, and
+     * neither can deadlock against it.
+     */
+    await holdAttempt(idempotencyKey)
+
+    /*
+     * Re-asked under the lock, and the answers are different facts.
+     *
+     * A consultation that appeared here since the pre-check means the other
+     * tablet won; `AttemptSettledElsewhere` carries that out of the
+     * transaction to the same replay the unique index used to be the only
+     * route to — which is what makes the concurrent case deterministic rather
+     * than a race between two correct branches.
+     *
+     * A resolution that appeared here means a doctor closed the reference
+     * while this request was on its way. Owner item 73: that release must
+     * stick.
+     */
+    const winner = await signedConsultationFor(idempotencyKey)
+    if (winner) throw new AttemptSettledElsewhere()
+    const settled = await resolutionFor(idempotencyKey)
+    if (settled) refuseSettledAttempt(settled)
+
+    // Resolved inside the transaction, because it takes a row lock: the same
+    // `for update` that makes two tablets signing one queued visit wait for
+    // each other rather than both succeeding.
+    const appointmentId = await visitToSignAgainst(patientId, binding, idempotencyKey)
+    /*
+     * The first write in the transaction, and deliberately so.
+     *
+     * `idempotency_key` is uniquely indexed, so if another tablet is signing
+     * this same attempt the collision happens HERE — before a prescription
+     * number is spent, before an invoice is opened, before a phrase count is
+     * incremented. Everything still rolls back either way; putting the
+     * serialization point first simply means the losing caller waits on a
+     * shorter transaction and burns less.
+     */
     await db.prepare(`insert into encounters
       (id,patient_id,doctor_id,appointment_id,diagnosis,notes,advice,created_at,
        complaint,complaint_duration_value,complaint_duration_unit,examination,
-       diagnosis_status,aetiology,aetiology_certainty,follow_up_date)
-      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        encounterId, patientId, session.staffId, optional(payload, 'appointmentId') || null,
+       diagnosis_status,aetiology,aetiology_certainty,follow_up_date,
+       idempotency_key,request_fingerprint)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        encounterId, patientId, session.staffId, appointmentId || null,
         fields.diagnosis, fields.notes, fields.advice, signedAt, fields.complaint,
         fields.complaintDurationValue ?? null, fields.complaintDurationUnit ?? null,
         fields.examination, fields.diagnosisStatus, fields.aetiology,
         fields.aetiologyCertainty, fields.followUpDate ?? null,
+        idempotencyKey, fingerprint,
       )
 
     if (prescriptionItems.length > 0) {
@@ -424,9 +1390,18 @@ async function completeConsultation(session: SessionView, payload: Payload) {
      * A waived visit is an explicit ₹0 line with a reason and an actor, not an
      * absent one (policy register 33). A missing line cannot say who decided.
      *
-     * At most one fee line per encounter, and that is not a promise made here:
-     * `invoice_lines.source_key` is uniquely indexed clinic-wide, so a retry
-     * cannot produce a second one even on a second invoice.
+     * At most one fee line per ENCOUNTER, and that is not a promise made here:
+     * `invoice_lines.source_key` is uniquely indexed clinic-wide and this key
+     * is `consultation:${encounterId}`.
+     *
+     * Read that carefully, because this comment used to say the index meant "a
+     * retry cannot produce a second one even on a second invoice" and that was
+     * never true. One fee per encounter is a different promise from one fee per
+     * VISIT, and the gap between them is the whole of W1: `encounterId` was a
+     * fresh uuid on every call, so two signings of one sheet held two keys that
+     * could never collide, and the patient was handed a ₹600 bill for a ₹300
+     * consultation. What closes that is the idempotency key on the encounter
+     * above — not this index, which is doing a smaller job correctly.
      */
     const settings = await db.prepare('select consultation_fee from clinic_settings where id=1')
       .get() as { consultation_fee: string } | undefined
@@ -483,7 +1458,46 @@ async function completeConsultation(session: SessionView, payload: Payload) {
       encounterId,
       `Signed consultation for ${patientId}${prescriptionNumber ? ` as ${prescriptionNumber}` : ''}`,
     )
+  }).then(() => null, (error: unknown) => {
+    /*
+     * The race, arriving as a constraint.
+     *
+     * Two tablets holding one key both found nothing above and both opened a
+     * transaction. The second one's insert waited on the first and then met
+     * the unique index. Everything it had written rolled back with it — so the
+     * clinic holds exactly one consultation, and the caller standing in front
+     * of the second tablet should be told what that consultation IS rather
+     * than shown the name of an index.
+     *
+     * The same event has a second door when the patient is IN THE QUEUE, and
+     * that door is the appointment's row lock rather than the index. The loser
+     * waits on the lock, the winner commits and sets the visit to `done`, and
+     * the loser wakes to a visit it may no longer sign — having written
+     * nothing, so the index never speaks. `AttemptSettledElsewhere` is that
+     * caller arriving here anyway, because the recovery is identical: roll
+     * back, look up what the key names, and answer with it.
+     *
+     * Caught here rather than around the whole call so that the transaction
+     * body above keeps its own indentation and stays reviewable as itself.
+     * Any other failure is re-thrown untouched: a refused fee reason and a
+     * missing diagnosis are the clinic talking, and they must reach the screen
+     * in their own words.
+     */
+    if (error instanceof AttemptSettledElsewhere) return error
+    if (isUniqueViolation(error, 'encounters_idempotency_key')) return error
+    throw error
   })
+
+  if (raced) {
+    const winner = await signedConsultationFor(idempotencyKey)
+    if (winner) {
+      return replayConsultation(winner, binding, fingerprint, await resolutionFor(idempotencyKey))
+    }
+    // The index refused this key and yet no encounter carries it. That should
+    // be unreachable; if it ever happens, the original error is the only
+    // truthful thing to report.
+    throw raced
+  }
 
   return {
     message: prescriptionId ? 'Consultation and prescription signed.' : 'Consultation signed.',
@@ -741,6 +1755,49 @@ export async function runCommand(session: SessionView, action: string, payload: 
       const appointmentId = value(payload, 'appointmentId')
       const status = requireChoice(payload, 'status', ['waiting', 'in_consult', 'done', 'cancelled'] as const)
       await transaction(async () => {
+        /*
+         * A visit recorded as the same attendance stays closed.
+         *
+         * This command moves any visit to any status, and the fourth
+         * acceptance review walked straight through it: close a leftover visit
+         * as the same attendance, put it back to `waiting` while tidying the
+         * queue, sign it under a fresh reference — two encounters and two ₹300
+         * fees for one attendance, through the door built to prevent that.
+         * Reproduced: 2 encounters, ₹600.
+         *
+         * The independent review of this correction found the other half: the
+         * first draft blocked `waiting` and `in_consult` and let `cancelled`
+         * through, which cannot take money but leaves the determination saying
+         * the patient was seen at that visit and the queue saying the visit
+         * never happened. `done` is the only status left — and it must be
+         * left, because the determination's own closure is an update this
+         * check sees, with the resolution row already written.
+         *
+         * `appointments_reconciled_visits_stay_closed` is the guarantee and
+         * covers every other way a status moves. This is the sentence a nurse
+         * reads, which a trigger's exception is not, and it names what to do
+         * instead.
+         */
+        if (status !== 'done') {
+          const reconciled = await db.prepare(
+            `select r.id, a.token, a.status
+               from appointments a
+               left join consultation_attempt_resolutions r
+                 on r.subject_visit_id = a.id and r.resolution = 'same_attendance'
+              where a.id = ? for update of a`,
+          ).get(appointmentId) as Row | undefined
+          if (reconciled?.id && String(reconciled.status) !== status) {
+            throw new CommandRefusal(
+              `${String(reconciled.token ?? 'That visit')} was recorded as the same attendance as a ` +
+              'consultation that is already signed, so it stays closed. Putting it back into the queue ' +
+              'would let it be consulted and charged a second time for one attendance; cancelling it ' +
+              'would say the attendance never happened. Nothing was changed. If the patient is here ' +
+              'again, arrive them afresh.',
+              'VISIT_RECONCILED_AND_CLOSED',
+            )
+          }
+        }
+
         await db.prepare('update appointments set status=? where id=?').run(status, appointmentId)
         await audit(session.staffId, 'appointment.status', 'appointment', appointmentId, `Appointment marked ${status}`)
       })
@@ -1078,6 +2135,443 @@ export async function runCommand(session: SessionView, action: string, payload: 
     case 'save_consultation': {
       requireRole(session, 'doctor')
       return completeConsultation(session, payload)
+    }
+
+    /*
+     * ── OWNER ITEMS 72, 73 AND 74: SAYING WHICH OF THE TWO THINGS IS TRUE ───
+     *
+     * A doctor pressed Finish, the consultation committed in Chennai, and the
+     * reply was lost on the way home. The tablet says "Outcome not confirmed",
+     * and the clinic is now holding either one attendance recorded twice over,
+     * or two attendances one of which has not been recorded at all — and
+     * nothing the software can read tells the two apart. `appointments` has no
+     * column for "this is the same person who was standing here a minute ago",
+     * and reception arriving them again is the ordinary way a busy desk
+     * behaves rather than a statement about clinical work.
+     *
+     * Slice 1 made every ending of that story honest and none of them
+     * finishable: the second signing is refused, the leftover visit is carried
+     * as an obligation, and the attempt is held — held for ever, because
+     * releasing it on a refusal reopens the second ₹300 fee. This is the
+     * missing half. A doctor looks at what is in front of them and says which
+     * it is, and that sentence is what releases the attempt.
+     *
+     * ── WHAT IT WILL NOT DO, AND WHY EACH ONE MATTERS ──────────────────────
+     *
+     * It will not edit the signed encounter. **Same attendance** links the
+     * visit to the consultation in `consultation_attempt_resolutions`, and
+     * `encounters.appointment_id` stays exactly as the doctor signed it. Owner
+     * item 72's first clause, and the reason the link is a row of its own
+     * rather than an update.
+     *
+     * It will not write a second encounter, invoice, fee line, prescription,
+     * follow-up or phrase count. Nothing in this case reaches any of them.
+     *
+     * It will not guess at the outcome. `pg_try_advisory_xact_lock` is taken
+     * first, and a signing in flight under the same reference means the
+     * outcome is genuinely undecided — so it refuses with
+     * `ATTEMPT_OUTCOME_NOT_ESTABLISHED` rather than reading an answer that is
+     * about to change. Owner item 73's last sentence: fail closed.
+     *
+     * And only a doctor may do it. Same attendance or new attendance is a
+     * statement about whether a patient was treated once or twice, which is
+     * exactly the kind of judgement reception, a nurse, a pharmacist and an
+     * administrator who is not also a doctor are not the people to make. The
+     * programme's acceptance criterion says so in those words.
+     */
+    case 'resolve_consultation_attempt': {
+      requireRole(session, 'doctor')
+      const patientId = value(payload, 'patientId')
+      const idempotencyKey = value(payload, 'idempotencyKey')
+      const resolution = requireChoice(payload, 'resolution',
+        ['same_attendance', 'new_attendance', 'abandoned_attempt'] as const)
+      const reason = value(payload, 'reason')
+      const subjectVisitId = optional(payload, 'subjectVisitId')
+      const openedVisitId = optional(payload, 'openedVisitId')
+
+      const fingerprint = requestFingerprint({
+        patientId, resolution, reason, subjectVisitId, openedVisitId,
+      })
+
+      // The courteous path. The unique index on `idempotency_key` is the
+      // guarantee, and it is what holds when two people resolve at once.
+      const alreadyResolved = await resolutionFor(idempotencyKey)
+      if (alreadyResolved) return replayResolution(alreadyResolved, fingerprint)
+
+      const resolutionId = randomUUID()
+      let outcome: 'committed' | 'not_committed' = 'not_committed'
+      let signed: SignedConsultation | undefined
+      let closedVisit = false
+      /** Owner decision: which of the three things this determination did. */
+      let disposition: Disposition = 'not_applicable'
+      let subjectStatusBefore = ''
+
+      const raced = await transaction(async () => {
+        /*
+         * TWO locks, and they answer two different questions. Sharing one
+         * conflated them, and the concurrency test is what found it.
+         *
+         * The first is blocking and serializes RESOLUTIONS against each other.
+         * Two doctors pressing at the same moment is not an unsettled outcome
+         * — it is one of them settling it — and the loser has to wait long
+         * enough to be told what was recorded rather than to be told nobody
+         * knows.
+         */
+        await db.prepare(
+          `select pg_advisory_xact_lock(${ATTEMPT_RESOLUTION_LOCK_NAMESPACE}, hashtext(?))`,
+        ).get(idempotencyKey)
+
+        // Which is the whole point of waiting: the other doctor's
+        // determination has committed and is visible now.
+        const winner = await resolutionFor(idempotencyKey)
+        if (winner) throw new AttemptSettledElsewhere()
+
+        /*
+         * The second is a TRY, and it is the fail-closed half. `holdAttempt`
+         * would WAIT here, and a resolution that waited would wake up after
+         * the signing committed and cheerfully record a determination about an
+         * outcome that changed underneath the doctor while they were reading
+         * the screen. "Somebody is signing under this reference right now" is
+         * the definition of an outcome that cannot be established, and owner
+         * item 73 says to fail closed on exactly that.
+         */
+        const held = await db.prepare(
+          `select pg_try_advisory_xact_lock(${ATTEMPT_LOCK_NAMESPACE}, hashtext(?)) as held`,
+        ).get(idempotencyKey) as Row | undefined
+
+        if (held?.held !== true) {
+          throw new CommandRefusal(
+            'This consultation is being signed right now, so what it recorded is not settled yet. ' +
+            'Nothing was changed. Wait a moment and look again.',
+            'ATTEMPT_OUTCOME_NOT_ESTABLISHED',
+          )
+        }
+
+        signed = await signedConsultationFor(idempotencyKey)
+        outcome = signed ? 'committed' : 'not_committed'
+
+        if (signed && signed.patient_id !== patientId) {
+          throw new CommandRefusal(
+            'That reference signed a consultation for a different patient. Nothing was changed.',
+            'ATTEMPT_NAMES_ANOTHER_CONSULTATION',
+          )
+        }
+
+        /*
+         * Owner item 72 defines Same attendance as creating the link AND
+         * closing the leftover visit. With a visit open and none named, the
+         * command used to record a determination that closed nothing, spend
+         * the reference's one resolution, and leave the doctor holding a visit
+         * they could no longer sign — found by the independent review.
+         *
+         * If there is genuinely no queue row, no visit is needed and none is
+         * asked for: that is the ordinary shape for a patient opened from the
+         * register, and the determination is simply that the consultation
+         * stands.
+         */
+        /*
+         * BOTH determinations that speak about a visit must say which visit.
+         *
+         * Same attendance asked already; new attendance did not, and the
+         * fourth acceptance review recorded one against a patient with a visit
+         * standing in the queue and no subject named. Owner item 74 is that
+         * the doctor says which attendance continues — a determination that
+         * names nobody has not said it, and the visit it was about is left
+         * unlinked while the reference is spent.
+         */
+        if ((resolution === 'same_attendance' || resolution === 'new_attendance') && !subjectVisitId) {
+          const open = await db.prepare(
+            `select token from appointments
+              where patient_id = ? and status in ('waiting', 'in_consult')
+              order by scheduled_at`,
+          ).all(patientId) as Row[]
+          if (open.length > 0) {
+            const tokens = open.map((row) => String(row.token)).join(' and ')
+            const plural = open.length === 1 ? 'is' : 'are'
+            throw new CommandRefusal(
+              resolution === 'same_attendance'
+                ? `Say which visit this is the same attendance as. ${tokens} ${plural} still in the ` +
+                  'queue, and same attendance closes the visit it names — recording it without one ' +
+                  'would settle the reference and leave the visit open with no way back.'
+                : `Say which visit the patient has come back for. ${tokens} ${plural} still in the ` +
+                  'queue, and a new attendance is the determination that one of them is the ' +
+                  'consultation still to be done — recording it without naming one settles the ' +
+                  'reference and says nothing about which.',
+              'SUBJECT_VISIT_REQUIRED',
+            )
+          }
+        }
+
+        if (resolution === 'same_attendance' && outcome !== 'committed') {
+          throw new CommandRefusal(
+            'Nothing was recorded under this reference, so there is no consultation for this visit to be ' +
+            'the same attendance as. The visit is still open — sign it.',
+            'ATTEMPT_NOT_COMMITTED',
+          )
+        }
+
+        if (resolution === 'abandoned_attempt') {
+          if (outcome === 'committed') {
+            throw new CommandRefusal(
+              'A consultation WAS signed under this reference, so the attempt was not abandoned. Record it ' +
+              'as the same attendance, or as a new one.',
+              'ATTEMPT_ALREADY_COMMITTED',
+            )
+          }
+          if (subjectVisitId) {
+            throw new Error(
+              'An abandoned attempt closes nothing. Leave the visit out, or record a new attendance instead.',
+            )
+          }
+          /*
+           * Owner item 73 defines this determination BY the opened visit —
+           * "an abandoned attempt whose opened visit is no longer active" —
+           * so the visit is part of the determination rather than a hint the
+           * caller may withhold.
+           *
+           * It used to be optional, and an absent field skipped the check
+           * entirely: a doctor could record an attempt as abandoned while the
+           * visit it was opened against was still standing in the queue, which
+           * is the one state item 73 says it is not. Found by the independent
+           * review.
+           */
+          if (!openedVisitId) {
+            throw new Error(
+              'Say which visit this consultation was started against. An attempt is abandoned because the ' +
+              'visit it belonged to is no longer open, so the clinic has to be told which visit that was.',
+            )
+          }
+          const opened = await visitOfThisPatient(
+            openedVisitId, patientId, 'visit this consultation was started against')
+          const stillOpen = String(opened.status) === 'waiting'
+            || String(opened.status) === 'in_consult'
+          if (stillOpen) {
+            throw new CommandRefusal(
+              'The visit this consultation was started against is still open in the queue, so the attempt has ' +
+              'not been abandoned. Sign it, or cancel the visit first.',
+              'ATTEMPT_VISIT_STILL_ACTIVE',
+            )
+          }
+        }
+
+        /*
+         * Every visit this row will name has to be this patient's, on all three
+         * determinations, and the check happens before anything is written.
+         *
+         * `abandoned_attempt` checks its own above, because there the visit's
+         * STATUS is part of the determination. The other two only ever record
+         * it, and recording another patient's visit id is exactly the
+         * cross-patient relationship the acceptance review reproduced.
+         */
+        if (openedVisitId && resolution !== 'abandoned_attempt') {
+          await visitOfThisPatient(
+            openedVisitId, patientId, 'visit this consultation was started against')
+        }
+
+        if (subjectVisitId) {
+          const visit = await visitOfThisPatient(subjectVisitId, patientId, 'visit')
+          const open = String(visit.status) === 'waiting' || String(visit.status) === 'in_consult'
+          subjectStatusBefore = String(visit.status)
+
+          /*
+           * ── WHAT EACH DETERMINATION NEEDS OF THE VISIT IT NAMES ─────────
+           *
+           * **Same attendance.** Owner decision, 16 September 2026: a doctor
+           * may link retrospectively to a visit already marked `done`, and
+           * what is recorded is whether this determination closed it now or
+           * found it already closed. Never a claim to have performed a
+           * closure it did not perform — which is what the third review's
+           * `subject_visit_closed` was being made to say, and why the
+           * disposition is its own field rather than an overloaded boolean.
+           *
+           * A **cancelled** visit stays ineligible. It was not attended; a
+           * consultation cannot be the same attendance as an attendance that
+           * did not happen, and the cancellation is its own correction to
+           * make first.
+           *
+           * **New attendance.** Owner item 74: it "keeps the visit available
+           * for a fresh consultation". A finished or cancelled visit is not
+           * available, so recording one says something false about which
+           * patient is still to be seen. The fourth acceptance review
+           * recorded a cancelled visit as the attendance that continues.
+           *
+           * Both refuse before anything is written, so the reference is
+           * unspent and the doctor can say what they actually meant.
+           */
+          /*
+           * Owner item 75 links retrospectively to a visit that was ALREADY
+           * FINISHED — not to one that has a consultation of its own.
+           *
+           * The race the fourth review described: a signing under a FRESH
+           * reference wins the visit lock, writes its own encounter and its own
+           * fee, and leaves the visit `done`. The reconciliation then wakes,
+           * sees `done`, and records that visit as the same attendance as the
+           * earlier consultation. It did not cause the duplicate — but it
+           * writes a false determination over it and hides the exact condition
+           * reconciliation exists to expose.
+           *
+           * The encounter this determination is ABOUT is excluded: a
+           * consultation signed against its own visit is the ordinary shape.
+           */
+          if (resolution === 'same_attendance' && !open) {
+            const consulted = await db.prepare(
+              `select e.id, coalesce(rx.prescription_number, e.id) as named
+                 from encounters e
+                 left join prescriptions rx on rx.encounter_id = e.id
+                where e.appointment_id = ? and (? = '' or e.id <> ?)
+                limit 1`,
+            ).get(subjectVisitId, signed?.encounter_id ?? '', signed?.encounter_id ?? '') as Row | undefined
+            if (consulted) {
+              throw new CommandRefusal(
+                `${String(visit.token ?? 'That visit')} has a consultation of its own (${
+                  String(consulted.named)
+                }), so it was not simply left finished — it was seen. Recording it as the same attendance ` +
+                'as a different consultation would hide a second consultation and a second fee rather ' +
+                'than resolve them. Nothing was changed. This patient has been charged twice and the ' +
+                'duplicate needs correcting on its own.',
+                'SUBJECT_VISIT_ALREADY_CONSULTED',
+              )
+            }
+          }
+
+          if (resolution === 'same_attendance' && String(visit.status) === 'cancelled') {
+            throw new CommandRefusal(
+              `${String(visit.token ?? 'That visit')} was cancelled, so it is not an attendance for a ` +
+              'consultation to be the same as. Nothing was changed. If the cancellation was the ' +
+              'mistake, correct that first; otherwise name the visit the patient was actually seen ' +
+              'at, or name none.',
+              'SUBJECT_VISIT_NOT_OPEN',
+            )
+          }
+          if (resolution === 'new_attendance' && !open) {
+            throw new CommandRefusal(
+              `${String(visit.token ?? 'That visit')} is already ${
+                String(visit.status) === 'cancelled' ? 'cancelled' : 'finished'
+              }, so it is not a consultation still to be done. Nothing was changed. Name the visit ` +
+              'the patient is waiting at, or arrive them afresh and name that one.',
+              'SUBJECT_VISIT_NOT_OPEN',
+            )
+          }
+
+          /*
+           * Owner item 72, both branches of it, and the difference is one
+           * statement.
+           *
+           * **Same attendance** — "creates an append-only audited
+           * reconciliation link and closes the leftover visit without another
+           * encounter or fee". The visit goes `done`, which is what it is: a
+           * visit that has been seen. Why it stopped waiting is in its own
+           * timeline rather than being left as a `done` with nobody's name on
+           * it.
+           *
+           * **New attendance** — "keeps the visit available for a fresh
+           * consultation". So nothing is written to it at all, and the doctor
+           * signs it in the ordinary way afterwards, under a reference of its
+           * own.
+           */
+          if (resolution === 'same_attendance') {
+            // What this expects to happen. `close_visit_for_reconciliation`
+            // decides it again under the row lock and is the one that counts —
+            // see below.
+            disposition = open ? 'closed_now' : 'already_done'
+            closedVisit = open
+          }
+        }
+
+        /*
+         * The determination first, then what it did.
+         *
+         * The reverse of the order this used to be written in, and the reason
+         * is `appointment_events.resolution_id`: the closure event points back
+         * at the determination that performed it, so the schema can tell a
+         * closure THIS resolution made from one some earlier reconciliation
+         * made about the same visit. Without that, "a closure happened" is a
+         * claim again, which is the fourth review's finding.
+         *
+         * `resolutions_subject_is_what_it_claims` is DEFERRED for the same
+         * reason: at COMMIT all three rows exist and the question has an
+         * answer in the rows rather than in what the writer said.
+         */
+        await db.prepare(
+          `insert into consultation_attempt_resolutions
+             (id, idempotency_key, patient_id, resolved_by, resolution, prior_outcome,
+              encounter_id, opened_visit_id, subject_visit_id, subject_visit_closed,
+              subject_visit_disposition, reason, request_fingerprint)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ).run(
+          resolutionId, idempotencyKey, patientId, session.staffId, resolution, outcome,
+          signed?.encounter_id ?? null, openedVisitId || null, subjectVisitId || null,
+          closedVisit, disposition, reason, fingerprint,
+        )
+
+        /*
+         * The database performs the closure, and this asks it to — with the
+         * determination's id and NOTHING else.
+         *
+         * Which visit, which doctor, in what words: all of it is read from the
+         * determination under its own lock. The fifth review closed a doctor's
+         * determination through this function with a nurse's id, because the
+         * function took an actor from its caller and believed it. A command
+         * that already knows the answer is still the wrong place to get it
+         * from, and `session.staffId` is the same value by a longer route that
+         * can be wrong.
+         *
+         * It returns what it actually did. If that is not what was recorded a
+         * few lines above, the determination is wrong about the clinic and the
+         * transaction ends rather than committing a sentence nobody can trust.
+         */
+        if (subjectVisitId && resolution === 'same_attendance') {
+          const performed = await db.prepare(
+            'select close_visit_for_reconciliation(?) as disposition',
+          ).get(resolutionId) as Row | undefined
+
+          if (String(performed?.disposition ?? '') !== disposition) {
+            throw new Error(
+              'That visit changed while this determination was being recorded. Nothing was changed. ' +
+              'Look again and say what is true now.',
+            )
+          }
+        }
+
+        await audit(
+          session.staffId, 'consultation_attempt.resolved', 'consultation_attempt', resolutionId,
+          `${RESOLUTION_WORDS[resolution]} for ${patientId}; the reference had ` +
+          `${outcome === 'committed' ? `signed ${signed?.prescription_number ?? signed?.encounter_id}` : 'recorded nothing'}` +
+          `${
+            disposition === 'closed_now'
+              ? '; the open visit was closed'
+              : disposition === 'already_done'
+              ? '; the visit it names was already finished and was linked retrospectively'
+              : ''
+          }: ${reason}`,
+        )
+      }).then(() => null, (error: unknown) => {
+        if (error instanceof AttemptSettledElsewhere) return error
+        if (isUniqueViolation(error, 'consultation_attempt_resolutions_key')) return error
+        throw error
+      })
+
+      if (raced) {
+        const winner = await resolutionFor(idempotencyKey)
+        if (winner) return replayResolution(winner, fingerprint)
+        throw raced
+      }
+
+      return {
+        message: RESOLUTION_MESSAGES[resolution](disposition),
+        data: {
+          resolutionId,
+          resolution,
+          priorOutcome: outcome,
+          attemptReleased: true,
+          encounterId: signed?.encounter_id,
+          prescriptionNumber: signed?.prescription_number ?? undefined,
+          signedAt: signed?.created_at,
+          subjectVisitId: subjectVisitId || undefined,
+          subjectVisitClosed: closedVisit,
+          subjectVisitDisposition: disposition,
+        },
+      }
     }
 
     /*
@@ -2470,16 +3964,18 @@ export async function runCommand(session: SessionView, action: string, payload: 
     }
 
     /*
-     * Slice 3's formulary, package, receiving and stock commands live in
-     * inventory.ts. They are a third of the command surface and they share
-     * almost nothing with the clinical half above; keeping them here would
-     * have made this file the place everybody edits at once, which the brief
-     * names as the hotspot to avoid.
+     * Slice 2's appointment book — types, availability, booking, check-in and
+     * queue priority — lives in appointments.ts, and passes anything it does
+     * not recognise on to inventory.ts, which passes it to counter.ts, which
+     * passes it to images.ts. Each of those is a third of the command surface
+     * sharing almost nothing with the clinical half above; keeping them here
+     * would have made this file the place everybody edits at once, which the
+     * brief names as the hotspot to avoid.
      *
-     * It throws 'Unknown action.' for anything it does not recognise either,
-     * so the contract at this boundary is unchanged.
+     * The end of that chain throws 'Unknown action.' for anything nobody
+     * recognises, so the contract at this boundary is unchanged.
      */
     default:
-      return runInventoryCommand(session, action, payload)
+      return runAppointmentCommand(session, action, payload)
   }
 }

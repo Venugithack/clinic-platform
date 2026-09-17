@@ -98,8 +98,9 @@ Never commit `.env.local` or anything under `archive/local/`.
 - The other core documents at the top of `docs/` cover owner policy, schema and
   types, and implementation constraints. Specialist material is in
   `docs/reference/`; runbooks are in `docs/operations/`.
-- `archive/docs/` and `hospital al in one platform/` are historical references,
-  not current setup or implementation instructions.
+- `archive/docs/` is tracked history. The earlier hospital all-in-one prototype
+  is local-only under `archive/local/hospital-all-in-one-reference/`. Neither is a
+  current setup or implementation source.
 
 ## Deployment
 

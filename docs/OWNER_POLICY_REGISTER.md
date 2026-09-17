@@ -1,7 +1,7 @@
 # Owner policy register
 
 **Jayamurugan Clinic**  
-**Owner-supplied decisions recorded 11 September 2026**
+**Owner-supplied decisions recorded 11–17 September 2026**
 
 This is the authoritative product-policy register for the current programme.
 It supersedes the open-question status in `archive/docs/current-programme/OWNER_DECISIONS.md`, while retaining
@@ -21,9 +21,11 @@ Status meanings:
   is a scope decision and not an open question: the release is complete without
   it, and what a later release would have to settle is written down beside it.
 
-Section K was added on 13 September 2026 for item 64, and the references moved
-from K to L to keep the bibliography last. Nothing else was re-lettered; the
-earlier shift of old H→I, I→J, J→K on 12 September still holds.
+Section K was added on 13 September 2026 for item 64. Section L was added on
+15 September 2026 for items 65–74 and gained item 75 on 16 September 2026.
+Section M was added on 17 September 2026 for items 76–83, and the references
+moved from M to N to keep the bibliography last. Nothing else was re-lettered; the earlier shift of old
+H→I, I→J, J→K on 12 September still holds.
 
 ---
 
@@ -241,7 +243,11 @@ from a bad state is not caution, it is a trap.
 
 ## I. Remaining facts, evidence, and hardware validation
 
-All known owner-policy choices are now answered. The following cannot be
+All owner-policy choices recorded here for the implemented application and
+backend Slice 2 are answered. Backend Slice 3's messaging-policy gate is also
+answered by items 76–83, although that slice has not started. Later backend
+slices retain their own explicit decision gates in
+`reference/BACKEND_PROGRAMME_REGISTER.md`. The following cannot be
 invented by recommendation and remain clinic setup/acceptance tasks:
 
 1. Provide two or three redacted supplier invoices/GRNs so receiving, free
@@ -292,7 +298,9 @@ item 64 in section K.
 - No expired, recalled, quarantined, or blocked batch allocation.
 - No anonymous credit/pay-later.
 - No pharmacy access to clinical images.
-- No automatic WhatsApp delivery.
+- No automatic WhatsApp delivery outside the purposes and controls in items
+  76–83. Until backend Slice 3 is implemented and accepted, no automatic
+  WhatsApp delivery exists at all.
 - No silent edit/delete of signed clinical, stock, payment, receipt, or image
   history.
 - No automatic balancing entry for an over-refunded bill, or for a cancelled
@@ -367,7 +375,141 @@ papered over on a screen.
 
 ---
 
-## L. Policy rationale references
+## L. Appointments and consultation-attempt reconciliation
+
+Items 65–74 were approved on 15 September 2026. Items 65–71 govern the future
+appointment domain. Items 72–74 are one reconciliation policy: a lost response,
+an immutable signed encounter, and a later queue row must never become a second
+consultation or fee through an automatic release or mint.
+
+| # | Question | Approved policy | Status |
+|---:|---|---|---|
+| 65 | How long is an appointment, and may it vary? | The default appointment duration is **15 minutes**. An appointment type may define a different duration, managed by a doctor or admin. A type change does not rewrite the duration already recorded for an existing booking. | Approved |
+| 66 | How far ahead may an appointment be booked or rescheduled? | Up to **90 calendar days** ahead, measured using the clinic's local day. The same horizon applies to booking and rescheduling. | Approved |
+| 67 | Is overbooking permitted? | Overbooking is off by default. A doctor or admin may override a conflict only through an explicit action that records actor, time, and a required reason. A nurse cannot overbook. | Approved |
+| 68 | Who may cancel or reschedule, and when? | There is no minimum notice period initially. Before check-in, nurse, doctor, or admin may cancel or reschedule. After check-in, only doctor or admin may do so, with a required reason. No appointment is silently deleted: the prior state, actor, time, and reason remain in append-only history. | Approved |
+| 69 | What is a no-show, and who marks it? | An appointment becomes eligible for no-show review **30 minutes after its scheduled start**. Nothing marks it automatically. Nurse, doctor, or admin confirms the no-show, and the actor and time are recorded. | Approved |
+| 70 | Where do booked patients and walk-ins sit in the queue? | A future booking does not enter the live queue until check-in. At check-in, booked patients and walk-ins converge into the same arrival/queue workflow and are ordered by actual arrival/check-in time. A doctor may explicitly prioritize an urgent patient, with a required reason and audit event. | Approved |
+| 71 | Who may edit availability? | Doctor and admin may create or edit provider availability. A nurse may book, reschedule, or cancel within published availability but may not change the availability itself. An availability change never silently cancels or moves an existing booking. | Approved |
+| 72 | What happens to a visit left waiting when its consultation was signed before the visit existed? | Never rewrite the signed encounter and never automatically cancel the visit. A doctor resolves it explicitly as **Same attendance** or **New attendance**. Same attendance creates an append-only audited reconciliation link and closes the leftover visit without another encounter or fee. New attendance keeps the visit available for a fresh consultation. Record actor, time, reason, the encounter, and the visit. | Approved |
+| 73 | When may an attempt be released after a non-rotating refusal? | Never release it merely because a refusal was shown, dismissed, or time elapsed. The server first establishes the prior key's outcome. The doctor then explicitly resolves whether the work is the same attendance, a genuinely new attendance, or an abandoned attempt whose opened visit is no longer active. Only that audited resolution, or an already-confirmed successful replay, may release the attempt. If the outcome cannot be established, fail closed. | Approved |
+| 74 | What happens when an unresolved attempt opened on visit A meets a different live visit B? | Do not automatically mint a new attempt. First establish the old key's outcome. If A committed, the doctor chooses **Same attendance**—reconcile and close B without another encounter or fee—or **New attendance**—explicitly settle the old attempt, then mint for B. If A did not commit, the doctor explicitly chooses which active attendance continues; the abandoned path is preserved in audit. If the outcome is unknown, fail closed. Reception creating B is not, by itself, proof of a second consultation. | Approved |
+
+These policies authorize backend commands and contracts in Slice 2. They do not
+authorize a visual redesign in the backend programme. The later frontend
+programme must expose the doctor-owned resolution clearly, without reducing it
+to an automatic retry, a timeout, or a text-message dismissal.
+
+**Implemented 15 September 2026 and corrected 16 September 2026 after an
+acceptance review reproduced six faults**, including a nurse booking at three in
+the morning where item 71 says "within published availability", and a signing
+that wrote an encounter and a fee against the wrong visit where item 74 says the
+doctor chooses. After six bounded correction rounds, the slice was **accepted
+on 17 September 2026**. Backend only —
+`docs/reference/BACKEND_PROGRAMME_REGISTER.md` §12 records what each item
+became and
+`docs/reference/SLICE2_FRONTEND_CONTRACT.md` is the contract for the screens.
+One reading had to be chosen where the text did not decide, and it is recorded
+as a technical default rather than as policy: **a doctor booking outside their
+own published hours is allowed**, through the same recorded override item 67
+defines for a conflict. Item 71 constrains the nurse and is silent about the
+doctor, who owns the hours. The owner may narrow it.
+
+A second reading was chosen and was wrong. The first implementation decided
+that a day with nothing published constrained nobody, so a nurse could book any
+hour of it; item 71 says *within* published availability and admits no
+exception, and the acceptance review reproduced a nurse booking a patient for
+three in the morning. A day with no open window is now a day a nurse cannot
+book, and the clinic is not locked out because a doctor or an admin books it
+with the override above.
+
+Nothing here was promoted to policy that the owner did not decide. In
+particular the 480-minute ceiling on an appointment type is an implementation
+safety bound and **not** part of item 65, which the first implementation
+wrongly cited for it.
+
+**One thing items 72–74 ask for is not yet in front of anybody.** The
+doctor-facing resolution is a screen, and until the frontend programme builds
+it the tablet still starts a fresh reference when a patient is re-queued — so
+the second fee those items exist to prevent is still reachable from the build
+the clinic is running. The backend refuses it; the tablet does not yet ask.
+
+---
+
+### 75. Linking a same attendance to a visit already finished
+
+**Decided 16 September 2026, during the fourth acceptance review of Slice 2.**
+
+> A doctor may retrospectively link `same_attendance` to a same-patient visit
+> already marked done. Record whether the resolution closed it now or found it
+> already done; never claim the resolution performed a closure it did not
+> perform. A cancelled visit remains ineligible until separately corrected.
+> Other open visits remain untouched.
+
+Item 72 was written for the ordinary shape — the leftover queue row is still
+waiting and the determination closes it. The shape this answers is the one a
+busy queue produces: somebody tidies the queue, or the visit is closed by
+another hand, and the doctor comes to reconcile afterwards. Before this, the
+only honest answers were to refuse (leaving item 72's link unrecordable) or to
+accept and record a closure that never happened.
+
+**What it means in the records.** `consultation_attempt_resolutions` carries
+`subject_visit_disposition`, one of:
+
+| Value | Meaning |
+|---|---|
+| `closed_now` | this determination closed the visit it named |
+| `already_done` | the visit was already finished; the link is retrospective and no closure is claimed |
+| `not_applicable` | no visit was named, or this determination does not close visits |
+
+It is a field of its own rather than a second meaning for
+`subject_visit_closed`, because a boolean cannot hold three answers and the
+attempt to make it do so is what produced the false sentence. The boolean is
+kept in step by a check constraint so that anything reading it reads what it
+always meant.
+
+**A cancelled visit stays ineligible.** It was not an attendance, so a
+consultation cannot be the same attendance as it. If the cancellation was the
+mistake, that is its own correction and comes first.
+
+**Nothing else moves.** Other open visits are untouched, no encounter and no
+fee is written, and a visit reconciled as the same attendance never returns to
+the queue — enforced by `appointments_reconciled_visits_stay_closed`, because
+without it the closure could be undone and the attendance consulted and charged
+a second time.
+
+---
+
+## M. Patient messaging, reminders, and clinical recalls
+
+Items 76–83 were approved on 17 September 2026. They close backend decision
+register entries D8–D12c. They authorize Slice 3's backend contracts and
+workers; they do not provision a provider, send a live message, or authorize a
+frontend redesign.
+
+| # | Question | Approved policy | Status |
+|---:|---|---|---|
+| 76 | Which channel is used for patient messaging? | Use **both**, for different jobs. Automated clinic-initiated patient messages use only the official WhatsApp Cloud API. Patient-initiated conversations and a staff-confirmed fallback may start through a `wa.me` deep link or QR code. A deep link never masquerades as an automated delivery, and no unofficial WhatsApp library or QR-paired automation is permitted. If the official channel is unavailable or not approved, suppress the automated send and put the work in a staff queue. | Approved |
+| 77 | When are reminders sent, and what are the quiet hours? | Use the clinic's configured local time. Business-initiated messages may be dispatched from **08:00 inclusive until 20:00 exclusive**. Send at most one appointment reminder, at **18:00 on the previous clinic-local day**; if the booking or reschedule occurs after that point, its confirmation replaces the reminder. Send one clinician-selected follow-up recall at **09:00 on its due date**. Do not send automatic repeat/chase messages. A delivery retry is not a new reminder, may not cross the message's usefulness deadline, and must still obey quiet hours. A patient-initiated conversation may receive its direct service reply inside the provider's permitted conversation window. | Approved |
+| 78 | Is registration consent sufficient? | Consent is **per channel and per purpose**, not a blanket registration flag. At minimum, appointment operations and reminders, clinician follow-up/recall, ready-for-collection notices, and clinic service-interruption notices are separate purposes. Consent evidence records the clinic name, WhatsApp as the channel, purpose, wording/version, source, actor where applicable, and time. A registration choice is valid only for the purposes it names. A patient initiating one conversation permits replies to that conversation; it is not standing consent for unrelated future pushes. | Approved |
+| 79 | Who owns a failed delivery, and when does it escalate? | The admin owns the delivery-failure queue from the first failed attempt. Appointment-contact failures are also visible to nurse/admin; follow-up or recall failures are also visible to the responsible doctor. Retryable failures may make at most **three provider attempts within two hours**, subject to quiet hours and the usefulness deadline. A terminal failure or exhausted retry escalates immediately; any unresolved failure older than **four clinic hours** escalates to the owner-doctor's queue. A manual call or other fallback is recorded explicitly and never inferred from a provider response. | Approved |
+| 80 | What may a recall cohort be, and who releases it? | A recall cohort is a saved, reviewable set of **individual doctor-authored recall instructions** sharing a named purpose and due window. It is never the whole patient register, an ad-hoc search result, a diagnosis/medicine list, or a marketing audience. An admin may prepare and dry-run it, but only an authorized doctor may release it. Release freezes the recipient set and template version; consent, eligibility, completion/cancellation, and opt-out are rechecked for each patient immediately before queueing. | Approved |
+| 81 | Who approves a message template, and what requires a new version? | The owner-doctor or another explicitly authorized doctor approves patient-facing wording, purpose, allowed variables, and link destination. An admin may manage metadata and provider submission but may not approve clinical wording. Any change to wording, purpose, variables, locale, destination, or provider category creates a new immutable version and requires clinic approval plus any provider approval. Queued messages retain their pinned version. Templates are English-only initially, defensibly utility, contain the fact and a controlled link rather than clinical detail, and never include medicine names, diagnoses, or balances. | Approved |
+| 82 | How does a patient opt out? | A patient may opt out in the chat or through a staff-recorded, verified request. A purpose-specific request withdraws only that purpose; an unqualified request such as “stop WhatsApp” withdraws **all clinic-initiated WhatsApp purposes**. Withdrawal suppresses every unsent scheduled/queued message immediately and has no staff override. A later patient-initiated conversation does not silently restore standing consent; re-enrolment requires a new explicit opt-in record. | Approved |
+| 83 | What makes a patient eligible for clinical recall? | Eligibility begins only when a doctor explicitly records **recall/follow-up required**, a purpose, due date, and responsible doctor for that patient. A query result, diagnosis, medicine, missed appointment, unpaid balance, or elapsed time cannot create eligibility. Completing, cancelling, or superseding that instruction removes eligibility before release. Appointment reminders derive from the booking state and are not clinical recall eligibility. | Approved |
+
+These policies preserve the existing boundaries: item 22 still forbids automated
+pay-later/debt reminders, item 28 still forbids automatically sending clinical
+images, and a message carries no clinical record. Every attempted send must be
+a durable row with an idempotency key before provider contact, and delivery
+state comes from authenticated provider evidence rather than a successful HTTP
+response. Provider terms, Meta policy, Indian privacy requirements, credentials,
+templates, and the clinic privacy notice must be revalidated before production
+release; this approval does not waive that release gate.
+
+---
+
+## N. Policy rationale references
 
 - CDSCO, [Drugs Rules, 1945](https://cdsco.gov.in/opencms/resources/UploadCDSCOWeb/2022/drug_rules/Drugs%20Rules%201945_2024%2009.pdf), Rule 65: scheduled prescription dispensing, repeat directions, substitution restrictions, records, expiry segregation, and registered-pharmacist supervision of supply outside the manufacturer's container.
 - Pharmacy Council of India, [FAQ on registered-pharmacist responsibility](https://pci.gov.in/en/faqs/), including dispensing only the medicine prescribed and not substituting the prescription.
