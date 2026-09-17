@@ -45,7 +45,7 @@ import {
 const DOCTOR = { name: 'Dr Kavitha Solo', pin: '3517' }
 const PREFIX = 'jayamurugan_attempt:'
 
-/** The eight patients this file brings with it, one per journey. */
+/** The patients this file brings with it, one per destructive journey. */
 const MINE = [
   { id: 'attempt-p1', name: 'Attempt Unknown', token: 'ATT-0001' },
   { id: 'attempt-p2', name: 'Attempt Confirmed', token: 'ATT-0002' },
@@ -61,6 +61,8 @@ const MINE = [
   // Back to a seeded visit: the last journey is about one being taken away
   // mid-attempt, so there has to be one to take.
   { id: 'attempt-p8', name: 'Attempt Cancelled', token: 'ATT-0008' },
+  { id: 'attempt-p9', name: 'Attempt Returned', token: 'ATT-0009' },
+  { id: 'attempt-p10', name: 'Attempt In Flight', token: 'ATT-0010' },
 ]
 
 /** How many consultations this patient actually has. */
@@ -138,6 +140,21 @@ async function removePatients() {
                 select id from jmc.prescriptions where patient_id = any(${ids}))`
     await sql`delete from jmc.prescriptions where patient_id = any(${ids})`
     await sql`delete from jmc.follow_ups where patient_id = any(${ids})`
+    /*
+     * Reconciliation and its closure event are append-only in the clinic. As
+     * with the financial rows above, these are disposable fixtures removing
+     * only the records they created on the guarded scratch database.
+     */
+    await sql`alter table jmc.appointment_events disable trigger appointment_events_immutable`
+    await sql`alter table jmc.consultation_attempt_resolutions disable trigger consultation_attempt_resolutions_immutable`
+    try {
+      await sql`delete from jmc.appointment_events where arrival_id in (
+                  select id from jmc.appointments where patient_id = any(${ids}))`
+      await sql`delete from jmc.consultation_attempt_resolutions where patient_id = any(${ids})`
+    } finally {
+      await sql`alter table jmc.consultation_attempt_resolutions enable trigger consultation_attempt_resolutions_immutable`
+      await sql`alter table jmc.appointment_events enable trigger appointment_events_immutable`
+    }
     await sql`delete from jmc.encounters where patient_id = any(${ids})`
     await sql`delete from jmc.consultation_drafts where patient_id = any(${ids})`
     await sql`delete from jmc.appointments where patient_id = any(${ids})`
@@ -310,6 +327,99 @@ async function sign() {
   assert.match(signed, /ok/, 'the review sheet must offer a way to sign')
 }
 
+async function countResolutionsFor(patientId) {
+  const sql = scratchDb()
+  try {
+    const rows = await sql`
+      select count(*)::int as n
+        from jmc.consultation_attempt_resolutions
+       where patient_id = ${patientId}`
+    return rows[0].n
+  } finally {
+    await sql.end()
+  }
+}
+
+function dialogButton(label) {
+  const pressed = evaluate(`(() => {
+    const dialog = document.querySelector('[role=dialog]')
+    if (!dialog) return 'no-dialog'
+    const button = [...dialog.querySelectorAll('button')]
+      .find(b => b.innerText.trim().toLowerCase() === ${JSON.stringify(label.toLowerCase())})
+    if (!button) return 'none:' + [...dialog.querySelectorAll('button')].map(b => b.innerText).join('|')
+    if (button.disabled || button.getAttribute('aria-disabled') === 'true') return 'disabled'
+    button.click()
+    return 'ok'
+  })()`)
+  assert.match(pressed, /^"?ok"?$/, `the recovery dialog must offer "${label}": ${pressed}`)
+}
+
+async function closeRecovery() {
+  await waitFor(
+    `document.querySelector('[data-testid=consultation-reconciliation]') !== null`,
+    { what: 'the earlier signing check' },
+  )
+  dialogButton('Keep attempt and close')
+  await waitFor(
+    `document.querySelector('[data-testid=consultation-reconciliation]') === null`,
+    { what: 'the earlier signing check to close' },
+  )
+}
+
+async function refreshRecoveryFor(label) {
+  dialogButton('Look again')
+  await waitFor(
+    `[...document.querySelectorAll('[role=dialog] button')]
+       .some(b => b.innerText.trim().toLowerCase() === ${JSON.stringify(`review ${label.toLowerCase()}`)})`,
+    { what: `${label} to be offered by the recovery read` },
+  )
+}
+
+async function chooseRecovery(label, reason, { swallowReply = false, doublePress = false } = {}) {
+  const confirmation = label === 'Abandon attempt'
+    ? 'Record abandoned attempt'
+    : `Record ${label.toLowerCase()}`
+  await waitFor(
+    `[...document.querySelectorAll('[role=dialog] button')]
+       .some(b => b.innerText.trim().toLowerCase() === ${JSON.stringify(`review ${label.toLowerCase()}`)})`,
+    { what: `${label} to be available` },
+  )
+  dialogButton(`Review ${label.toLowerCase()}`)
+  const explanation = evaluate(`document.querySelector('[role=dialog]')?.innerText ?? ''`)
+  const expectedConsequence = {
+    'Same attendance': /(?:closed|stands unchanged).*nothing is charged again/i,
+    'New attendance': /left open.*fresh consultation/i,
+    'Abandon attempt': /no longer open.*nothing else changes/i,
+  }[label]
+  assert.match(explanation, expectedConsequence,
+    `${label} must explain its clinical and financial consequence before confirmation`)
+  assert.doesNotMatch(explanation, /idempotency/i,
+    'the doctor-facing recovery must not expose implementation terminology')
+  fillField('Reason for this decision', reason)
+  if (swallowReply) swallowTheReply()
+  if (doublePress) {
+    const pressed = evaluate(`(() => {
+      const dialog = document.querySelector('[role=dialog]')
+      const button = dialog && [...dialog.querySelectorAll('button')]
+        .find(b => b.innerText.trim().toLowerCase() === ${JSON.stringify(confirmation.toLowerCase())})
+      if (!button) return 'none'
+      button.click()
+      button.click()
+      return 'ok'
+    })()`)
+    assert.match(pressed, /^"?ok"?$/, 'the guarded recovery control must receive both presses')
+  } else {
+    dialogButton(confirmation)
+  }
+  await waitFor(
+    swallowReply
+      ? `document.body.innerText.indexOf('A decision is already recorded') !== -1`
+      : `document.body.innerText.indexOf('Decision recorded') !== -1`,
+    { what: swallowReply ? 'the durable already-resolved decision' : 'the recovery confirmation', timeout: 20_000 },
+  )
+  if (swallowReply) restoreTheLine()
+}
+
 /** Make every command fail the way a dropped connection does: with no answer. */
 function cutTheLine() {
   evaluate(`(() => {
@@ -451,7 +561,7 @@ async function cancelTheirVisit(who) {
 async function waitForTheVisitToLeaveTheScreen(who) {
   try {
     await waitFor(
-      `document.body.innerText.indexOf(${JSON.stringify(who.token)}) === -1`,
+      `!document.querySelector('[title=${JSON.stringify(who.token)}]')`,
       { what: `${who.token} to leave the screen on the next poll`, timeout: 30_000 },
     )
   } catch (error) {
@@ -468,7 +578,7 @@ async function waitForTheVisitOnScreen(who) {
   // header, which is outside it.
   try {
     await waitFor(
-      `document.body.innerText.indexOf(${JSON.stringify(who.token)}) !== -1`,
+      `!!document.querySelector('[title=${JSON.stringify(who.token)}]')`,
       { what: `${who.token} to reach the screen on the next poll`, timeout: 30_000 },
     )
   } catch (error) {
@@ -790,6 +900,7 @@ describe('a direct consultation that acquires a visit', () => {
     // the tidy thing to do — and presses Finish again.
     const appointmentId = await giveThemAVisit(who)
     await waitForTheVisitOnScreen(who)
+    await closeRecovery()
     await sign()
     await waitFor(`!document.querySelector('[role=dialog]')`, { what: 'the signing to settle' })
 
@@ -803,7 +914,7 @@ describe('a direct consultation that acquires a visit', () => {
     assert.deepEqual(heldAttempts(), [], 'and the attempt is over')
   })
 
-  test('when it HAD committed, the retry is refused and the leftover visit is reported', async () => {
+  test('when it HAD committed, Same attendance closes the leftover visit without another fee', async () => {
     setViewport(LANDSCAPE)
     await freshPage()
     await signIn(DOCTOR.name, DOCTOR.pin)
@@ -826,28 +937,38 @@ describe('a direct consultation that acquires a visit', () => {
 
     const appointmentId = await giveThemAVisit(who)
     await waitForTheVisitOnScreen(who)
-    await sign()
-
-    // The refusal reaches the screen in the clinic's own words.
+    const [held] = heldAttempts()
+    assert.ok(held?.key, 'the original attempt is still held after visit B appears')
+    await open('/')
+    await waitFor(`document.readyState === 'complete'`, { what: 'the lost-response reload' })
+    assert.equal(heldAttempts()[0]?.key, held.key,
+      'the committed attempt remains held across the reload')
+    await openFromRegister(who)
+    await waitForTheVisitOnScreen(who)
     await waitFor(
-      `document.body.innerText.indexOf('already signed') !== -1`,
-      { what: 'the clinic to say the consultation was already signed' },
+      `[...document.querySelectorAll('button')]
+         .some(b => b.innerText.trim() === 'Check earlier signing')`,
+      { what: 'the restored attempt recovery control' },
     )
-    assert.match(
-      evaluate(`document.body.innerText`), /still waiting/,
-      'and to say the visit is still open, which is the half a refusal usually leaves out')
+    clickButton('Check earlier signing')
+
+    // The resolution reaches the clinic and its reply is lost. The client does
+    // not release on the lost response; its follow-up read finds the durable
+    // audited decision and shows the already-resolved state.
+    await chooseRecovery(
+      'Same attendance',
+      'Reception arrived the patient again after the signing reply was lost.',
+      { swallowReply: true },
+    )
 
     const state = await visitStateFor(who.id)
     assert.equal(state.encounters, 1, 'nothing was recorded twice')
     assert.equal(state.charged, '300.00', 'and nothing was charged twice')
-    assert.equal(state.appointmentStatus, 'waiting',
-      'the visit is still there — the clinic reports it rather than deciding it')
+    assert.equal(state.appointmentStatus, 'done',
+      'the duplicate arrival was closed by the audited decision')
     assert.ok(appointmentId)
-
-    // And it is not left to a message nobody re-reads.
-    const obligations = await obligationsFor(who.id)
-    assert.ok(obligations.some((item) => item.kind === 'unlinked_consultation'),
-      'the leftover visit is carried as an obligation on the patient')
+    assert.deepEqual(heldAttempts(), [],
+      'the durable resolution, not the lost response or the new visit, releases the attempt')
   })
 
   test('a retry that crosses midnight replays instead of signing again', async () => {
@@ -885,14 +1006,16 @@ describe('a direct consultation that acquires a visit', () => {
       return 'ok'
     })()`)
 
-    await sign()
-    await waitFor(`!document.querySelector('[role=dialog]')`, { what: 'the retry to settle' })
+    await chooseRecovery(
+      'Same attendance',
+      'The clinic confirms the signed consultation is the attendance already completed.',
+    )
 
     const state = await visitStateFor(who.id)
     assert.equal(state.encounters, 1, 'one consultation, however many midnights it is retried across')
     assert.equal(state.charged, '300.00', 'and one fee')
     assert.deepEqual(heldAttempts(), [],
-      'the replay is a success, so the attempt is over and the next consultation starts fresh')
+      'elapsed time did not release it; the audited recovery did')
   })
 })
 
@@ -913,7 +1036,7 @@ describe('a consultation whose visit is taken away', () => {
    * what the panel still has, and sending it is what turns a silent bypass
    * into a refusal a person can act on.
    */
-  test('a visit cancelled under the attempt is refused, not signed around', async () => {
+  test('a cancelled opened visit can be explicitly abandoned, and nothing is signed around it', async () => {
     setViewport(LANDSCAPE)
     await freshPage()
     await signIn(DOCTOR.name, DOCTOR.pin)
@@ -936,28 +1059,128 @@ describe('a consultation whose visit is taken away', () => {
     // The front desk cancels the visit, and the tablet loses it.
     await cancelTheirVisit(who)
     await waitForTheVisitToLeaveTheScreen(who)
-
-    await sign()
+    dialogButton('Look again')
     await waitFor(
-      `document.body.innerText.indexOf('cancelled') !== -1`,
-      { what: 'the clinic to say the visit was cancelled', timeout: 20_000 },
+      `[...document.querySelectorAll('[role=dialog] button')]
+         .some(b => /review abandon attempt/i.test(b.innerText))`,
+      { what: 'abandonment to become available after cancellation', timeout: 20_000 },
     )
-    assert.match(
-      evaluate(`document.body.innerText`), /nothing was charged/i,
-      'and to say so, because the reflex on reading a refusal is to assume something happened')
+    await chooseRecovery(
+      'Abandon attempt',
+      'The original visit was cancelled and the signing never reached the clinic.',
+    )
 
     const state = await visitStateFor(who.id)
     assert.equal(state.encounters, 0, 'no consultation was written against a cancelled visit')
     assert.equal(state.charged, '0', 'and nobody was charged ₹300 for it')
     assert.equal(state.appointmentStatus, 'cancelled', 'the cancellation stands')
 
-    /*
-     * And the attempt is HELD. `ATTEMPT_VISIT_NO_LONGER_ACTIVE` is not a code
-     * the tablet rotates on: a fresh reference here writes exactly the
-     * unlinked consultation the refusal just prevented. The way forward is a
-     * clinic act — create today's visit, which mints a new attempt through the
-     * ordinary rule — and that is what the next assertion is protecting.
-     */
-    assert.equal(heldAttempts().length, 1, 'a refusal about the visit does not release the attempt')
+    assert.deepEqual(heldAttempts(), [],
+      'only the audited abandonment releases the attempt')
+  })
+})
+
+describe('the doctor records which attendance continues', () => {
+  test('New attendance releases only after the audited decision, then signs the return once', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(DOCTOR.name, DOCTOR.pin)
+    clearHeldAttempts()
+
+    const who = MINE[8]
+    await callInMine(who)
+    writeSheet('Recurrent fever')
+
+    swallowTheReply()
+    await sign()
+    const scope = PREFIX + 'consultation:' + who.id
+    await waitFor(
+      `window.sessionStorage.getItem(${JSON.stringify(scope)}) !== null`,
+      { what: 'the first attendance attempt to remain held' },
+    )
+    restoreTheLine()
+    assert.equal(await countEncountersFor(who.id), 1, 'the first attendance committed once')
+
+    const firstKey = heldAttempts()[0]?.key
+    await giveThemAVisit(who)
+    await waitForTheVisitOnScreen(who)
+    assert.equal(heldAttempts()[0]?.key, firstKey,
+      'visit B did not mint or release anything by appearing')
+
+    await refreshRecoveryFor('New attendance')
+    await chooseRecovery(
+      'New attendance',
+      'The patient left after the first consultation and has now returned with recurrent symptoms.',
+      { doublePress: true },
+    )
+
+    let state = await visitStateFor(who.id)
+    assert.equal(state.encounters, 1, 'the decision itself created no consultation')
+    assert.equal(state.charged, '300.00', 'the decision itself created no fee')
+    assert.equal(state.appointmentStatus, 'waiting', 'the return remains ready to consult')
+    assert.equal(await countResolutionsFor(who.id), 1,
+      'two presses recorded one truthful audited decision')
+    assert.deepEqual(heldAttempts(), [], 'the successful audited decision released the old attempt')
+
+    dialogButton('Close')
+    await waitFor(
+      `document.querySelector('[data-testid=consultation-reconciliation]') === null`,
+      { what: 'the recovery result to close' },
+    )
+    await sign()
+    await waitFor(`!document.querySelector('[role=dialog]')`, { what: 'the return visit to sign', timeout: 20_000 })
+
+    state = await visitStateFor(who.id)
+    assert.equal(state.encounters, 2, 'the genuine return has its own consultation')
+    assert.equal(state.charged, '600.00', 'two genuine attendances have two fees')
+    assert.equal(state.appointmentStatus, 'done')
+    assert.deepEqual(heldAttempts(), [], 'the confirmed return signing also settled its attempt')
+  })
+
+  test('an in-flight signing disables every recovery choice and the signing control', async () => {
+    setViewport(LANDSCAPE)
+    await freshPage()
+    await signIn(DOCTOR.name, DOCTOR.pin)
+    clearHeldAttempts()
+
+    const who = MINE[9]
+    await callInMine(who)
+    writeSheet('Observation pending')
+
+    cutTheLine()
+    await sign()
+    const [held] = heldAttempts()
+    assert.ok(held?.key, 'the guarded read needs a real held attempt')
+    restoreTheLine()
+
+    const blocker = scratchDb()
+    try {
+      await blocker`begin`
+      await blocker`select pg_advisory_xact_lock(913774, hashtext(${held.key}))`
+
+      dialogButton('Look again')
+      await waitFor(
+        `document.body.innerText.indexOf('earlier signing is still in progress') !== -1`,
+        { what: 'the fail-closed in-flight state' },
+      )
+
+      const offered = unwrap(evaluate(`JSON.stringify(
+        [...document.querySelectorAll('[role=dialog] button')]
+          .map(b => b.innerText.trim())
+          .filter(t => /^Review (same|new|abandon)/i.test(t)))`))
+      assert.deepEqual(JSON.parse(offered), [], 'no recovery decision is offered while signing is in flight')
+      assert.match(evaluate(`document.body.innerText`), /Recovery choices stay unavailable/)
+    } finally {
+      await blocker`rollback`.catch(() => {})
+      await blocker.end({ timeout: 5 })
+    }
+
+    dialogButton('Look again')
+    await waitFor(
+      `document.body.innerText.indexOf('Nothing was signed and no fee was created') !== -1`,
+      { what: 'the settled not-committed outcome' },
+    )
+    assert.equal(heldAttempts()[0]?.key, held.key,
+      'neither the in-flight state nor looking again released the attempt')
   })
 })

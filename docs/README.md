@@ -22,9 +22,12 @@ equally current.
 | [`SCHEMA_AND_TYPES.md`](SCHEMA_AND_TYPES.md) | Current database, API, and shared type contract |
 | [`AGENT_IMPLEMENTATION_BRIEF.md`](AGENT_IMPLEMENTATION_BRIEF.md) | Implementation constraints, slice order, safety boundaries, invariants, and definition of done |
 
-Backend programme status: Slices 0–2 are complete and accepted. Messaging
-policies D8–D12c are approved as owner items 76–83, so Slice 3 is ready but has
-not started.
+Backend programme status: Slices 0–2 are complete and accepted. The bounded
+Slice 2 frontend safety cutover is also implemented locally: the consultation
+screen holds one attempt across visit changes and gives doctors the audited
+reconciliation workflow. The full appointment-calendar UI is not implemented.
+Messaging policies D8–D12c are approved as owner items 76–83, so Slice 3 is
+ready but has not started.
 
 ### Read by task
 
@@ -38,7 +41,7 @@ not started.
 | Competitor features, workflows, and market positioning | [`reference/COMPETITIVE_LANDSCAPE_2026.md`](reference/COMPETITIVE_LANDSCAPE_2026.md) |
 | Backend implementation of the competitive and workflow improvements | [`reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md), then the current core documents it requires |
 | What that programme found, what it still has to decide, and in what order | [`reference/BACKEND_PROGRAMME_REGISTER.md`](reference/BACKEND_PROGRAMME_REGISTER.md) — the evidence baseline, work register, decision register and compatibility map |
-| Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The backend exists; the Slice 2 screens do not yet. |
+| Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The bounded consultation safety cutover exists; the full appointment-book/calendar UI does not. |
 | Staging, rollout, or PIN recovery | The applicable runbook in [`operations/`](operations/) |
 | Product rationale from the design sessions | [`reference/PRODUCT_UX_DISCOVERY.md`](reference/PRODUCT_UX_DISCOVERY.md); later core documents take precedence |
 | Why an earlier decision was raised | [`../archive/docs/current-programme/`](../archive/docs/current-programme/) |
@@ -152,6 +155,7 @@ lib/
   api.ts                the ONLY thing that talks to the backend; token handling
   attempt-key.ts        the consultation attempt's browser-storage lifecycle
   consultation-attempt.ts  client handling for attempt refusal and recovery
+  consultation-reconciliation.ts  coded recovery and retry policy
   types.ts              the frontend door to the backend's shared type contract
 public/
   _headers              the four security headers, applied by Cloudflare —
@@ -291,11 +295,11 @@ It is rewritten here against what `npm run` actually does today.
 | Command | What it is |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` over the page. Does **not** see `supabase/` — `tsconfig.json` excludes it. |
-| `npm test` | Thirty-seven unit tests over four files, no database, no network. |
+| `npm test` | Forty unit tests over four files, no database, no network. |
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
 | `npm run test:db` | **758 tests** over twenty-seven files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, and the consultation/visit reconciliation against items 72–75 — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, and two doctors reconciling one attempt. |
-| `npm run test:browser` | **64 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
+| `npm run test:browser` | **66 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
 
@@ -317,6 +321,17 @@ held either, failing before it typechecks a line. Deno is not a dependency here;
 `npm exec --yes -- deno@2.9.6` fetches the pinned version on demand.
 
 ### What is still not covered
+
+**The bounded safety cutover is not the full Slice 2 UI programme.** The current
+consultation screen implements attempt recovery and reconciliation, but the
+appointment calendar and broader appointment-management screens remain unbuilt.
+Slice 3 messaging has not started.
+
+**Retrospective finished-visit linking is not discoverable in this bounded
+screen.** The accepted command can link Same attendance to a visit already
+marked `done`, but the reconciliation read returns only `openVisits`. The screen
+therefore cannot offer a finished visit identifier it was never given. The
+backend contract was not changed in this frontend cutover.
 
 **CI runs two of those and reports a third.** `.github/workflows/ci.yml` has
 `check` (types, unit tests, build, backend types), `database` (migrations,

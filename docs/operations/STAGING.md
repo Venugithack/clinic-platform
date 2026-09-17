@@ -187,7 +187,7 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives sixty-four journeys through Chrome.
+starts the functions and the page, and drives sixty-six journeys through Chrome.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -235,11 +235,11 @@ each of them a thing no database test can see:
   tablet orientation on the widest table this application draws; and the
   review queue offered to a doctor and not to the pharmacy.
 
-Slice 1 of the backend programme added eight more, and they are the only
+The consultation-attempt work now contributes ten journeys, and they are the only
 journeys in the suite that assert on something invisible: the reference a
 consultation is signed under. They read `sessionStorage` directly rather than a
-mock, because the storage is the mechanism, and nothing about layout, wording
-or colour is asserted in any of them.
+mock, because the storage is the mechanism. The recovery journeys also drive
+the real doctor-only screen and assert its durable database result.
 
 Four are about the reference's own life. It is held while the outcome is
 unknown and survives leaving the station and reloading the tablet; it is
@@ -249,18 +249,20 @@ it IS released by a signing that confirms after the doctor has walked away from
 the screen, which is the case a release written inside a render callback
 silently misses.
 
-Four more are about the visit moving under the doctor mid-attempt, and they
+Six more are about the visit moving under the doctor mid-attempt, and they
 exist because those defects are in what the panel SENDS — invisible to a
 storage test and to a database test alike, both of which were green while a
 consultation succeeded and the visit it belonged to sat in the queue attached
 to nothing. A walk-in opened from the register, the reply lost, and the doctor
 then creating today's visit: the second press attaches the consultation to that
-visit and closes it. The same, where the first press HAD committed: refused in
-the clinic's own words, nothing charged twice, and the leftover visit carried
-as an obligation. A retry crossing midnight: a replay, not a second fee. And a
-queued visit **cancelled** under the attempt, where the poll takes it off the
-screen: refused with nothing written and nothing charged, rather than quietly
-becoming a direct consultation against a visit somebody had cancelled.
+visit and closes it. The same, where the first press HAD committed and its reply
+was lost across a reload: **Same attendance** closes the leftover visit with one
+encounter and one ₹300 fee. A retry crossing midnight is a replay, not a second
+fee. A queued visit **cancelled** under the attempt may be explicitly abandoned
+only after the backend offers it. **New attendance** releases only after the
+audited decision, and a double press records one decision before the genuine
+return is signed. Finally, a transaction-held signing proves that both recovery
+and signing stay disabled while the earlier outcome is still in flight.
 
 The blind-count journey is the one worth singling out. Its first version
 passed without proving anything — the start screen and the counting screen

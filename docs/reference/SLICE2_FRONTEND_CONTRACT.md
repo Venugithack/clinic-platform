@@ -3,14 +3,13 @@
 > **Slice 2 was accepted on 17 September 2026** after six bounded acceptance
 > corrections. Their evidence is retained in
 > [`BACKEND_PROGRAMME_REGISTER.md`](BACKEND_PROGRAMME_REGISTER.md) §12.1–§12.7.
-> This is the settled backend contract for the later frontend programme; it does
-> not mean the screens described here have been built or deployed.
+> The bounded consultation-attempt frontend safety cutover was implemented
+> locally on 17 September 2026. It has not been deployed. The appointment-book
+> and full calendar screens described here remain unbuilt.
 
-What the backend now answers, for the later frontend programme. Nothing in this
-document is implemented on a screen: Slice 2 is backend-first, and the
-doctor-facing reconciliation control is explicitly the frontend programme's
-work. What is here is every field, state, refusal and recovery that control
-will need.
+This remains the settled backend contract. Its reconciliation read and command
+are now used by the existing doctor consultation screen; the appointment and
+calendar material remains the contract for later frontend work.
 
 Companion to [`SLICE1_FRONTEND_CONTRACT.md`](SLICE1_FRONTEND_CONTRACT.md),
 which this extends rather than replaces. Where the two disagree about
@@ -45,8 +44,8 @@ same compatibility with a caller that sends no key at all.
 | The key names a different **patient or doctor** | `ATTEMPT_NAMES_ANOTHER_CONSULTATION` | unchanged |
 | The key names a different **visit**, both real | `ATTEMPT_NAMES_ANOTHER_CONSULTATION` | **`ATTEMPT_NEEDS_RECONCILIATION`** |
 
-**Why.** The client ROTATES on `ATTEMPT_NAMES_ANOTHER_CONSULTATION` — the
-server's own message promises it will. That is right when the key belongs to
+**Why.** The Slice 1 client rotated on `ATTEMPT_NAMES_ANOTHER_CONSULTATION` —
+the server's own message promised it would. That is right when the key belongs to
 somebody else's consultation, because then it provably is not a retry of this
 one. It is wrong for a different visit, because two real visits for one patient
 on one day is exactly what this looks like:
@@ -87,47 +86,31 @@ There is also a **new** refusal on a key a doctor has already settled:
 | `ATTEMPT_SETTLED_BY_RECONCILIATION` | A doctor recorded **New attendance** or an abandoned attempt for this reference, and nothing was written under it. **Rotate.** This is the one audited release owner item 73 permits — "Only that audited resolution, or an already-confirmed successful replay, may release the attempt" — and `lib/consultation-attempt.ts` already does it. |
 | `ATTEMPT_RECONCILED_AS_SAME_ATTENDANCE` | A doctor recorded **this** visit — or, where none is named, the consultation itself — as the same attendance. **Do not rotate.** Open the patient's record. A visit the determination did NOT name gets `ATTEMPT_SETTLED_BY_RECONCILIATION` instead, which does rotate. |
 
-### 1.1 The cutover this slice does not perform, and what it costs until then
+### 1.1 The bounded frontend safety cutover
 
-The deployed client behaves two different ways here, and an earlier version of
-this section described only one of them. The independent acceptance review
-found the other.
+At backend acceptance, one client path still minted a fresh reference when a
+different live visit appeared; another held the reference but had no recovery
+control. The historical evidence remains in `BACKEND_PROGRAMME_REGISTER.md`.
 
-**When the attempt already holds a visit**, `lib/attempt-key.ts`'s
-`beginAttempt` **mints** a fresh reference the moment a different visit goes
-live. So the tablet never sends the old key with the new visit, never meets
-`ATTEMPT_NEEDS_RECONCILIATION`, and writes the second encounter and the second
-fee that refusal exists to stop. Pinned by `tests/attempt-key.test.ts` — *"a
-patient re-queued after a lost reply looks exactly like a second arrival"* —
-which says so in the test name.
+The 17 September 2026 cutover landed the two required changes together:
 
-**When the attempt holds no visit**, it never mints at all:
-`supersededByANewArrival` requires a stored visit, and an attempt opened from
-the register stores `null` for its whole life. That path DOES reach the new
-refusal:
+1. `beginAttempt` never mints merely because the live visit changed. The attempt
+   retains its original `openedVisitId` while the screen sends the current
+   `appointmentId` separately.
+2. The doctor screen reads §3 and calls §2. It permits a retry only when the read
+   proves nothing committed and the visit identities are compatible; otherwise
+   it offers only the backend-approved Same attendance, New attendance, or
+   abandoned-attempt choices.
 
-> A walk-in is opened from the register with no visit row. Press one does not
-> commit. Somebody creates today's visit A (policy item 3 allows it). Press two
-> signs against A — and the reply is lost. A goes `done` and drops out of the
-> poll; reception arrives the patient again as visit B. Press three reuses the
-> same reference and names B.
+Signing and reconciliation remain fail-closed in flight and when the earlier
+outcome is unknown. Dismissal, elapsed time, reload, unmount, or a lost response
+does not release the attempt. A confirmed response may release it when the
+contract says so; after a lost reconciliation response, a durable resolved read
+may prove the audited outcome and release it. Nurses, pharmacy users, and
+administrators without the doctor role cannot see or invoke these controls.
 
-The server answers `ATTEMPT_NEEDS_RECONCILIATION`, the client holds the
-reference, there is no resolution control, and **Next patient** is not rendered
-because nothing was confirmed. The doctor cannot sign. That is strictly safer
-than what the same path did before this slice — it rotated, and wrote a second
-₹300 fee — but it trades a silent double charge for a hard stop, and it is
-narrow rather than impossible.
-
-Closing both is two frontend changes, and they must land **together**:
-
-1. `beginAttempt` stops minting on a visit change, so the attempt is held and
-   the server can refuse.
-2. A control that reads §3 and calls §2, so the doctor has an exit. Without it,
-   step 1 widens the hard stop above to every re-queued patient, which is a
-   clinical blocker and worse than the fault it fixes.
-
-Doing step 1 alone is the one sequence this contract asks you not to take.
+This was a safety integration into the existing consultation UI. It did not
+build the full appointment calendar and did not start Slice 3 messaging.
 
 ## 2. Resolving an attempt: the command
 
@@ -875,6 +858,12 @@ Codes arrive as `{ ok: false, message, code }`. Never branch on message text.
 
 ## 10. What this contract does not answer
 
+- **The bounded reconciliation screen cannot discover a finished visit for a
+  retrospective link.** The command accepts Same attendance naming a
+  same-patient visit already marked `done`, but §3 returns only `openVisits`.
+  The frontend therefore has no permitted finished-visit id to offer. This is
+  recorded as a remaining contract/UI limitation; the safety cutover did not
+  change the accepted backend contract.
 - **No reminder is sent, scheduled, or queued.** `jmc.appointment_events` is
   the durable hook a later scheduler reads, and it carries every transition
   with its actor, reason and time. Owner-policy items 76–83 now answer the

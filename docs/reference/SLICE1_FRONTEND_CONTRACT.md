@@ -1,5 +1,10 @@
 # Slice 1 frontend contract
 
+> Historical contract note: this records the Slice 1 handoff as it stood on
+> 14 September 2026. The later Slice 2 contract supersedes its visit-change
+> rotation rule, and the bounded frontend safety cutover was implemented locally
+> on 17 September 2026. The historical rules below are retained as evidence.
+
 What the backend now answers, for the later frontend programme. Nothing in this
 document is on a screen yet, and nothing here authorizes putting it on one: the
 backend programme

@@ -400,6 +400,13 @@ authorize a visual redesign in the backend programme. The later frontend
 programme must expose the doctor-owned resolution clearly, without reducing it
 to an automatic retry, a timeout, or a text-message dismissal.
 
+Implementation status, 17 September 2026: the bounded consultation safety
+cutover now exposes that doctor-owned resolution in the existing workspace. It
+holds the original attempt across visit changes and releases it only after the
+backend-confirmed or durably audited outcomes permitted above. This records
+implementation status only; it changes no policy and does not mark the wider
+appointment UI or frontend programme complete.
+
 **Implemented 15 September 2026 and corrected 16 September 2026 after an
 acceptance review reproduced six faults**, including a nurse booking at three in
 the morning where item 71 says "within published availability", and a signing

@@ -180,6 +180,10 @@ check-in works.
 
 ### Slice 2: doctor and nurse workspaces
 
+Current status, 17 September 2026: the bounded consultation-attempt safety
+cutover is implemented in the existing doctor workspace. It is not the full
+appointment-calendar UI, and Slice 3 messaging has not started.
+
 - Use English only for the first release: interface copy, autocomplete,
   templates, clinical phrases, and printed prescriptions. Do not build Tamil,
   bilingual selection, or print-time machine translation in this slice.

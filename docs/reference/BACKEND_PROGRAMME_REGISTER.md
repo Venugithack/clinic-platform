@@ -1,5 +1,11 @@
 # Backend programme register
 
+> Historical register note, 17 September 2026: statements below that the client
+> still rotates on a visit change or lacks reconciliation describe the state at
+> backend Slice 2 acceptance. The later bounded frontend safety cutover is now
+> implemented locally; see `SLICE2_FRONTEND_CONTRACT.md` §1.1. This register's
+> acceptance chronology is intentionally not rewritten.
+
 The evidence baseline, work register, decision register, contract sequence and
 compatibility map produced by **Slice 0** of
 [`CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md).

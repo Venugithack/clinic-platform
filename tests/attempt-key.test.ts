@@ -50,6 +50,9 @@ const {
   abandonConsultationAttempt, consultationScope, openConsultationAttempt,
   settleConsultationAttempt,
 } = await import('../lib/consultation-attempt.ts')
+const {
+  mayRetrySigning, reconciliationRefusalAction, signingRefusalAction,
+} = await import('../lib/consultation-reconciliation.ts')
 
 const PATIENT = 'patient-1'
 const SCOPE = `consultation:${PATIENT}`
@@ -207,34 +210,30 @@ describe('a visit row appearing is not a second consultation', () => {
     assert.equal(openConsultationAttempt(PATIENT, 'visit-1').key, first.key)
   })
 
-  /**
-   * And the case that must still mint: a genuinely new arrival while the
-   * previous attempt is unresolved. Both ids present and different is the only
-   * shape that is authoritative evidence of a second consultation.
-   */
-  test('a different visit while the previous attempt is unresolved does mint', () => {
+  test('a different live visit cannot rotate an unresolved attempt', () => {
     const first = openConsultationAttempt(PATIENT, 'visit-1')
     settleConsultationAttempt(PATIENT, { status: 'unknown' })
     const second = openConsultationAttempt(PATIENT, 'visit-2')
 
-    assert.notEqual(second.key, first.key)
-    assert.equal(second.visitId, 'visit-2')
+    assert.equal(second.key, first.key,
+      'reception creating another visit is not proof of another attendance')
+    assert.equal(second.visitId, 'visit-1',
+      'the opened visit stays immutable while the live visit travels separately')
   })
 })
 
-describe('a later visit is never the same consultation', () => {
+describe('a later visit needs an audited decision', () => {
   beforeEach(() => { freshTab() })
 
-  test('a different visit for the same patient mints a new attempt', () => {
+  test('a different visit for the same patient keeps the unresolved attempt', () => {
     const monday = openConsultationAttempt(PATIENT, 'visit-1')
     settleConsultationAttempt(PATIENT, { status: 'unknown' })
 
-    // The patient is back, and this time there is a live visit row that is not
-    // the one the attempt was opened against. That is authoritative.
+    // This can be a genuine return or a duplicate arrival after a lost reply.
+    // The queue row does not decide between them.
     const thursday = openConsultationAttempt(PATIENT, 'visit-2')
-    assert.notEqual(thursday.key, monday.key,
-      'an unresolved attempt on one visit must never be spent on the next')
-    assert.equal(thursday.visitId, 'visit-2')
+    assert.equal(thursday.key, monday.key)
+    assert.equal(thursday.visitId, 'visit-1')
   })
 
   /**
@@ -341,7 +340,7 @@ describe('letting go, and refusing to', () => {
    * consultation is a further VISIT, and creating one mints a new attempt
    * through the ordinary rule.
    */
-  test('a signed visit that cannot be edited keeps its reference, and a new visit gets a new one', () => {
+  test('a signed visit and a later visit stay held until an audited resolution', () => {
     const first = openConsultationAttempt(PATIENT, 'visit-1')
     const released = settleConsultationAttempt(PATIENT, {
       status: 'refused', code: 'CONSULTATION_ALREADY_SIGNED',
@@ -350,10 +349,13 @@ describe('letting go, and refusing to', () => {
     assert.equal(released, false, 'a signed visit is not re-signed under a new name')
     assert.equal(openConsultationAttempt(PATIENT, 'visit-1').key, first.key)
 
-    // The recovery, and it is an ordinary clinic action: the patient is seen
-    // again, which means a visit row, which is a different consultation.
+    assert.equal(openConsultationAttempt(PATIENT, 'visit-2').key, first.key,
+      'the doctor, not the appearance of a queue row, decides whether this is new')
+    assert.equal(settleConsultationAttempt(PATIENT, {
+      status: 'refused', code: 'ATTEMPT_SETTLED_BY_RECONCILIATION',
+    }), true)
     assert.notEqual(openConsultationAttempt(PATIENT, 'visit-2').key, first.key,
-      'a second visit is never blocked by the first visit’s reference')
+      'the audited New attendance resolution permits the fresh attempt')
   })
 
   /**
@@ -367,7 +369,7 @@ describe('letting go, and refusing to', () => {
    * created, which is a different visit id, which mints through the ordinary
    * rule.
    */
-  test('a visit cancelled under the attempt keeps its reference, and a new visit gets a new one', () => {
+  test('a cancelled opened visit keeps its reference until abandonment is audited', () => {
     const first = openConsultationAttempt(PATIENT, 'visit-1')
     const released = settleConsultationAttempt(PATIENT, {
       status: 'refused', code: 'ATTEMPT_VISIT_NO_LONGER_ACTIVE',
@@ -379,8 +381,12 @@ describe('letting go, and refusing to', () => {
     // now has nothing live — and that is not a reason to start again.
     assert.equal(openConsultationAttempt(PATIENT, null).key, first.key)
 
-    assert.notEqual(openConsultationAttempt(PATIENT, 'visit-2').key, first.key,
-      'a visit created to replace the cancelled one is a second arrival, and mints')
+    assert.equal(openConsultationAttempt(PATIENT, 'visit-2').key, first.key,
+      'a replacement visit does not silently discard the cancelled visit’s attempt')
+    assert.equal(settleConsultationAttempt(PATIENT, {
+      status: 'refused', code: 'ATTEMPT_SETTLED_BY_RECONCILIATION',
+    }), true)
+    assert.notEqual(openConsultationAttempt(PATIENT, 'visit-2').key, first.key)
   })
 
   /**
@@ -411,48 +417,8 @@ describe('letting go, and refusing to', () => {
     assert.equal(openConsultationAttempt(PATIENT, 'visit-1').key, first.key)
   })
 
-  /**
-   * ── A ROAD TO A SECOND FEE THAT THIS SLICE DOES NOT CLOSE ────────────────
-   *
-   * Characterization, not a specification. It records what the mint rule does
-   * today and what that costs, because the independent review of the third
-   * acceptance correction found it and the fix is an owner decision.
-   *
-   * The rule is *the attempt holds visit A and a different visit B is live*,
-   * and it is meant to read "the patient arrived again". It cannot tell that
-   * apart from the sequence below, which is ordinary:
-   *
-   *   a signing on queued visit A commits; the reply is lost; the screen says
-   *   Outcome not confirmed; A is now `done`, so the snapshot drops it and the
-   *   queue row disappears; reception arrives the patient again as visit B,
-   *   because they are still standing there; the doctor presses Finish on the
-   *   unchanged sheet.
-   *
-   * A fresh key is minted, the server has never seen it, and it signs against
-   * B. Two encounters, two ₹300 fees, one attendance — W1's harm reached by
-   * minting rather than by rotating, and invisible to the server, because two
-   * keys against two genuine visits is exactly what a patient seen twice in
-   * one day looks like.
-   *
-   * Every fix was a policy choice, and owner item 74 has since made it: do not
-   * mint automatically, establish the old reference's outcome first, and let a
-   * doctor say which it was. Slice 2 built that —
-   * `resolve_consultation_attempt`, and the server-side refusal
-   * `ATTEMPT_NEEDS_RECONCILIATION` that a non-minting client would meet.
-   *
-   * **On THIS path the client still mints, so it still never meets that
-   * refusal**, and the second fee is still reachable from the build on the
-   * clinic's tablets. On the path where the attempt holds no visit it does
-   * meet it, holds the reference, and has nowhere to go — the test below
-   * walks that one. The cutover is two changes in the frontend programme: stop
-   * minting here, and put the resolution in front of the doctor. Until then
-   * these two tests are what say so out loud.
-   *
-   * **Do not make this test pass by changing the rule** — change it as part
-   * of the cutover, together with the control, or the doctor is left holding a
-   * reference with no exit.
-   */
-  test('a patient re-queued after a lost reply looks exactly like a second arrival', () => {
+  /** A later visit is evidence to inspect, never permission to mint. */
+  test('a patient re-queued after a lost reply stays on the earlier attempt', () => {
     const first = openConsultationAttempt(PATIENT, 'visit-1')
 
     // The signing committed and the reply never arrived, so the attempt is
@@ -463,30 +429,13 @@ describe('letting go, and refusing to', () => {
     // the same patient, who never left, as visit-2.
     const second = openConsultationAttempt(PATIENT, 'visit-2')
 
-    assert.notEqual(second.key, first.key,
-      'the tablet mints, because a different live visit is the one thing that mints — ' +
-      'and the next press writes a second encounter and a second fee for one attendance')
-    assert.equal(second.visitId, 'visit-2')
+    assert.equal(second.key, first.key,
+      'the second queue row must reach reconciliation instead of creating a second fee')
+    assert.equal(second.visitId, 'visit-1')
   })
 
-  /**
-   * And the path the mint rule does NOT cover, which is the one the
-   * independent acceptance review found.
-   *
-   * `supersededByANewArrival` requires a STORED visit, and an attempt opened
-   * from the register stores `null` for its whole life — `beginAttempt` writes
-   * the record only at mint time. So an attempt that began with no visit never
-   * mints, however many visits appear afterwards, and it is the one shape of
-   * attempt that reaches `ATTEMPT_NEEDS_RECONCILIATION` on the deployed build.
-   *
-   * The register, the frontend contract and this file's own comments all said
-   * that refusal was unreachable. It is unreachable from the other path, and
-   * "unreachable" and "unreachable from one of two paths" are not the same
-   * claim. **Do not make this test pass by changing the rule** — change it as
-   * part of the cutover, with the control, or the doctor is left holding a
-   * reference with no exit at all.
-   */
-  test('an attempt that began without a visit never mints, whatever arrives later', () => {
+  /** A direct walk-in keeps the null opened identity while live visits change. */
+  test('an attempt that began without a visit stays held, whatever arrives later', () => {
     // Opened from the register: no visit on screen.
     const first = openConsultationAttempt(PATIENT, null)
     assert.equal(first.visitId, null)
@@ -502,11 +451,10 @@ describe('letting go, and refusing to', () => {
     // out of the poll; reception arrives the patient again as visit-2.
     const third = openConsultationAttempt(PATIENT, 'visit-2')
     assert.equal(third.key, first.key,
-      'no mint, because the attempt never stored a visit to be superseded')
+      'a live visit changing never rotates a held attempt')
 
-    // Which is what the server answers with ATTEMPT_NEEDS_RECONCILIATION, and
-    // the client correctly refuses to rotate on it. Correct, and a dead end
-    // until the resolution control exists.
+    // The reconciliation screen can now inspect and resolve this refusal; the
+    // attempt itself remains held until that audited outcome.
     assert.equal(
       settleConsultationAttempt(PATIENT, {
         status: 'refused', code: 'ATTEMPT_NEEDS_RECONCILIATION',
@@ -547,5 +495,50 @@ describe('when the tablet cannot remember', () => {
     const attempt = openConsultationAttempt(PATIENT, 'visit-1')
     assert.notEqual(attempt.key, 'a-bare-key-from-an-older-build')
     assert.equal(attempt.visitId, 'visit-1')
+  })
+})
+
+describe('the frontend recovery branch table', () => {
+  test('only the two backend-proven stale-reference codes release on signing', () => {
+    assert.equal(signingRefusalAction('ATTEMPT_NAMES_ANOTHER_CONSULTATION'), 'release')
+    assert.equal(signingRefusalAction('ATTEMPT_SETTLED_BY_RECONCILIATION'), 'release')
+
+    for (const code of [
+      'ATTEMPT_NEEDS_RECONCILIATION',
+      'CONSULTATION_ALREADY_SIGNED',
+      'CONSULTATION_SIGNED_WITHOUT_THIS_VISIT',
+      'ATTEMPT_VISIT_NO_LONGER_ACTIVE',
+      'ATTEMPT_RECONCILED_AS_SAME_ATTENDANCE',
+      'VISIT_RECONCILED_AND_CLOSED',
+    ]) {
+      assert.equal(signingRefusalAction(code), 'inspect', `${code} must hold and inspect`)
+    }
+    assert.equal(signingRefusalAction('SOME_ORDINARY_REFUSAL'), 'retry')
+  })
+
+  test('every reconciliation refusal has an explicit safe next state', () => {
+    for (const code of ['SUBJECT_VISIT_REQUIRED', 'SUBJECT_VISIT_NOT_OPEN', 'VISIT_NOT_THIS_PATIENTS']) {
+      assert.equal(reconciliationRefusalAction(code), 'choose_visit')
+    }
+    assert.equal(reconciliationRefusalAction('SUBJECT_VISIT_ALREADY_CONSULTED'), 'show_duplicate')
+    for (const code of [
+      'ATTEMPT_OUTCOME_NOT_ESTABLISHED',
+      'RECONCILIATION_ALREADY_RESOLVED',
+      'VISIT_RECONCILED_AND_CLOSED',
+      'ATTEMPT_NOT_COMMITTED',
+      'ATTEMPT_ALREADY_COMMITTED',
+      'ATTEMPT_VISIT_STILL_ACTIVE',
+    ]) {
+      assert.equal(reconciliationRefusalAction(code), 'look_again')
+    }
+    assert.equal(reconciliationRefusalAction('UNRECOGNISED'), 'hold')
+  })
+
+  test('a held signing retries only after a read proves nothing committed and the visit is compatible', () => {
+    assert.equal(mayRetrySigning('unknown', 'visit-a', 'visit-a'), false)
+    assert.equal(mayRetrySigning('committed', 'visit-a', 'visit-a'), false)
+    assert.equal(mayRetrySigning('not_committed', 'visit-a', 'visit-a'), true)
+    assert.equal(mayRetrySigning('not_committed', 'visit-a', 'visit-b'), false)
+    assert.equal(mayRetrySigning('not_committed', null, 'visit-b'), true)
   })
 })

@@ -36,20 +36,18 @@
  *
  * ── WHY AN ATTEMPT IS A RECORD AND NOT A STRING ────────────────────────────
  *
- * The first version of this stored a bare key under `consultation:<patient>`,
- * and that scope is too wide by exactly one thing: a patient attends more than
- * once. A key held open by an unconfirmed attempt on Monday's visit was still
- * sitting there on Thursday, and Thursday's consultation reused it — so an
- * identical sheet replayed Monday's encounter and a different one was refused
- * with no way back. Two visits are not one consultation and must never share
- * an attempt.
+ * The first version of this stored a bare key under `consultation:<patient>`.
+ * The record now also remembers which visit the attempt began under, but that
+ * visit is evidence for reconciliation rather than permission to mint. A new
+ * live visit can be the patient's next attendance, or it can be a duplicate
+ * arrival created after a signing response was lost. Only a doctor can decide
+ * which, through the audited Slice 2 reconciliation command.
  *
  * So an attempt carries the facts that say WHICH consultation it belongs to:
  * the visit it was opened against, and the clinic day it was minted on. The
  * key and BOTH visits travel to the clinic — the live one as `appointmentId`,
- * the stored one as `openedVisitId` — but only the stored one decides whether
- * a later, different arrival means the attempt is finished with. See
- * `beginAttempt` for the rule that reads them.
+ * the stored one as `openedVisitId`. Neither a changed visit nor elapsed time
+ * releases it; a confirmed signing or an audited resolution does.
  */
 
 const PREFIX = 'jayamurugan_attempt:'
@@ -79,10 +77,9 @@ function writeRaw(scope: string, value: string): void {
  * One attempt at one consultation.
  *
  * `visitId` is the appointment the consultation was opened against, or null
- * for a patient seen without one. It is captured once, it decides ONE thing —
- * whether a different visit appearing later means a second arrival — and it is
- * sent to the clinic as `openedVisitId` beside the live visit, never instead
- * of it. Sending it alone let a consultation succeed while the visit it
+ * for a patient seen without one. It is captured once and sent to the clinic
+ * as `openedVisitId` beside the live visit, never instead of it. Sending it
+ * alone let a consultation succeed while the visit it
  * belonged to stayed `waiting` and unlinked; sending only the live visit let a
  * cancelled one be signed around.
  *
@@ -128,13 +125,13 @@ export function clinicDay(now: Date = new Date()): string {
  *
  * ── THE RULE, AND WHY EACH BRANCH OF IT ────────────────────────────────────
  *
- * An attempt is REUSED when the retry might be the same consultation, and
- * MINTED when it provably is not. Getting that the wrong way round costs
- * something in both directions, and the two costs are not symmetrical: minting
- * when it should have reused writes a second encounter and charges the patient
- * twice, while reusing when it should have minted refuses a signature and says
- * why. So where the evidence is genuinely ambiguous this reuses, and the
- * server refuses out loud rather than either of them guessing.
+ * An unresolved attempt is always REUSED. It is MINTED only when there is no
+ * stored attempt because the previous one was confirmed or released by an
+ * audited resolution. Getting that wrong costs something in both directions,
+ * and the two costs are not symmetrical: minting when it should have reused
+ * writes a second encounter and charges the patient twice, while reusing when
+ * the patient genuinely returned produces a refusal and asks a doctor to say
+ * so. The latter is the deliberate safe failure.
  *
  * - **A different clinic day is NOT a different consultation.** Elapsed time
  *   says nothing about what committed. The day used to mint, and a reply lost
@@ -143,10 +140,11 @@ export function clinicDay(now: Date = new Date()): string {
  *   midnight and reconciled against what the clinic actually recorded: the
  *   same sheet replays, a different one is refused, and starting a genuinely
  *   new consultation is an explicit act rather than a date change.
- * - **One visit then and a DIFFERENT visit now** is a different consultation.
- *   Both have to be present for that to follow: a patient who was arrived
- *   again, under a new token, while the previous attempt was still unresolved.
- *   That is an explicit second arrival and it is authoritative.
+ * - **One visit then and a DIFFERENT visit now is ambiguous.** Reception may
+ *   have arrived the patient again after a lost response even though they
+ *   never left. Reuse the attempt so the server can refuse with
+ *   `ATTEMPT_NEEDS_RECONCILIATION`; the doctor then records Same attendance or
+ *   New attendance. A queue row by itself is not proof of a second attendance.
  * - **No visit now, and a visit then** is the retry this whole mechanism
  *   exists for. Signing sets the appointment to `done` and the fifteen-second
  *   poll removes it from the snapshot, so the tablet correctly has nothing to
@@ -172,10 +170,9 @@ export function clinicDay(now: Date = new Date()): string {
  * and nothing downstream can catch it — the fee's source key is derived from
  * the new encounter, so it is unique by construction. Reusing when it should
  * have minted sends a key the server can check against what that key actually
- * signed: if it belongs to another consultation the server says so with
- * `ATTEMPT_NAMES_ANOTHER_CONSULTATION`, and the tablet lets the attempt go and
- * signs on the next press (`lib/consultation-attempt.ts`). One extra round
- * trip against a duplicate bill is not a close call.
+ * signed: a different live visit for this patient is answered with
+ * `ATTEMPT_NEEDS_RECONCILIATION`, and the tablet offers the audited choice.
+ * One explicit decision against a duplicate bill is not a close call.
  */
 export function beginAttempt(
   scope: string,
@@ -184,11 +181,6 @@ export function beginAttempt(
   const day = context.day ?? clinicDay()
   const liveVisit = context.visitId ?? null
   const stored = parse(readRaw(scope))
-
-  const supersededByANewArrival = stored !== null
-    && stored.visitId !== null
-    && liveVisit !== null
-    && stored.visitId !== liveVisit
 
   /*
    * The clinic day is recorded and is NOT a reason to mint.
@@ -207,9 +199,7 @@ export function beginAttempt(
    * when an attempt was opened, and because the reconciliation message says
    * so — but nothing branches on it.
    */
-  const stale = !stored || supersededByANewArrival
-
-  if (!stale) return stored as Attempt
+  if (stored) return stored
 
   const minted: Attempt = { key: crypto.randomUUID(), visitId: liveVisit, day }
   writeRaw(scope, JSON.stringify(minted))

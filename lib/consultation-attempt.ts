@@ -17,8 +17,8 @@
  * ── THE FOUR RULES ─────────────────────────────────────────────────────────
  *
  * 1. One attempt per consultation, named by the patient. It remembers the visit
- *    it was opened against, and that memory decides one thing only — see
- *    rule 4 (`lib/attempt-key.ts`).
+ *    it was opened against until a confirmed signing or audited resolution ends
+ *    it (`lib/attempt-key.ts`).
  * 2. The attempt survives a refusal, a lost reply and an outcome nobody knows.
  *    Those are the three moments somebody presses the button again.
  * 3. The attempt ends when the clinic CONFIRMS the signing, and at no other
@@ -26,8 +26,8 @@
  *    a timer.
  * 4. BOTH visits go to the clinic, in their own fields: the visit on screen as
  *    `appointmentId`, the attempt's own remembered one as `openedVisitId`.
- *    Only the remembered one decides minting — whether a LATER, different
- *    arrival means this attempt is finished with.
+ *    A later, different arrival never decides that this attempt is finished;
+ *    the doctor-only reconciliation flow establishes that first.
  *
  *    Each was once the only one sent, and each omission had its own fault.
  *    Sending only the remembered value: for a walk-in it is `null` forever, so
@@ -37,7 +37,7 @@
  *    looked like a direct consultation and the clinic wrote one — bypassing
  *    the cancellation and charging ₹300 against no visit at all.
  */
-import { beginAttempt, clearAttempt, type Attempt } from './attempt-key.ts'
+import { beginAttempt, clearAttempt, currentAttempt, type Attempt } from './attempt-key.ts'
 
 /** The scope one patient's consultation attempt is stored under. */
 export function consultationScope(patientId: string): string {
@@ -100,63 +100,18 @@ export type SigningResult =
  *   clinic must not decide between them: "Reception creating B is not, by
  *   itself, proof of a second consultation."
  *
- * ── WHAT SLICE 2 ADDED, AND WHAT THIS CLIENT STILL DOES NOT DO ─────────────
+ * ── SLICE 2 FRONTEND SAFETY CUTOVER ────────────────────────────────────────
  *
- * The backend now has the exit all of these were missing:
- * `resolve_consultation_attempt`, where a doctor records **Same attendance**,
- * **New attendance**, or an abandoned attempt, and the reply carries
- * `attemptReleased`. The read behind the control is
- * `workspace?view=reconciliation`.
+ * The backend exit is `resolve_consultation_attempt`, where a doctor records
+ * **Same attendance**, **New attendance**, or an abandoned attempt, and the
+ * read behind the control is `workspace?view=reconciliation`.
  *
- * This client calls neither, and that is the frontend programme's work rather
- * than an omission here — the backend programme is explicit that the
- * doctor-facing control is not built in a backend slice.
- *
- * Two consequences are worth naming rather than leaving to be found.
- *
- * `beginAttempt` still MINTS a fresh reference when an attempt that ALREADY
- * HOLDS a visit meets a different live one, so on that path the duplicate
- * charge `ATTEMPT_NEEDS_RECONCILIATION` exists to stop is still reachable from
- * this build.
- *
- * And on the path where the attempt holds NO visit, it never mints at all —
- * `supersededByANewArrival` requires a stored visit — so that one DOES reach
- * the new refusal, holds the reference, and has nowhere to go. A walk-in
- * opened from the register whose first press did not commit, signed against a
- * visit created afterwards, whose reply was then lost, met by a second
- * arrival. The independent review found it; an earlier version of this comment
- * said the refusal was unreachable, which was true of one path and not of the
- * other.
- *
- * Both close in the same cutover: stop minting on a visit change, and offer
- * the resolution instead. See `docs/reference/SLICE2_FRONTEND_CONTRACT.md`
- * §1.1, which names the sequence.
- *
- * ── AND THAT LEAVES THE TABLET SOMEWHERE IT CANNOT GET OUT OF ──────────────
- *
- * Holding is right and it is not sufficient, and the way out is different for
- * each of them:
- *
- * - `CONSULTATION_ALREADY_SIGNED` ends when the sheet is re-sent EXACTLY as it
- *   was signed — that replays, a replay is a success, and a success releases
- *   the attempt. If the doctor has edited it, undoing every edit by hand is
- *   the only documented way back.
- * - `CONSULTATION_SIGNED_WITHOUT_THIS_VISIT` does NOT end that way. The server
- *   judges the binding before the fingerprint, so a byte-perfect sheet is
- *   refused with the same code and never read. It ends when somebody closes
- *   the queue row — the same act its obligation asks for.
- * - `ATTEMPT_VISIT_NO_LONGER_ACTIVE` ends when today's visit is created, which
- *   mints a new attempt through the ordinary rule in `beginAttempt`.
- *
- * `Next patient` releases an attempt but is rendered only after a confirmed
- * signing, which in all three is what has not happened. Closing the tab works
- * and is not a workflow.
- *
- * Releasing on these codes would fix all of it and reopen the duplicate
- * charge. Adding a control that abandons the attempt would fix it and is a
- * screen, which belongs to the frontend programme. Neither is a read model's
- * to choose, so it is written down as an owner question in
- * `docs/reference/BACKEND_PROGRAMME_REGISTER.md` rather than settled here.
+ * The consultation screen now calls both contracts. It keeps the attempt when
+ * the live visit changes, reads the durable outcome, and either permits a safe
+ * retry or asks a doctor to record one of those audited decisions. Dismissal,
+ * elapsed time, reload, unmount and a lost response do not release it. A
+ * confirmed command response or an audited resolved read does. See
+ * `docs/reference/SLICE2_FRONTEND_CONTRACT.md` §1.1.
  */
 const ROTATE_ON = [
   'ATTEMPT_NAMES_ANOTHER_CONSULTATION',
@@ -185,9 +140,9 @@ const ROTATE_ON = [
 /**
  * The key to sign under, and the visit to sign it against.
  *
- * `liveVisitId` is what the snapshot says right now, and it is the input to
- * the minting rule: a DIFFERENT visit where the attempt already held one is a
- * second arrival and mints; anything else reuses.
+ * `liveVisitId` is what the snapshot says right now. It is sent to the backend,
+ * but it never rotates a held attempt: a different visit is ambiguous until
+ * the doctor records the audited resolution.
  *
  * What the panel sends is both — the live visit as `appointmentId`, and the
  * attempt's stored `visitId` as `openedVisitId`. An earlier version kept the
@@ -201,6 +156,11 @@ export function openConsultationAttempt(
   liveVisitId?: string | null,
 ): Attempt {
   return beginAttempt(consultationScope(patientId), { visitId: liveVisitId ?? null })
+}
+
+/** The attempt this tab is already holding, without creating or releasing one. */
+export function heldConsultationAttempt(patientId: string): Attempt | null {
+  return currentAttempt(consultationScope(patientId))
 }
 
 /**
@@ -233,11 +193,11 @@ export function settleConsultationAttempt(
 }
 
 /**
- * End the attempt because the operator has moved on.
+ * End the attempt after a permitted terminal transition.
  *
- * Next patient, or an emptied sheet. This is the one release that is not a
- * confirmation, and it is safe because it is a person saying they are done
- * with this consultation — which a discarded draft, notably, is not.
+ * This covers Next patient after confirmed signing and the reconciliation
+ * component after a confirmed command or durable resolved read. It must never
+ * be called for a dismissed dialog, elapsed time, unmount, or lost response.
  */
 export function abandonConsultationAttempt(patientId: string): void {
   clearAttempt(consultationScope(patientId))

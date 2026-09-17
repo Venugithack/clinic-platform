@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type {
   ClinicalPhraseKind,
   ClinicSnapshot,
@@ -15,8 +15,14 @@ import type {
 } from '@/lib/types'
 import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
 import {
-  abandonConsultationAttempt, openConsultationAttempt, settleConsultationAttempt,
+  abandonConsultationAttempt, heldConsultationAttempt, openConsultationAttempt,
+  settleConsultationAttempt,
 } from '@/lib/consultation-attempt'
+import { signingRefusalAction } from '@/lib/consultation-reconciliation'
+import {
+  ConsultationReconciliation,
+  type AttemptGate,
+} from './consultation-reconciliation'
 import { usePatientRecord } from './use-patient-record'
 import { ClinicLetterhead, Stack } from './shared-panels'
 import { ImagesPanel } from './images-panel'
@@ -630,6 +636,10 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
   // review sheet is the only modal on this screen.
   const [drawer, setDrawer] = useState<'history' | 'summary' | null>(null)
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [recoveryAttempt, setRecoveryAttempt] = useState<ReturnType<typeof heldConsultationAttempt>>(null)
+  const [attemptGate, setAttemptGate] = useState<AttemptGate>('none')
+  const [recoveryMessage, setRecoveryMessage] = useState('')
 
   const sign = useTask()
   const draftTask = useTask()
@@ -643,6 +653,30 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
     (item) => item.patientId === patientId && item.status !== 'done' && item.status !== 'cancelled',
   )
   const { record, loading, failed, refresh } = usePatientRecord(patientId)
+  const canReconcile = data.session.roles.includes('doctor')
+
+  const releaseRecoveryGate = useCallback(() => {
+    setAttemptGate('none')
+  }, [])
+
+  const showRecordedRecovery = useCallback(() => {
+    setRecoveryOpen(true)
+  }, [])
+
+  useEffect(() => {
+    if (!patientId || !canReconcile) {
+      setRecoveryAttempt(null)
+      setAttemptGate('none')
+      setRecoveryOpen(false)
+      setRecoveryMessage('')
+      return
+    }
+    const held = heldConsultationAttempt(patientId)
+    setRecoveryAttempt(held)
+    setAttemptGate(held ? 'checking' : 'none')
+    setRecoveryOpen(false)
+    setRecoveryMessage('')
+  }, [canReconcile, patientId])
 
   /**
    * Which patient the record in hand actually belongs to.
@@ -715,6 +749,8 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
     setHydrated('')
     setDrawer(null)
     setReviewOpen(false)
+    setRecoveryOpen(false)
+    setRecoveryMessage('')
     setShowMedicinePicker(false)
     setMedicineSearch('')
   }, [patientId])
@@ -841,6 +877,14 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
   const signProblem = !sheet.diagnosis.trim()
     ? 'Record the diagnosis before signing.'
     : feeProblem
+
+  const attemptProblem = attemptGate === 'checking'
+    ? 'The clinic is checking an earlier signing. Wait for that result before signing again.'
+    : attemptGate === 'blocked'
+      ? 'An earlier signing still needs a doctor’s decision. Check it before signing again.'
+      : undefined
+
+  const signDisabledReason = signProblem ?? attemptProblem
 
   /** What this visit is charged, in words, for the review and the result. */
   const feeWords = feeChoice === 'waive'
@@ -1062,7 +1106,7 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
      * is one call in `lib/consultation-attempt.ts` rather than a branch here:
      * confirmed by the clinic ends the attempt, and nothing else does.
      */
-    settleConsultationAttempt(
+    const released = settleConsultationAttempt(
       patientId,
       result?.ok
         ? { status: 'confirmed' }
@@ -1070,7 +1114,41 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
           ? { status: 'unknown' }
           : { status: 'refused', code: result?.code },
     )
-    if (result?.ok) refresh()
+    if (result?.ok) {
+      setRecoveryAttempt(null)
+      setAttemptGate('none')
+      setRecoveryMessage('')
+      refresh()
+      return
+    }
+
+    if (!result) {
+      // `useTask` can return null only for a duplicate press or an unexpected
+      // client failure. Neither is evidence that the attempt ended.
+      setRecoveryAttempt(attempt)
+      setAttemptGate('blocked')
+      return
+    }
+
+    if (released || signingRefusalAction(result.code) === 'release') {
+      setRecoveryAttempt(null)
+      setAttemptGate('none')
+      setRecoveryMessage('')
+      return
+    }
+
+    if (result.unconfirmed || signingRefusalAction(result.code) === 'inspect') {
+      setRecoveryAttempt(attempt)
+      setAttemptGate('checking')
+      setRecoveryMessage(result.message)
+      setReviewOpen(false)
+      setRecoveryOpen(true)
+      return
+    }
+
+    // An ordinary refusal changed nothing and kept the same attempt. It is
+    // safe to correct the named field and retry under that attempt.
+    setAttemptGate('retry')
   }
 
   /**
@@ -1566,6 +1644,30 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
 
               {/* ------------------------------------------------ final actions */}
               <div className="sticky bottom-0 z-20 space-y-2 border-y border-ink bg-sheet/95 p-3 shadow-[0_-5px_16px_rgba(25,28,25,0.08)] backdrop-blur" data-print="hide">
+                {recoveryAttempt && attemptGate !== 'none' && canReconcile ? (
+                  <div className="space-y-2">
+                    <Notice tone={attemptGate === 'retry' ? 'good' : 'pending'}>
+                      <span>
+                        <span className="font-semibold">
+                          {attemptGate === 'retry'
+                            ? 'The earlier attempt recorded nothing.'
+                            : 'An earlier signing must be checked first.'}
+                        </span>{' '}
+                        {attemptGate === 'retry'
+                          ? 'You may sign this same sheet now; the clinic will use the held attempt.'
+                          : 'Do not start again until the clinic confirms what happened.'}
+                      </span>
+                    </Notice>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="min-h-11"
+                      onClick={() => setRecoveryOpen(true)}
+                    >
+                      Check earlier signing
+                    </Button>
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap items-center gap-2">
                   {signed ? (
                     <>
@@ -1591,8 +1693,8 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
                         ref={afterSign}
                         variant="primary"
                         icon="prescription"
-                        disabled={Boolean(signProblem) || (busy && !sign.busy)}
-                        disabledReason={signProblem}
+                        disabled={Boolean(signDisabledReason) || (busy && !sign.busy)}
+                        disabledReason={signDisabledReason}
                         onClick={() => { sign.dismiss(); setReviewOpen(true) }}
                       >
                         Review &amp; sign
@@ -1663,7 +1765,7 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
                         This draft is more than seven days old. Review every field before signing.
                       </p>
                     ) : null}
-                    {signProblem ? <p className="text-[12px] font-semibold text-stop">{signProblem}</p> : null}
+                    {signDisabledReason ? <p className="text-[12px] font-semibold text-stop">{signDisabledReason}</p> : null}
                   </div>
                 )}
 
@@ -1771,6 +1873,26 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
         </div>
       </Drawer>
 
+      {/* ----------------------------------------- safe attempt recovery */}
+      <ConsultationReconciliation
+        open={recoveryOpen}
+        patientId={patientId}
+        patientName={patient.name}
+        liveVisitId={appointment?.id}
+        attempt={recoveryAttempt}
+        canReconcile={canReconcile}
+        run={run}
+        initialMessage={recoveryMessage}
+        onClose={() => {
+          setRecoveryOpen(false)
+          setRecoveryMessage('')
+          if (attemptGate === 'none') setRecoveryAttempt(null)
+        }}
+        onGateChange={setAttemptGate}
+        onReleased={releaseRecoveryGate}
+        onAlreadyResolved={showRecordedRecovery}
+      />
+
       {/* ------------------------------------------------------ review sheet */}
       <Modal
         open={reviewOpen}
@@ -1797,8 +1919,8 @@ export function ConsultationPanel({ data, run }: { data: ClinicSnapshot; run: Ac
                 icon="prescription"
                 busy={sign.busy}
                 busyLabel="Completing consultation…"
-                disabled={Boolean(signProblem)}
-                disabledReason={signProblem}
+                disabled={Boolean(signDisabledReason)}
+                disabledReason={signDisabledReason}
                 onClick={confirmSign}
               >
                 Sign &amp; finish

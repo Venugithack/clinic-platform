@@ -4,6 +4,13 @@ Status: **implemented**, 13 September 2026. Every slice and acceptance gate in t
 
 This document was written as the implementation brief for the redesign and is kept as the record of what was asked for and what the application now does. Where it describes a behaviour, that behaviour exists.
 
+Safety integration update, 17 September 2026: the bounded Slice 2 consultation
+cutover is implemented in the existing doctor workspace. A held signing attempt
+survives reload and visit changes; the doctor can inspect and record Same
+attendance, New attendance, or permitted abandonment without exposing internal
+reference terminology. This is not the full appointment-calendar UI and does
+not start Slice 3 messaging.
+
 **Visual reference:** `docs/design/clinic-visual-workflow.html`. It demonstrates role-specific workspaces and strong completion feedback. It predates the final loading and timed-dismissal rules below and must be updated before it is treated as the finished interaction.
 
 ## Contents
