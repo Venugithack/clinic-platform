@@ -166,7 +166,10 @@ backend, because the backend has to keep running on Deno unchanged:
 - **The `Deno` global.** Shimmed to `Deno.env.get` over `process.env`, which is
   the only Deno API the shared files use. `scripts/staging/functions-server.mjs`
   additionally replaces `Deno.serve` so that each `index.ts` hands its handler
-  over instead of listening, and mounts the thirteen of them on one Node server.
+  over instead of listening, and mounts the fifteen of them on one Node server.
+  It passes the request body through as raw bytes, which the `whatsapp` webhook
+  depends on: its signature check is over the bytes that arrived and a server
+  that re-encoded them would make a correct signature fail here and only here.
 
 **What this is not.** It is not Deno. The code is the same code; the runtime
 under it is not. Deno's permission model, its own `npm:` resolution and its CPU
@@ -174,6 +177,34 @@ budget are not being exercised. Two things cover that and neither is this
 harness: CI runs `deno check` over every function, and the clinic runs the
 deployed ones. A green run here is evidence about the clinic's logic, not about
 its runtime.
+
+### 4.1 Driving the dispatch worker on staging
+
+There is no scheduler here and there must not be one. What there is, is the
+same protected endpoint the clinic will have, reachable on loopback and only on
+loopback:
+
+```bash
+npm run staging:up
+STAGING_FUNCTIONS_PORT=54321 CLINIC_WORKER_TOKEN=staging-only-worker-token   node scripts/staging/functions-server.mjs
+
+# in another shell — one cycle, by hand
+curl -s -X POST http://127.0.0.1:54321/functions/v1/worker   -H 'Authorization: Bearer staging-only-worker-token'   -H 'Content-Type: application/json' -d '{}'
+```
+
+With no `WHATSAPP_*` variables set — which is the default here and the state of
+the clinic — the answer is counts, and every due message is suppressed with
+`channel_not_configured`. That is the honest result and it is what to expect.
+
+Two things this deliberately does not do. It does not schedule anything: a
+`pg_cron` job in a staging database is a rehearsal of the one thing that must
+not be rehearsed by accident against the wrong connection string. And it does
+not set a real credential — `staging-only-worker-token` is a value in this
+document, which is exactly what a real one must never be.
+
+The webhook is reachable the same way, but a request to it needs a signature,
+so the useful way to exercise it is
+`tests/characterization/slice3b-delivery.test.mjs`, which computes one.
 
 ---
 

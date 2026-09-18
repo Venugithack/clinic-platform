@@ -6,27 +6,35 @@
  * The schema is `20260924000000_slice3a_communication_truth.sql` and its
  * header is the long explanation; this is the behaviour on top of it.
  *
- * ── NOTHING HERE SENDS ANYTHING ────────────────────────────────────────────
+ * ── WHAT SLICE 3B ADDED, AND WHAT IT STILL DOES NOT DO ─────────────────────
  *
- * There is no provider network adapter in this slice, no webhook endpoint, no
- * scheduler and no credential. `officialWhatsAppChannel` — the default —
- * reports whether the clinic's Meta connection is configured and then REFUSES
- * to send, because writing the adapter is Slice 3B and a half-written one that
- * "works in staging" is how a clinic discovers it has been messaging patients.
+ * Slice 3A had no adapter, no webhook and no scheduler. Slice 3B adds the
+ * first two and the contract for the third:
  *
- * That refusal is almost never reached, and that is the design rather than an
- * accident. Owner item 76: "If the official channel is unavailable or not
- * approved, suppress the automated send and put the work in a staff queue." So
- * with no connection configured every due message is SUPPRESSED at the prepare
- * step, with a reason, into the admin's queue — which is a truthful, useful
- * state, not a placeholder pretending to send.
+ *   - `officialWhatsAppChannel` now calls `whatsapp-cloud.ts`, which is the
+ *     only way anything in this file reaches Meta. It sends approved TEMPLATE
+ *     messages and nothing else — a clinic-initiated free-text message is not
+ *     a thing this path can express. (The staff composer in `whatsapp.ts` has
+ *     its own older, direct call; it is untouched, shares nothing with this,
+ *     and is discussed in §16.8 of the schema contract.)
+ *   - `applyProviderEvidence` is reached by a real endpoint, `functions/
+ *     whatsapp`, which verifies Meta's signature over the raw request bytes
+ *     before it parses anything.
+ *   - `runDispatchCycle` is the worker, and `functions/worker` is the
+ *     protected endpoint a scheduler will call. **No scheduler is
+ *     provisioned**: no `pg_cron` job, no `pg_net` call, no Vault secret and
+ *     no queue exists, and none is created by a migration. The provisioning
+ *     steps are written down in `docs/operations/ROLLOUT.md` and deliberately
+ *     not run.
  *
- * Nothing invokes the worker on a timer either. `prepareDueMessages` and
- * `dispatchQueuedMessages` are exported functions with an injectable channel;
- * no Edge Function calls them, and no `pg_cron` job, `pg_net` call, Vault
- * secret or queue is provisioned. The scheduling contract a later slice has to
- * satisfy is written down in `docs/SCHEMA_AND_TYPES.md` §15 and this slice
- * stops in front of it.
+ * The adapter stays fully disabled without the complete accepted
+ * configuration, and there is no fallback credential and no development
+ * default anywhere in it. Owner item 76: "If the official channel is
+ * unavailable or not approved, suppress the automated send and put the work in
+ * a staff queue." So on a clinic with no connection configured, every due
+ * message is still SUPPRESSED at the prepare step, with a reason, into the
+ * admin's queue — which is where this application stands today, because no
+ * credential has been issued to it.
  *
  * ── THE FOUR RULES EVERYTHING BELOW IS AN EXPRESSION OF ────────────────────
  *
@@ -60,7 +68,11 @@ import {
   CommandRefusal, optional, requireChoice, requireRole, value, type Payload,
 } from './command-input.ts'
 import type { SessionView } from './types.ts'
-import { whatsappStatus, dialable } from './whatsapp.ts'
+import { whatsappConfig, dialable } from './whatsapp.ts'
+import { sendTemplateMessage } from './whatsapp-cloud.ts'
+import type {
+  ChannelSendRequest, MessageChannel, TransportFailure, TransportResult,
+} from './messaging-transport.ts'
 import {
   APPOINTMENT_REMINDER_HOUR, CLINICAL_RECALL_HOUR, CONSENT_CLINIC_NAME,
   CONSENT_WORDING_VERSION, DISPATCH_WINDOW_END_HOUR, DISPATCH_WINDOW_START_HOUR,
@@ -298,53 +310,39 @@ function requireAuthorizedDoctor(session: SessionView, what: string): void {
 
 /* ══════════════════════════════════════════ the channel, and the seam ══ */
 
-export type TransportFailure =
-  | 'rate_limited' | 'provider_unavailable' | 'invalid_recipient'
-  | 'template_rejected' | 'not_authorized' | 'transport_error' | 'unknown'
-
-export type TransportResult =
-  | {
-    ok: true
-    providerReference: string
-    acceptStatus: 'accepted' | 'held_for_quality_assessment' | 'paused'
-  }
-  | { ok: false; category: TransportFailure; detail: string; terminal: boolean }
-
-export interface MessageChannel {
-  /** Recorded on every attempt, so the evidence says what carried it. */
-  readonly name: string
-  /**
-   * Whether the official channel is available and approved. Owner item 76:
-   * when it is not, the send is suppressed into a staff queue rather than
-   * attempted.
-   */
-  configured(): boolean
-  send(request: {
-    to: string
-    body: string
-    templateName: string
-    idempotencyKey: string
-  }): Promise<TransportResult>
-}
+/*
+ * The transport vocabulary now lives in `messaging-transport.ts`, a leaf
+ * module, so that `whatsapp-cloud.ts` can speak it without importing this file
+ * and creating a cycle. Every name this file used to export it still exports;
+ * nothing that referred to them had to change.
+ */
+export type { ChannelSendRequest, MessageChannel, TransportFailure, TransportResult }
 
 /**
- * The clinic's real channel, in the only state Slice 3A allows it to be in.
+ * The clinic's real channel.
  *
- * `configured()` is the honest answer — it reads the same five environment
- * variables `whatsappStatus()` has always read — and `send()` refuses,
- * terminally, because there is no adapter in this release. The refusal is
- * reachable only by a caller that has already ignored `configured()`, and
- * `slice3a-messaging.test.mjs` asserts the prepare step never does.
+ * `configured()` is the honest answer and it is asked BEFORE anything is
+ * attempted: with the clinic's Meta connection absent, the prepare step
+ * suppresses every due message into the admin's queue with
+ * `channel_not_configured` against it, and `send` is never reached at all.
+ * That is owner item 76, and it is why this clinic — which has no credential
+ * issued to it — sends nothing today without a line of this being a pretence.
+ *
+ * When it IS configured, `send` goes to `whatsapp-cloud.ts` and nowhere else.
+ * The two-transaction shape around this call is what makes a lost answer
+ * survivable, and the comment on `dispatchQueuedMessages` is why it may not be
+ * collapsed into one.
  */
 export const officialWhatsAppChannel: MessageChannel = {
   name: 'whatsapp_cloud_api',
-  configured: () => whatsappStatus().configured,
-  send: () =>
-    Promise.resolve({
-      ok: false,
-      category: 'not_authorized',
-      detail: 'No provider adapter is built in this release.',
-      terminal: true,
+  configured: () => whatsappConfig() !== null,
+  send: (request) =>
+    sendTemplateMessage({
+      to: request.to,
+      templateName: request.templateName,
+      templateLanguage: request.templateLanguage,
+      variables: request.variables,
+      idempotencyKey: request.idempotencyKey,
     }),
 }
 
@@ -360,12 +358,7 @@ export const officialWhatsAppChannel: MessageChannel = {
 export function loopbackChannel(options: {
   baseUrl: string
   configured?: boolean
-  respond: (request: {
-    to: string
-    body: string
-    templateName: string
-    idempotencyKey: string
-  }) => TransportResult | Promise<TransportResult>
+  respond: (request: ChannelSendRequest) => TransportResult | Promise<TransportResult>
 }): MessageChannel {
   const url = new URL(options.baseUrl)
   const host = url.hostname.replace(/^\[|\]$/g, '')
@@ -975,15 +968,31 @@ export async function dispatchQueuedMessages(options: {
   ).get(now)) as Row
   if (open.open !== true) return summary
 
+  /*
+   * ── WHY THE USEFULNESS DEADLINE IS NOT IN THIS QUERY ────────────────────
+   *
+   * It was, and that was a defect. `and useful_until > now` filtered an
+   * expired message out of the candidate list, so `claimAttempt` — which
+   * holds the only code that suppresses one with `past_useful_by` — was never
+   * reached for exactly the rows that needed it. The message did not go out,
+   * which was right, and it also stayed at `queued` for ever, which was not:
+   * `queued` is not one of the statuses the admin's failure queue reads, so a
+   * reminder that quietly expired became invisible to everybody. The clinic
+   * would never learn that a patient had not been told.
+   *
+   * So the deadline is asked ONCE, under the row lock, where the answer can be
+   * recorded. Selecting a row here is not a decision to send it; every such
+   * decision belongs under the lock, and this is the only place one had leaked
+   * out to.
+   */
   const ready = (await db.prepare(
     `select id from message_outbox
       where status in ('queued', 'failed_retryable')
         and due_at <= ?::timestamptz
-        and useful_until > ?::timestamptz
         and (next_attempt_at is null or next_attempt_at <= ?::timestamptz)
       order by due_at
       limit ?`,
-  ).all(now, now, now, limit)) as Row[]
+  ).all(now, now, limit)) as Row[]
 
   for (const candidate of ready) {
     const claimed = await transaction(() => claimAttempt(text(candidate.id), now, channel.name))
@@ -997,14 +1006,24 @@ export async function dispatchQueuedMessages(options: {
         to: claimed.to,
         body: claimed.body,
         templateName: claimed.templateName,
+        templateLanguage: claimed.templateLanguage,
+        variables: claimed.variables,
         idempotencyKey: claimed.idempotencyKey,
       })
     } catch (error) {
+      /*
+       * The transport threw rather than answering. It may have reached Meta
+       * before it did — a socket that dies after the request went out looks
+       * exactly like one that died before — so this is `ambiguous` and the
+       * message stays `outcome_unknown` rather than being queued for another
+       * go. `settleAttempt` is where that is enforced.
+       */
       result = {
         ok: false,
         category: 'transport_error',
         detail: error instanceof Error ? error.message : 'The transport threw.',
         terminal: false,
+        ambiguous: true,
       }
     }
 
@@ -1021,30 +1040,48 @@ async function claimAttempt(
   outboxId: string,
   now: string,
   transport: string,
-): Promise<
-  {
-    outboxId: string
-    attemptId: string
-    to: string
-    body: string
-    templateName: string
-    idempotencyKey: string
-  } | null
-> {
+): Promise<{ outboxId: string; attemptId: string } & ChannelSendRequest | null> {
   const message = (await db.prepare(
     `select o.*, t.provider_template_name, t.provider_state, t.approval_state,
+            t.body as template_body, t.locale as template_locale,
+            s.status as schedule_status,
             to_char(o.useful_until at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as useful_iso,
             (o.first_attempt_at is null
              or o.first_attempt_at + make_interval(mins => ${RETRY_WINDOW_MINUTES}) >= ?::timestamptz)
               as inside_retry_window
        from message_outbox o
+       join communication_schedules s on s.id = o.schedule_id
        left join message_templates t on t.id = o.template_id
       where o.id = ?
       for update of o skip locked`,
   ).get(now, outboxId)) as Row | undefined
 
+  /*
+   * `skip locked` and not a wait, because the row being held means another
+   * worker is already dealing with it — waiting for that lock only to discover
+   * the message has moved to `outcome_unknown` is a worker blocked for the
+   * length of a provider call for no reason. This is what makes two concurrent
+   * workers produce one attempt rather than two.
+   */
   if (!message) return null
   if (!['queued', 'failed_retryable'].includes(text(message.status))) return null
+
+  /*
+   * The authoritative record, asked again under this lock.
+   *
+   * A cancellation sweeps its own queued messages inside the transaction that
+   * cancels the schedule, so in the ordinary case this is already true. It is
+   * asked anyway because the sweep and this check are two separate pieces of
+   * code that have to agree, and the cost of them disagreeing is a patient
+   * told to come to an appointment that was called off. A message whose
+   * schedule is no longer live is cancelled here rather than sent.
+   */
+  if (text(message.schedule_status) !== 'scheduled') {
+    await db.prepare(
+      `update message_outbox set status = 'cancelled', next_attempt_at = null where id = ?`,
+    ).run(outboxId)
+    return null
+  }
 
   // Every bound item 79 sets, asked again under the lock rather than trusted
   // from the query that selected this row a moment ago.
@@ -1111,12 +1148,32 @@ async function claimAttempt(
       where id = ?`,
   ).run(attemptNumber, now, now, outboxId)
 
+  /*
+   * The variables, ordered as the placeholders appear in the APPROVED BODY
+   * rather than as they happen to sit in the stored JSON object.
+   *
+   * Meta renders the patient's copy itself, from the template it approved plus
+   * these values, so the order is the contract when the account registered its
+   * templates positionally — and even named parameters have to agree on the
+   * set. Deriving the order from the pinned template's own body means it
+   * cannot drift from what was approved: `template_id` is a version, and a
+   * version's body cannot be edited.
+   */
+  const stored = JSON.parse(text(message.variables_json) || '{}') as Record<string, string>
+  // Deduplicated on first appearance: a body that greets the patient by name
+  // twice still has one `patient_given_name` variable, and sending it twice
+  // would be a parameter count Meta refuses.
+  const variables = [...new Set(placeholdersIn(text(message.template_body)))]
+    .map((name) => ({ name, value: String(stored[name] ?? '') }))
+
   return {
     outboxId,
     attemptId,
     to: text(message.to_number),
     body: text(message.rendered_body),
     templateName: text(message.provider_template_name),
+    templateLanguage: text(message.template_locale) || 'en',
+    variables,
     idempotencyKey: text(message.idempotency_key),
   }
 }
@@ -1129,12 +1186,28 @@ async function settleAttempt(
 ): Promise<void> {
   await db.prepare(`select id from message_outbox where id = ? for update`).get(outboxId)
 
+  /*
+   * `and outcome = 'in_flight'` on both settlements, which is new in Slice 3B
+   * and exists because Slice 3B is what made the collision reachable.
+   *
+   * `recoverStaleAttempts` can settle a long-abandoned attempt as a call whose
+   * answer never arrived. If the original worker were somehow still alive and
+   * came back afterwards, an unconditional update would hit the
+   * `message_attempts_settle_once` trigger, which raises — and the raise would
+   * propagate out of the dispatch loop and abandon every remaining message in
+   * the cycle. One stalled call must not cost the clinic a round of reminders.
+   *
+   * Conditional, the late settlement finds no row and changes nothing, while
+   * the OUTBOX update below still runs and still records the truth the worker
+   * came back with. The attempt row is a record of one call; the message's
+   * state is the thing that matters, and it is not the attempt's to withhold.
+   */
   if (result.ok) {
     await db.prepare(
       `update message_attempts
           set outcome = 'accepted', provider_reference = ?, provider_accept_status = ?,
               finished_at = ?::timestamptz
-        where id = ?`,
+        where id = ? and outcome = 'in_flight'`,
     ).run(result.providerReference, result.acceptStatus, now, attemptId)
 
     /*
@@ -1159,11 +1232,48 @@ async function settleAttempt(
   await db.prepare(
     `update message_attempts
         set outcome = ?, error_category = ?, error_detail = ?, finished_at = ?::timestamptz
-      where id = ?`,
+      where id = ? and outcome = 'in_flight'`,
   ).run(
     result.category === 'transport_error' ? 'transport_error' : 'rejected',
     result.category, redactProviderDetail(result.detail), now, attemptId,
   )
+
+  /*
+   * ── THE ANSWER NEVER CAME BACK ──────────────────────────────────────────
+   *
+   * A timeout, a dropped connection, or a 2xx carrying no message identifier.
+   * The clinic does not know whether Meta took this message, and there is no
+   * idempotency key on `POST /messages` — Meta documents none — so there is no
+   * safe way to ask again.
+   *
+   * So it is not a failure and it is not scheduled for retry. The message
+   * stays at `outcome_unknown`, where `claimAttempt` will never pick it up
+   * again because that status is not in the dispatchable set, and the only
+   * thing that can settle it is the statuses webhook finding it through the
+   * `biz_opaque_callback_data` this clinic sent. `error_category` is recorded
+   * so the admin's queue can say what happened; the STATUS is left alone,
+   * because `outcome_unknown` is already the truth and anything else would be
+   * a guess in the direction that sends a second reminder.
+   *
+   * `first_failed_at` is stamped, and that is a Slice 3B decision worth being
+   * explicit about. It does NOT declare the message failed — the status still
+   * says nobody knows. It starts item 79's four-clinic-hour clock, because
+   * `readCommunicationFailures` measures escalation from that column and a
+   * null there means this row would sit in the admin's queue for ever without
+   * ever reaching the owner-doctor. An outcome nobody knows is the single
+   * state most likely to need a person to pick up a telephone, so it is the
+   * last one that should be unable to escalate.
+   */
+  if (result.ambiguous) {
+    await db.prepare(
+      `update message_outbox
+          set error_category = ?, next_attempt_at = null,
+              first_failed_at = coalesce(first_failed_at, ?::timestamptz),
+              failure_owner_role = 'admin'
+        where id = ? and status = 'outcome_unknown'`,
+    ).run(result.category, now, outboxId)
+    return
+  }
 
   const counted = (await db.prepare(
     `select attempt_count from message_outbox where id = ?`,
@@ -1311,6 +1421,321 @@ export async function applyProviderEvidence(input: {
     ).run(input.status, input.status, rank, at, text(message.id))
     return 'applied'
   })
+}
+
+/* ══════════════════════════════════════════ Slice 3B: provider evidence ══ */
+
+export type ProviderStatus = 'sent' | 'delivered' | 'read' | 'played' | 'failed'
+
+export type ProviderEventOutcome =
+  | 'applied' | 'ignored' | 'duplicate' | 'unknown_reference'
+
+/**
+ * Meta's five status words, and what each one proves.
+ *
+ * `read` and `played` both map to `delivered`, and that is a statement about
+ * evidence rather than a shortcut: a message the patient opened was certainly
+ * delivered, so it carries delivery's rank. It is stored AS `delivered`
+ * because `message_outbox.delivery_status` is a closed list from Slice 3A, and
+ * widening an accepted check constraint to record a stronger fact the clinic
+ * has no use for would be a migration bought for nothing. What the clinic
+ * needs to know is whether it reached the patient. It did.
+ *
+ * Nothing here can produce `delivered` from an acceptance. `accepted`,
+ * `held_for_quality_assessment` and `paused` are answers to the POST, are not
+ * status events at all, and never travel through this function.
+ */
+const EVIDENCE: Record<
+  ProviderStatus,
+  { status: 'sent' | 'delivered' | 'failed'; rank: number }
+> = {
+  sent: { status: 'sent', rank: 2 },
+  delivered: { status: 'delivered', rank: 3 },
+  read: { status: 'delivered', rank: 3 },
+  played: { status: 'delivered', rank: 3 },
+  failed: { status: 'failed', rank: 4 },
+}
+
+/**
+ * Meta's numeric error code, in the clinic's vocabulary.
+ *
+ * A failure reported through the statuses webhook is already terminal for this
+ * message — it is Meta saying the message will not arrive — so only the
+ * category matters here, never the retryability.
+ */
+function providerErrorCategory(code?: number): TransportFailure {
+  if (code === undefined) return 'unknown'
+  if ([131026, 131021, 131047].includes(code)) return 'invalid_recipient'
+  if ([132000, 132001, 132012, 132015, 132016].includes(code)) return 'template_rejected'
+  if ([4, 80007, 130429, 131056, 131049].includes(code)) return 'rate_limited'
+  if ([368, 131005, 190, 200, 10, 299].includes(code)) return 'not_authorized'
+  if ([2, 131016, 131000].includes(code)) return 'provider_unavailable'
+  return 'unknown'
+}
+
+/**
+ * One authenticated status event from Meta, recorded and then applied.
+ *
+ * The endpoint has already verified the signature over the raw bytes; by the
+ * time anything reaches here the event is known to have come from Meta. What
+ * is left is making sure it lands exactly once, on the right message, and only
+ * ever in the direction of stronger truth.
+ *
+ * ── HOW A MESSAGE IS FOUND ─────────────────────────────────────────────────
+ *
+ * Two ways, and the second is the reason this function exists at all.
+ *
+ *   1. By `provider_reference` — the wamid — which is the ordinary case: the
+ *      POST answered, the clinic stored the id, and the webhook names it.
+ *
+ *   2. By the echoed `biz_opaque_callback_data`, which is the clinic's
+ *      `idempotency_key`. This is the ONLY way to reach a message whose POST
+ *      reply was lost: the clinic never learned the wamid, so there is nothing
+ *      to match on, and the message would otherwise sit at `outcome_unknown`
+ *      for ever. When it is found this way the wamid is adopted onto the row,
+ *      which is the clinic learning — late, and from the provider — what it
+ *      failed to hear at the time.
+ *
+ * ── HOW IT LANDS EXACTLY ONCE ──────────────────────────────────────────────
+ *
+ * The event row is inserted BEFORE the evidence is applied and in the same
+ * transaction, against a unique index on (provider_reference, status). Two
+ * webhooks carrying the same event therefore race on that index: one inserts
+ * and applies, the other is refused and rolls back having changed nothing.
+ * Meta retries a webhook for up to seven days until it gets a 200, so a
+ * duplicate is documented behaviour rather than a hypothetical.
+ */
+export async function applyProviderStatusEvent(input: {
+  providerReference: string
+  status: ProviderStatus
+  callbackData?: string
+  occurredAt?: string
+  errorCode?: number
+  errorDetail?: string
+}): Promise<ProviderEventOutcome> {
+  const evidence = EVIDENCE[input.status]
+  const at = input.occurredAt ?? isoNow()
+  const callbackData = input.callbackData ?? ''
+
+  try {
+    return await transaction(async () => {
+      /*
+       * The message, by wamid first and by the clinic's own key second.
+       *
+       * Both take the row `for update`, so an event racing the worker that is
+       * settling the very same message is serialized behind it rather than
+       * reading a half-written row.
+       */
+      let message = (await db.prepare(
+        `select id, status, delivery_rank, provider_reference
+           from message_outbox where provider_reference = ? for update`,
+      ).get(input.providerReference)) as Row | undefined
+
+      if (!message && callbackData !== '') {
+        message = (await db.prepare(
+          `select id, status, delivery_rank, provider_reference
+             from message_outbox where idempotency_key = ? for update`,
+        ).get(callbackData)) as Row | undefined
+
+        /*
+         * Found by the clinic's key, and already carrying a DIFFERENT wamid.
+         *
+         * That is not this message's evidence. It means the echoed callback
+         * value belongs to a send this row has already recorded another id
+         * for, and adopting a second id would attach one delivery to another
+         * message. Refuse it, and record it as naming no message at all.
+         *
+         * The comparison is against THIS event's reference and not merely
+         * against empty, which is a race that was in the first version of this
+         * and is worth naming. Two events for one message — `sent` and
+         * `delivered` — can arrive together, both find no row by wamid because
+         * neither has committed yet, and both then queue on this row's lock.
+         * The first adopts the wamid and commits. The second acquires the lock,
+         * re-reads the row under it, and sees a reference where there was none.
+         * Testing for "not empty" discarded that second event as belonging to
+         * somebody else, and the message stayed at `sent_to_provider` having
+         * actually been delivered. Testing for "not mine" is the same guard
+         * without the false positive.
+         */
+        if (
+          message && text(message.provider_reference) !== ''
+          && text(message.provider_reference) !== input.providerReference
+        ) {
+          message = undefined
+        }
+      }
+
+      const outboxId = message ? text(message.id) : null
+      const effect: 'applied' | 'ignored' | 'unknown_reference' = !message
+        ? 'unknown_reference'
+        : (['delivered', 'failed_terminal'].includes(text(message.status))
+            || Number(message.delivery_rank ?? 0) >= evidence.rank)
+        ? 'ignored'
+        : 'applied'
+
+      await db.prepare(
+        `insert into message_provider_events
+           (id, provider_reference, status, callback_data, outbox_id, effect,
+            error_code, error_detail, occurred_at)
+         values (?,?,?,?,?,?,?,?, ?::timestamptz)`,
+      ).run(
+        randomUUID(), input.providerReference, input.status, callbackData,
+        outboxId, effect,
+        input.errorCode ?? null, redactProviderDetail(input.errorDetail ?? ''), at,
+      )
+
+      if (!message) return 'unknown_reference'
+      if (effect === 'ignored') return 'ignored'
+
+      // Learned late: the identifier the lost reply was carrying.
+      if (text(message.provider_reference) === '') {
+        await db.prepare(
+          `update message_outbox set provider_reference = ? where id = ?`,
+        ).run(input.providerReference, outboxId)
+      }
+
+      if (evidence.status === 'failed') {
+        await db.prepare(
+          `update message_outbox
+              set status = 'failed_terminal',
+                  delivery_status = 'failed', delivery_rank = 4,
+                  delivery_status_at = ?::timestamptz,
+                  error_category = ?,
+                  first_failed_at = coalesce(first_failed_at, ?::timestamptz),
+                  escalated_at = coalesce(escalated_at, ?::timestamptz),
+                  failure_owner_role = 'admin',
+                  next_attempt_at = null
+            where id = ?`,
+        ).run(at, providerErrorCategory(input.errorCode), at, at, outboxId)
+        return 'applied'
+      }
+
+      await db.prepare(
+        `update message_outbox
+            set status = case when ? = 'delivered' then 'delivered' else 'sent_to_provider' end,
+                delivery_status = ?, delivery_rank = ?, delivery_status_at = ?::timestamptz
+          where id = ?`,
+      ).run(evidence.status, evidence.status, evidence.rank, at, outboxId)
+      return 'applied'
+    })
+  } catch (error) {
+    /*
+     * The dedup index refused it: this exact event has already been recorded
+     * and applied, by an earlier webhook or by one running concurrently. The
+     * transaction rolled back, so nothing here changed anything, and the
+     * caller answers Meta with the same 200 it would have answered anyway.
+     *
+     * Named rather than "any unique violation", so that a collision on
+     * something else — `message_outbox_provider_reference`, if two events
+     * somehow carried one wamid for two different messages — is raised and
+     * logged instead of being quietly reported as a duplicate. A swallowed
+     * constraint is how a real fault becomes a statistic.
+     */
+    if (isUniqueViolation(error, 'message_provider_events_identity')) return 'duplicate'
+    throw error
+  }
+}
+
+/**
+ * Settle the attempts of workers that never came back.
+ *
+ * ── WHAT A STALE LEASE IS HERE, AND WHAT IT IS NOT ─────────────────────────
+ *
+ * The claim is not a lease over a row that expires and hands the work to
+ * somebody else. That shape is exactly what must not exist here, because the
+ * second worker would send a second copy of a message the first may well have
+ * delivered. The claim moves the message to `outcome_unknown`, which no worker
+ * can pick up, and that is permanent until evidence arrives.
+ *
+ * What goes stale is the ATTEMPT row. `in_flight` means a call is in progress,
+ * and once the worker's process is gone that is no longer true of anything.
+ * This settles those rows as what they actually are — a call this clinic never
+ * heard the end of — and touches the MESSAGE not at all.
+ *
+ * So the attempt stops claiming to be running, the message stays
+ * `outcome_unknown`, and nothing is retried. Elapsed time never converts an
+ * unknown outcome into a failure, because time passing is not evidence.
+ */
+export async function recoverStaleAttempts(options: {
+  now?: string
+  olderThanMinutes?: number
+} = {}): Promise<{ recovered: number }> {
+  const now = options.now ?? isoNow()
+  /*
+   * Comfortably longer than the provider timeout, so a call that is merely
+   * slow is never declared abandoned while it is still running and about to
+   * write its own answer. **Not an owner decision**: an implementation bound.
+   */
+  const minutes = options.olderThanMinutes ?? 15
+
+  const stale = (await db.prepare(
+    `select id from message_attempts
+      where outcome = 'in_flight'
+        and started_at + make_interval(mins => ?) <= ?::timestamptz
+      order by started_at
+      limit 200`,
+  ).all(minutes, now)) as Row[]
+
+  let recovered = 0
+  for (const row of stale) {
+    const settled = await transaction(async () =>
+      await db.prepare(
+        `update message_attempts
+            set outcome = 'transport_error', error_category = 'transport_error',
+                error_detail = ?, finished_at = ?::timestamptz
+          where id = ? and outcome = 'in_flight'`,
+      ).run('The worker did not record an answer to this call.', now, text(row.id))
+    )
+    if (settled) recovered += 1
+  }
+  return { recovered }
+}
+
+/**
+ * One turn of the worker: recover, prepare, dispatch.
+ *
+ * This is what the protected endpoint calls, and it calls the shared domain
+ * functions directly rather than making HTTP requests to other Edge Functions.
+ * A function that fans out to a function is one more place for a reply to be
+ * lost, and a lost reply here is the most expensive kind this application has.
+ *
+ * Safe to run twice, late, or concurrently with itself. Everything that
+ * decides whether a patient is contacted is asked again under a row lock
+ * inside `prepareOne` and `claimAttempt`; invoking this function is not itself
+ * a decision about anybody.
+ */
+export async function runDispatchCycle(options: {
+  now?: string
+  channel?: MessageChannel
+  prepareLimit?: number
+  dispatchLimit?: number
+} = {}): Promise<{
+  recovered: number
+  prepared: number
+  queued: number
+  suppressed: number
+  reasons: Record<string, number>
+  attempted: number
+  accepted: number
+  failed: number
+}> {
+  const now = options.now ?? isoNow()
+  const channel = options.channel ?? officialWhatsAppChannel
+
+  const { recovered } = await recoverStaleAttempts({ now })
+  const prepared = await prepareDueMessages({ now, channel, limit: options.prepareLimit })
+  const dispatched = await dispatchQueuedMessages({ now, channel, limit: options.dispatchLimit })
+
+  return {
+    recovered,
+    prepared: prepared.prepared,
+    queued: prepared.queued,
+    suppressed: prepared.suppressed,
+    reasons: prepared.reasons,
+    attempted: dispatched.attempted,
+    accepted: dispatched.accepted,
+    failed: dispatched.failed,
+  }
 }
 
 /* ════════════════════════════════════════════════════════════ commands ══ */

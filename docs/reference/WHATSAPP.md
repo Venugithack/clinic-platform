@@ -10,17 +10,47 @@ Internal reference. Decides §10 of `PLAN.md` and §4 of `PROPOSAL.md`.
 > background and must still be revalidated before production release.
 >
 > **Implementation status, 18 September 2026:** Slice 3A built the durable
-> foundation — see [`../SCHEMA_AND_TYPES.md`](../SCHEMA_AND_TYPES.md) §15.
+> foundation and Slice 3B built the adapter and the webhook — see
+> [`../SCHEMA_AND_TYPES.md`](../SCHEMA_AND_TYPES.md) §15 and §16.
 > Rule 1 of §10 below (official Cloud API only), rule 2 (no opt-in row, no
 > send), rule 3 (the fact and a link, never the record), rule 4 (defensibly
 > utility) and rule 8 (every send is a row before it is a send) are now
 > enforced in the schema or the command layer rather than being intentions.
-> Nothing has contacted Meta: there is no adapter, no webhook and no
-> credential. Rule 9 — monitoring the quality rating — has nothing to monitor
-> yet, and rule 10 stands: **re-verify this document before the contract is
-> signed.** The §0 question about whether an unverified WABA may send a
-> template to a non-test recipient at all is still unresolved and is still a
-> release gate.
+> Rule 1 is now structural rather than a policy for the automated channel: the
+> outbox reaches Meta only through `_shared/whatsapp-cloud.ts`, which builds a
+> template send and has no branch that builds a free-text one, and no
+> unofficial library is a dependency of anything. The older staff composer in
+> `_shared/whatsapp.ts` still has its own direct call to the same official
+> endpoint — it is a person typing a sentence, not an automated clinic-initiated
+> message, and moving it onto per-purpose consent is named as deferred work in
+> [`../SCHEMA_AND_TYPES.md`](../SCHEMA_AND_TYPES.md) §16.8.
+>
+> **Still nothing has contacted Meta.** There is no credential, no approved
+> template and no scheduler, and no line of the adapter has been answered by
+> Meta. Rule 9 — monitoring the quality rating — has nothing to monitor yet,
+> and rule 10 stands: **re-verify this document before the contract is
+> signed.**
+>
+> Slice 3B's reading of Meta's own current documentation moved the §0 questions
+> as follows, and the detail is in
+> [`../operations/ROLLOUT.md`](../operations/ROLLOUT.md) §9.5:
+>
+> - **Question 2 is resolved.** The limit counts "the maximum number of unique
+>   WhatsApp user phone numbers your business can deliver messages to … within
+>   a moving 24-hour period", and "newly created business portfolios have a
+>   messaging limit of 250". Unique recipients, not messages. This clinic sees
+>   about 60 patients a day.
+> - **Question 1 is narrowed and still open.** Meta's messaging-limits page
+>   does not say explicitly whether an *unverified* account may send a template
+>   to a non-test recipient at all. A 250 tier existing for a new portfolio
+>   points that way and other official pages describe verification as *raising*
+>   the ceiling rather than unlocking sending — but that is an inference, and
+>   an inference is not good enough to switch a clinic's patient channel on.
+> - **Questions 3 and 4 are untouched.** Whether the privacy-policy URL gates
+>   template approval or template sending, and whether display-name approval
+>   needs business verification first.
+>
+> **So it remains a release blocker**, narrower than it was.
 
 **"Grey area" is not one thing.** It is six unrelated ambiguities that get
 lumped together, and they carry very different risk. Three are survivable design

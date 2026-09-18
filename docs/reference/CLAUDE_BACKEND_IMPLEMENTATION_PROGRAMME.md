@@ -7,10 +7,11 @@
 > into these slices.
 
 Status: **Slices 0, 1 and 2 are complete and accepted. Slice 3's owner policies
-D8–D12c are approved as items 76–83, and its first bounded half — Slice 3A,
-the durable contract and domain state machine — is implemented. Slice 3B, which
-is the provider adapter, the authenticated webhook and the scheduler, has not
-started and sends nothing until it does.** Slice 0's
+D8–D12c are approved as items 76–83; Slice 3A (the durable contract and domain
+state machine) and Slice 3B (the provider adapter, the authenticated webhook
+and the protected worker contract) are both implemented. Nothing has been sent:
+no credential, no approved Meta template and no scheduler exists, and the
+recall cohort and the messaging frontend remain unbuilt.** Slice 0's
 verified evidence, work register, decision register, contract sequence, and
 compatibility map are in
 [`BACKEND_PROGRAMME_REGISTER.md`](BACKEND_PROGRAMME_REGISTER.md); Slice 1's
@@ -702,9 +703,23 @@ response as patient delivery.
 > contract. The last boundary above is the one that decided the shape: no
 > scheduler is provisioned, the worker is a pair of exported functions nothing
 > invokes on a timer, and the required mechanism is written down in §15.8
-> rather than built. The capabilities still outstanding — the authenticated
-> webhook endpoint, the provider adapter, and the saved recall cohort — are
-> Slice 3B.
+> rather than built.
+>
+> **Slice 3B, implemented 18 September 2026.** The provider adapter, the
+> authenticated statuses webhook with durable event deduplication, and the
+> protected worker endpoint. `docs/SCHEMA_AND_TYPES.md` §16 is the contract.
+> The instruction directly above — *"if no safe scheduler is currently
+> available, implement the durable data and protected worker contract, document
+> the required scheduling mechanism, and stop before provisioning it"* — is
+> exactly what was done: `functions/worker` exists behind a shared secret,
+> `operations/ROLLOUT.md` §9 holds the `pg_cron`/`pg_net`/Vault steps and their
+> rollback, and none of them has been run. The adapter stays fully disabled
+> without its four `WHATSAPP_*` values, and no value for any of them exists.
+>
+> **Still outstanding in Slice 3:** the saved, frozen, dry-runnable recall
+> cohort (owner item 80) and the frontend messaging workspace. Neither can be
+> validated against a real provider until a connection exists, which is a
+> release gate rather than an engineering one.
 
 ### Acceptance
 

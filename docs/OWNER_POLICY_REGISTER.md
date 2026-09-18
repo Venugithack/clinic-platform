@@ -505,6 +505,33 @@ frontend redesign.
 > owner-doctor at eight the next morning rather than at eleven at night. If
 > that is not what was meant, one expression changes.
 
+> **Implementation note, 18 September 2026 (Slice 3B).** The adapter, the
+> signed statuses webhook and the protected worker contract are built —
+> `docs/SCHEMA_AND_TYPES.md` §16. **Nothing has been sent and no scheduler is
+> provisioned**, and the release gates in the closing paragraph below are
+> untouched and unwaived.
+>
+> Three things in it are worth the owner's attention rather than being buried:
+>
+> 1. **Item 79's clock now starts on an outcome nobody knows.** A message whose
+>    provider reply was lost is recorded as `outcome_unknown` — not sent, not
+>    failed — and is never retried, because Meta documents no idempotency
+>    mechanism on its send endpoint and a blind retry is how one reminder
+>    becomes two. Slice 3B starts the four-clinic-hour escalation clock on that
+>    state, so it can reach the owner-doctor's queue. Without it such a message
+>    would sit in the admin's queue for ever. It is still not called a failure.
+> 2. **A defect Slice 3A shipped is fixed.** A queued message whose usefulness
+>    deadline passed was silently dropped from the worker's candidate list and
+>    left at `queued`, which is not a status the failure queue reads — so the
+>    clinic would never have learned that a patient had not been told. It is
+>    now suppressed with `past_useful_by` and appears in the admin's queue.
+> 3. **Two numbers and one payload shape have no owner decision and no live
+>    validation behind them**, and say so where they are defined: a thirty-second
+>    provider timeout, a fifteen-minute age before an abandoned call is written
+>    off, and whether the clinic's approved Meta templates take named or
+>    positional parameters. The third is one constant, to be confirmed against
+>    the real account before the first send.
+
 | # | Question | Approved policy | Status |
 |---:|---|---|---|
 | 76 | Which channel is used for patient messaging? | Use **both**, for different jobs. Automated clinic-initiated patient messages use only the official WhatsApp Cloud API. Patient-initiated conversations and a staff-confirmed fallback may start through a `wa.me` deep link or QR code. A deep link never masquerades as an automated delivery, and no unofficial WhatsApp library or QR-paired automation is permitted. If the official channel is unavailable or not approved, suppress the automated send and put the work in a staff queue. | Approved |

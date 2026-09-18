@@ -413,3 +413,173 @@ receipt attached, and give it to whoever keeps the books. Clearing it needs item
 reset their PIN. Image tickets die with the session; patient data is
 server-side; no clinical photograph is in local storage or a device gallery.
 Then read the image access report for anything that happened after the loss.
+
+---
+
+## 9. Patient messaging: what to provision, and what has to be true first
+
+**None of this has been run.** Slice 3B built the adapter, the webhook and the
+protected worker endpoint; it provisioned no scheduler, created no credential,
+submitted no template and has never contacted Meta. This section is the
+procedure for when the owner decides to switch patient messaging on, written
+while it is still fresh, and deliberately not executed.
+
+Until it is run the clinic behaves exactly as it does today: every due reminder
+and recall is suppressed into the admin's queue with `channel_not_configured`
+against it, and the worker endpoint refuses every request. Nothing is silently
+dropped and nothing pretends to send.
+
+### 9.1 Gates that must close before any of it
+
+These are release gates, not a checklist to work around. Owner section M's
+closing paragraph names most of them and this slice does not waive any.
+
+1. **A verified WhatsApp Business account**, a dedicated number, and an
+   approved display name. Read `reference/WHATSAPP.md` §0 first: the question
+   of whether an *unverified* account may send a template to a non-test
+   recipient at all is **still open**, and §9.5 below records exactly how far
+   this slice's research got.
+2. **The clinic's published privacy notice.** Required by Meta for the account
+   and by DPDP regardless. Cloud API messages are not end-to-end encrypted —
+   `WHATSAPP.md` §6 — so Meta is a processor in the chain and the notice has to
+   say so.
+3. **Approved templates, on both sides.** The clinic's own approval is a
+   doctor's (owner item 81) and is recorded by `approve_message_template`;
+   Meta's is recorded separately by `record_provider_template_state`. A message
+   needs both, and either can be withdrawn alone.
+4. **The parameter format confirmed.** The adapter sends *named* body
+   parameters, matching the clinic's own `{{lower_snake_case}}` bodies. If the
+   templates are registered with Meta positionally, change
+   `BODY_PARAMETER_FORMAT` in `_shared/whatsapp-cloud.ts` before the first
+   send. This is the one provisional constant in the payload.
+5. **One real message, to a staff member's own phone**, before any patient
+   number is in the system. Nothing in this repository has ever been answered
+   by Meta.
+
+### 9.2 Secrets, and where they go
+
+Six values, none of which exists in this repository, in `.env.example`, in any
+migration or in any test:
+
+```text
+WHATSAPP_ACCESS_TOKEN      the system-user token
+WHATSAPP_PHONE_NUMBER_ID   the business number's id
+WHATSAPP_APP_SECRET        signs the webhook; the app's secret, not the token
+WHATSAPP_VERIFY_TOKEN      a string you choose, given to Meta once
+WHATSAPP_API_VERSION       optional; defaults to v23.0
+CLINIC_WORKER_TOKEN        a long random string, for the scheduler only
+```
+
+```bash
+npx supabase secrets set --project-ref <ref> WHATSAPP_ACCESS_TOKEN=... \
+  WHATSAPP_PHONE_NUMBER_ID=... WHATSAPP_APP_SECRET=... \
+  WHATSAPP_VERIFY_TOKEN=... CLINIC_WORKER_TOKEN=...
+```
+
+`CLINIC_WORKER_TOKEN` is not a staff credential and must never be given to a
+person or put on a tablet. Anyone holding it can make the clinic run a dispatch
+cycle — not send anything the clinic had not already decided to send, but
+sooner than it meant to.
+
+**The four `WHATSAPP_*` values are all-or-nothing.** There is no partial mode:
+until all four are set the adapter is fully disabled and the webhook refuses
+every request including a correctly signed one.
+
+### 9.3 Deploying the two new functions
+
+```bash
+npx supabase functions deploy whatsapp --project-ref <ref>
+npx supabase functions deploy worker   --project-ref <ref>
+```
+
+Then give Meta the webhook URL — `https://<ref>.supabase.co/functions/v1/whatsapp`
+— and the verify token, and subscribe to the **messages** field. Meta calls
+the URL with `hub.mode=subscribe` and expects `hub.challenge` back; if the
+token does not match exactly the endpoint answers 403 and the subscription
+fails, which is the correct outcome for a wrong token.
+
+Verify before going further: the challenge succeeds, and a deliberately
+mis-signed POST is refused with 403 and changes nothing.
+
+### 9.4 The scheduler — the part that is not built
+
+Supabase's documented answer is `pg_cron` calling `pg_net`, with the token in
+Vault. An external scheduler calling the same endpoint with the same header is
+equivalent and is the better choice if one already exists, because it keeps the
+secret out of the database.
+
+**Supabase documents no protection against overlapping runs**, which is why the
+worker is built to be safe under them rather than relying on the scheduler not
+to produce them.
+
+Never put the token or the deployment URL in a migration. Both are
+deployment-specific, and a migration is committed.
+
+```sql
+-- Run BY HAND against the clinic database, never as a migration.
+-- Requires the pg_cron and pg_net extensions and a Vault secret named
+-- 'clinic_worker_token' holding CLINIC_WORKER_TOKEN.
+select cron.schedule(
+  'clinic-dispatch',
+  '*/5 * * * *',
+  $$
+  select net.http_post(
+    url := 'https://<ref>.supabase.co/functions/v1/worker',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' ||
+        (select decrypted_secret from vault.decrypted_secrets
+          where name = 'clinic_worker_token')
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
+```
+
+Five minutes is the coarsest interval that still honours the rules: an 18:00
+reminder and a 09:00 recall both have to go out close to the minute they are
+due, and item 79's three attempts have to fit inside two hours.
+
+The cycle is cheap when there is nothing to do — two indexed queries over
+`status = 'scheduled'` and the dispatchable set — so running it through the
+night costs almost nothing, and it dispatches nothing outside 08:00–20:00
+anyway.
+
+**Rollback.** One statement, effective immediately, and it loses nothing:
+
+```sql
+select cron.unschedule('clinic-dispatch');
+```
+
+Messages then accumulate at `scheduled`. The first cycle after it is restored
+suppresses the ones whose moment has passed with `past_useful_by` rather than
+sending a morning's worth of stale reminders at once. To stop sending without
+touching the scheduler, unset `CLINIC_WORKER_TOKEN` — the endpoint then refuses
+every call — or unset the `WHATSAPP_*` values, which sends every due message to
+the admin's queue with a truthful reason. All three are safe and all three are
+reversible.
+
+### 9.5 The WABA question, narrowed but not closed
+
+`reference/WHATSAPP.md` §0 lists four questions. This slice's reading of Meta's
+own current documentation resolved the second and narrowed the first:
+
+- **Resolved.** The messaging limit counts "the maximum number of unique
+  WhatsApp user phone numbers your business can deliver messages to … within a
+  moving 24-hour period", and "newly created business portfolios have a
+  messaging limit of 250". It is unique recipients, not messages, and the
+  clinic sees about 60 patients a day.
+- **Narrowed, not closed.** Meta's messaging-limits page does not state
+  explicitly whether an unverified account may send a template to a non-test
+  recipient at all. The existence of a 250 tier for a new portfolio points
+  strongly that way, and other official pages describe verification as
+  *raising* the ceiling rather than unlocking sending. That is an inference,
+  and it is not good enough to switch a clinic's patient channel on.
+- **Still open.** Whether the privacy-policy URL gates template *approval* or
+  template *sending*, and whether display-name approval requires business
+  verification first.
+
+**So it remains a release gate.** Resolve it from Meta's own account and
+documentation at the time, not from this paragraph and not from a vendor blog —
+`WHATSAPP.md` rule 10 exists because Meta changed this twice in 2026.

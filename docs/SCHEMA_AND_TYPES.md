@@ -3374,15 +3374,22 @@ in §15.8.
 None of these is unfinished Slice 3A work; each is a named piece of Slice 3B or
 later, and the clinic is complete and honest without them.
 
+> **Built in Slice 3B, 18 September 2026.** The first three entries below were
+> the state at the end of Slice 3A and are kept as the record of what it left.
+> The adapter and the webhook now exist — see §16 — and the scheduler's
+> contract is implemented while its provisioning is still deliberately not
+> done. Everything else in this list is still deferred.
+
 - **The provider adapter.** `officialWhatsAppChannel.send` refuses terminally.
   It is unreachable in practice because `configured()` is false without the
   five `WHATSAPP_*` variables and the prepare step then suppresses every due
-  message into the staff queue.
+  message into the staff queue. *(Slice 3B: built, §16.2.)*
 - **The authenticated provider webhook.** `applyProviderEvidence` holds the
   semantics — monotonic rank, duplicates and out-of-order evidence ignored,
   terminal truth never regressed — and is tested directly. No endpoint calls
   it, because an endpoint that takes delivery evidence must verify Meta's
-  signature and there are no credentials to verify against.
+  signature and there are no credentials to verify against. *(Slice 3B: built,
+  §16.5.)*
 - **Scheduler provisioning.** Nothing invokes the worker. `pg_cron`, `pg_net`,
   Vault and Supabase Queues are all unprovisioned. The contract a later slice
   has to satisfy: call `prepareDueMessages` and then `dispatchQueuedMessages`
@@ -3391,7 +3398,9 @@ later, and the clinic is complete and honest without them.
   current answer is `pg_cron` plus `pg_net` with the token in Vault; an
   external scheduler calling an authenticated Edge Function is equivalent.
   **Do not rely on in-process background work**: a Deno isolate recycled
-  mid-call is exactly the `outcome_unknown` case.
+  mid-call is exactly the `outcome_unknown` case. *(Slice 3B: the invocation
+  contract and its protected endpoint are built, §16.4 and §16.6. Nothing is
+  provisioned.)*
 - **The full recall-cohort release.** Slice 3A releases one recall at a time,
   by the responsible doctor or an authorized one. Owner item 80's saved,
   frozen, dry-runnable cohort is not built.
@@ -3405,3 +3414,257 @@ later, and the clinic is complete and honest without them.
 - **`ready_for_collection` and `service_interruption` schedule sources.** Both
   purposes exist for consent and templates; neither has an authoritative record
   behind it yet.
+
+---
+
+## 16. Backend programme Slice 3B: provider delivery and evidence
+
+`20260925000000_slice3b_provider_events.sql`. **One** new table, no change to
+any existing table, column, index, constraint or command response, and no
+backfill. Slice 3A's migration is untouched.
+
+Slice 3A ended one step in front of the network. Slice 3B takes that step: the
+adapter that speaks to Meta, the endpoint that hears back, and the protected
+contract a scheduler will call. It does **not** provision a scheduler, create a
+credential, submit a template, or contact Meta. With this clinic's connection
+still unconfigured the application behaves exactly as it did the day before —
+every due message suppressed into the admin's queue with
+`channel_not_configured` against it — which is the only honest thing a clinic
+with no WhatsApp Business account can do.
+
+### 16.1 What was added
+
+| File | What it is |
+|---|---|
+| `_shared/messaging-transport.ts` | The transport vocabulary, moved out of `messaging.ts` into a leaf module so the adapter and the state machine do not import each other. Every name `messaging.ts` exported, it still exports. |
+| `_shared/whatsapp-cloud.ts` | **The only file that addresses `graph.facebook.com`.** Builds the template payload, calls once, and normalizes the answer. |
+| `_shared/internal-auth.ts` | How this application authenticates something that is not a person. See §16.6. |
+| `functions/whatsapp/index.ts` | Meta's verification challenge and its signed statuses webhook. |
+| `functions/worker/index.ts` | The protected endpoint one dispatch cycle runs behind. |
+| `message_provider_events` | One authenticated status event, deduplicated durably. |
+
+There are now **fifteen** Edge Functions. The two new ones are the only two
+that are not driven by a member of staff holding a session.
+
+### 16.2 The transport boundary
+
+`MessageChannel` has four fields and two methods and nothing Meta-shaped in
+any of them. The durable state machine never sees a `fetch`, a Graph URL or a
+Meta response object; it asks a channel whether it is configured and then asks
+it to send. Every test in this repository runs against a channel that refuses
+at construction to address anything but loopback.
+
+What the production adapter is allowed to decide is the payload, the endpoint
+and what an answer means. What it may not decide is anything about consent,
+quiet hours, retries or whether a message is worth sending — all of that is
+settled under a row lock before `send` is called, and re-asked there.
+
+**Clinic-initiated sends are approved template messages only.** A free-text
+message is not expressible on this path: `buildTemplatePayload` writes
+`type: 'template'` and there is no branch that writes `type: 'text'`.
+
+### 16.3 What Meta's documentation says, and what is still provisional
+
+Verified against Meta's own current documentation and cited where used:
+
+| Fact | Consequence here |
+|---|---|
+| `POST /messages` answers `message_status` of `accepted`, `held_for_quality_assessment` or `paused` | All three are `sent_to_provider`, rank 1. None is delivery. |
+| **No idempotency mechanism is documented on `POST /messages`** | This is load-bearing. It is the whole reason a lost reply may not be retried. |
+| `biz_opaque_callback_data` is a business-assigned string echoed back in the status webhook | It carries the clinic's `idempotency_key`, and it is the only thread back to a message whose reply was lost. |
+| Status events are `sent`, `delivered`, `read`, `played`, `failed` | `read` and `played` are recorded as `delivered`: a message the patient opened was certainly delivered. |
+| Meta retries a webhook until it gets a 200, for up to seven days | Duplicates are documented behaviour, so the webhook answers 200 to everything it has authenticated. |
+| `X-Hub-Signature-256` is HMAC-SHA256 of the payload with the app secret | Verified over the raw request bytes, before parsing. |
+| The documented error codes, and whether Meta's own recommended action is to wait or to change something | The retryable/terminal map in `whatsapp-cloud.ts`, each entry traceable to Meta's own wording. |
+
+**Provisional, and marked as such in the code because no live provider has
+ever answered it:** the send-side shape of a named body parameter
+(`parameter_name`). Meta documents named parameters as `{{lower_snake_case}}`
+at template creation, which is exactly the syntax the clinic's template bodies
+already use and the schema's six-name whitelist already enforces. If provider
+validation shows the clinic's templates were registered positionally, one
+constant changes: `BODY_PARAMETER_FORMAT`.
+
+Also provisional, and stated as having **no owner item** behind them:
+`PROVIDER_TIMEOUT_MS` (30 seconds) and the stale-attempt age in
+`recoverStaleAttempts` (15 minutes).
+
+### 16.4 The worker, and what it re-asks under the lock
+
+`runDispatchCycle` is recover, then prepare, then dispatch. It calls shared
+domain code directly rather than making requests to other Edge Functions:
+every hop is another place a reply can be lost, and a lost reply here is the
+most expensive kind this application has.
+
+A claim takes the message row with `for update ... skip locked` and re-asks,
+under that lock, every bound that could have changed since the row was
+selected: the schedule still being live, consent, the template's clinic AND
+provider approval, the attempt ceiling, the two-hour retry window, the
+usefulness deadline. Only then is the attempt row written — **before** the
+provider is called — and the message moved to `outcome_unknown`.
+
+Two concurrent workers therefore produce one attempt: one holds the row, the
+other skips it. Running the cycle twice, late, or never is safe, and the
+worker endpoint's own comment says exactly why for each.
+
+**`outcome_unknown` is never retried by anything.** It is not in the
+dispatchable set, and no elapsed time moves it out. Only provider evidence
+settles it.
+
+#### The defect this slice found and fixed
+
+`dispatchQueuedMessages` selected candidates with `and useful_until > now`.
+That filtered an expired message out of the candidate list, so `claimAttempt`
+— which holds the only code that suppresses one with `past_useful_by` — was
+never reached for exactly the rows that needed it. The message did not go out,
+which was right. It also stayed at `queued` for ever, which was not: `queued`
+is not one of the statuses the admin's failure queue reads, so a reminder that
+quietly expired became invisible to everybody, and the clinic would never learn
+that a patient had not been told.
+
+The deadline is now asked once, under the row lock, where the answer can be
+recorded. Selecting a row is not a decision to send it; every such decision
+belongs under the lock, and this was the only one that had leaked out.
+
+#### What a stale lease is, and what it is not
+
+The claim is **not** a lease that expires and hands the work to somebody else.
+That shape must not exist here: the second worker would send a second copy of a
+message the first may well have delivered.
+
+What goes stale is the *attempt* row. `in_flight` means a call is in progress,
+and once the worker's process is gone that is no longer true of anything.
+`recoverStaleAttempts` settles those rows as what they are — a call this clinic
+never heard the end of — and touches the message not at all. The attempt stops
+claiming to be running, the message stays `outcome_unknown`, and nothing is
+retried.
+
+`first_failed_at` **is** stamped on an ambiguous outcome, and that is a Slice
+3B decision worth being explicit about. It does not declare the message failed;
+the status still says nobody knows. It starts item 79's four-clinic-hour clock,
+because `readCommunicationFailures` measures escalation from that column and a
+null there would leave the row in the admin's queue for ever without ever
+reaching the owner-doctor. An outcome nobody knows is the state most likely to
+need a person to pick up a telephone, so it is the last one that should be
+unable to escalate.
+
+### 16.5 The webhook
+
+```text
+GET  /functions/v1/whatsapp   hub.mode + hub.verify_token + hub.challenge
+POST /functions/v1/whatsapp   X-Hub-Signature-256 over the raw bytes
+```
+
+The order is fixed and is not an ordering anybody may tidy:
+
+1. read the **raw bytes** of the body
+2. HMAC-SHA256 them with the app secret, compare in constant time
+3. only then parse
+
+Reading the body as text and re-encoding it, or parsing the JSON and
+re-serializing it to check the signature, verifies a document Meta did not
+sign. It usually happens to be byte-identical, and stops being so at the first
+non-ASCII character — a patient's name — or the first difference in key order
+or whitespace. `verifyWebhookSignature` takes bytes for that reason.
+
+A missing, malformed or wrong signature changes nothing: not a row, not a
+counter, not an audit entry. The verify token is compared in constant time and
+returns false when unset, so an unconfigured clinic cannot be subscribed to by
+anybody.
+
+**Deduplication is durable.** The event row is inserted *before* the evidence
+is applied and in the same transaction, against a unique index on
+`(provider_reference, status)`. Two webhooks carrying the same event race on
+that index: one inserts and applies, the other is refused and rolls back having
+changed nothing. There is no ordering in which both apply.
+
+**Ordering cannot regress truth.** Evidence may only raise `delivery_rank`, and
+`delivered` and `failed_terminal` are settled — nothing later moves them. A
+`sent` arriving after `delivered` is recorded with effect `ignored`.
+
+**Acceptance cannot masquerade as delivery.** `accepted`,
+`held_for_quality_assessment` and `paused` are answers to the POST, are not
+status words, and never travel through this path. Rank 1 is the strongest thing
+a POST can ever produce.
+
+**It discloses nothing.** An event naming a message this clinic never sent gets
+the same 200 and the same body as one that moved something, and is recorded
+with effect `unknown_reference`. Answering 404 would both turn a stranger's
+probe into a week of Meta retries and confirm to anyone who can guess an
+identifier whether this clinic has a message by that name.
+
+It handles delivery statuses only. Inbound patient messages arrive on the same
+webhook and are deliberately ignored: replying to a patient is a conversation
+feature with its own consent, window and staffing questions, and owner item
+82's rule that a patient-initiated conversation is not standing consent is
+exactly the sort of thing that gets lost if an endpoint quietly starts
+processing inbound text because it was already receiving it.
+
+### 16.6 Authenticating something that is not a person
+
+Until this slice, every Edge Function fell into two categories: eleven
+authenticate a person through a session, and two are deliberately
+unauthenticated. **There was no third category, and the dispatch worker is
+one** — it is called by a scheduler whether or not anybody is in the building.
+
+That contract gap is recorded at the top of `internal-auth.ts`. The smallest
+thing that closes it is one shared secret, `CLINIC_WORKER_TOKEN`, compared in
+constant time, with no fallback and no development default. It is deliberately
+not a new table, a new role, a service-account staff row or a JWT: each is a
+larger contract than the problem, and a staff row that cannot sign in but can
+act is the kind of thing that ends up with a PIN.
+
+**A staff session is not a key to this door.** The most privileged
+administrator's bearer token is refused there exactly as an anonymous one is,
+and a test walks all five roles against it. An unset secret refuses everybody,
+including a correct caller — an unset secret must never mean "no check", which
+is the failure mode `auth.ts` was already bitten by once.
+
+### 16.7 Configuration, and none of its values
+
+| Variable | Without it |
+|---|---|
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` | The adapter is fully disabled. Every due message is suppressed with `channel_not_configured`, and the webhook refuses every request including a correctly signed one. All four, or nothing — there is no partial mode. |
+| `WHATSAPP_API_VERSION` | Defaults to `v23.0`. |
+| `CLINIC_WORKER_TOKEN` | The worker endpoint refuses every request. |
+| `CLINIC_PUBLIC_PAGE_URL` | Unchanged from Slice 3A: a template interpolating `{{link}}` is suppressed with `link_destination_unavailable`. |
+
+**No value for any of these is created, committed or configured by this
+slice.** They are read at call time rather than at module load, which is the
+one behavioural change to `whatsapp.ts`: same variables, same answers, and a
+configured path that can now be tested at all.
+
+### 16.8 Compatibility
+
+`send_order`, `send_patient_whatsapp`, `whatsapp_messages` and the whole staff
+composer are unchanged, and are now characterized rather than only asserted:
+the composer still reads `patients.whatsapp_consent`, the blanket registration
+flag, and not the per-purpose consent table. It writes nothing into the outbox.
+**There are not two sending paths writing to one set of records** — the two
+share exactly `dialable`, so a number is normalized once rather than twice, and
+that was already true in Slice 3A.
+
+Moving the composer onto per-purpose consent stays deferred. It is a decision
+about what the registration checkbox means, and owner item 78 says a
+registration choice is valid only for the purposes it names.
+
+Nothing joins the snapshot. No frontend workspace was added.
+
+### 16.9 Still deferred after this slice
+
+Everything in §15.8 except the adapter and the webhook, and specifically:
+
+- **Scheduler provisioning.** No `pg_cron` job, no `pg_net` call, no Vault
+  secret, no queue, and no deployment-specific URL or credential in any
+  migration. The steps, prerequisites and rollback are in
+  `docs/operations/ROLLOUT.md` §8 and are deliberately not run.
+- **Real provider validation.** No approved Meta template, no credential, no
+  message has ever been sent, and no line of the adapter has been answered by
+  Meta. The named-parameter shape and both implementation constants above are
+  provisional until it has.
+- **The clinic privacy notice**, and the unresolved WABA question in
+  `reference/WHATSAPP.md` §0 — narrowed by this slice's research but still a
+  release gate.
+- **The full recall-cohort release**, **the frontend messaging workspace**, the
+  `send_patient_whatsapp` consent cutover, and the `ready_for_collection` and
+  `service_interruption` schedule sources.

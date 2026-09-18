@@ -1174,6 +1174,25 @@ describe('owner item 79’s ceiling, window and ownership', () => {
     assert.equal(
       await scalar('select failure_owner_role from jmc.message_outbox where id=$1', [id]), 'admin')
 
+    /*
+     * ── A TIME BOMB, DEFUSED 18 SEPTEMBER 2026 (Slice 3B) ──────────────────
+     *
+     * This test used to leave `first_failed_at` wherever the dispatch put it,
+     * which is the instant supplied above: 09:00 clinic-local TODAY. But
+     * `readCommunicationFailures` measures escalation against the database's
+     * real `now()`, not against a supplied instant — it is a read model and
+     * takes no clock. So the four clinic hours had genuinely elapsed whenever
+     * the suite happened to run at or after 13:00 clinic-local, and this
+     * assertion flipped to true.
+     *
+     * It is the same fault this repository has been bitten by before — a wall
+     * clock inside a fixture — and it was found by running the suite in the
+     * afternoon. The assertion's MEANING is "a failure that has just happened
+     * has not escalated yet", so the failure is now stamped against the clock
+     * the read actually uses. Nothing about the rule under test changed.
+     */
+    await rows(`update jmc.message_outbox set first_failed_at = now() where id=$1`, [id])
+
     const fresh = await messaging.readCommunicationFailures(sessionFor(built.admin))
     assert.equal(fresh.ownedBy, 'admin')
     assert.equal(fresh.failures.length, 1)

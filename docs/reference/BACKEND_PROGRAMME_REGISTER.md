@@ -247,7 +247,7 @@ Read a row and its entry together.
 | W3 | 1 | **closed** — `workspace` workload, list, progress, obligations | indexes only (`20260919000000`) | none | none | done — contract §5–§7 |
 | W4 | 1 | **closed** — `workspace?view=outcome` | none | none — no existing union was widened; the answer is a new endpoint, not a new status member | none | done — contract §8 |
 | W5 | 2 | **closed — accepted 17 September 2026 after six corrections** — `20260920000000` + `20260921000000` + `20260922000000` + `20260923000000` | yes: six tables, five columns on `appointments` and seven on `appointment_events`, three unique indexes, three composite FKs, two checks added, one index dropped and one constraint replaced | low — walk-in path untouched; one refusal code changed on a path the deployed client cannot reach | none | done — [`SLICE2_FRONTEND_CONTRACT.md`](SLICE2_FRONTEND_CONTRACT.md) |
-| W6 | 3 | **half built** — Slice 3A is implemented against owner items 76–83; Slice 3B (adapter, webhook, scheduler) has not started | done: `20260924000000` adds the five tables | low | official-provider validation and credentials — **not** this programme's to provision | failure queue; consent suppression; delivery states |
+| W6 | 3 | **built, unprovisioned** — Slice 3A (contract and state machine) and Slice 3B (adapter, signed webhook, protected worker contract) are implemented against owner items 76–83. No scheduler, no credential, nothing sent | done: `20260924000000` adds the five tables; `20260925000000` adds `message_provider_events` | low | official-provider validation, approved templates, credentials, scheduler provisioning and the privacy notice — **not** this programme's to provision | failure queue; consent suppression; delivery states; signature and replay; duplicate and out-of-order evidence; concurrent workers |
 | W7 | 4 | blocked on D13–D17 | yes: catalogue, orders, results | low | an external lab's report format, eventually | pending-review and overdue queues |
 | W8 | 5 | blocked on D18–D22 | yes: grants, intake, uploads | low | none | grant issue/revoke; what a grant resolves to |
 | W9 | 6 | open | none | none | **R2 credentials in CI — needs explicit approval** | none (operational) |
@@ -740,7 +740,7 @@ consultation/visit reconciliation questions were approved on 15 September 2026
 as owner-policy items 65–74, and [§12](#12-slice-2-what-was-built) records
 what each of them became. W1 and W5 are both closed.
 
-**Slice 3A is built; Slice 3B has not started.** D8 to D12c were approved on
+**Slice 3A and Slice 3B are built.** D8 to D12c were approved on
 17 September 2026 as owner-policy items 76–83: channel, timing and quiet hours,
 per-purpose consent, delivery-failure ownership and escalation, recall cohorts,
 template approval/versioning, opt-out, and clinician-created eligibility.
@@ -751,13 +751,42 @@ and holds no credential; with the clinic's Meta connection unconfigured every
 due message is suppressed into the admin's queue with a reason, which is owner
 item 76's own instruction rather than a placeholder.
 
-**Slice 3B is the next bounded step**: the provider adapter behind the existing
-injectable channel, an authenticated deduplicated statuses webhook calling the
-`applyProviderEvidence` semantics that already exist and are tested, and the
-scheduling mechanism written down in `SCHEMA_AND_TYPES.md` §15.8. Production
-still requires current provider-policy validation, approved templates,
-credentials and the clinic privacy notice; those are release dependencies, not
-permission to invent a second provider path or to weaken the approved policy.
+**Slice 3B, 18 September 2026**, built the three things that slice named: the
+provider adapter behind the existing injectable channel, an authenticated
+statuses webhook with durable event deduplication, and the protected worker
+endpoint a scheduler will call. `SCHEMA_AND_TYPES.md` §16 is the contract.
+
+It **still sends nothing**. No credential, no approved Meta template, no
+`pg_cron` job, no `pg_net` call, and no line of the adapter has been answered by
+Meta. The clinic's behaviour is unchanged from the day before: every due message
+suppressed into the admin's queue with `channel_not_configured`, which is owner
+item 76's own instruction.
+
+Two findings from it belong in this register rather than only in the contract:
+
+- **A Slice 3A defect, found and fixed.** `dispatchQueuedMessages` filtered
+  expired messages out of its candidate list, so the only code that suppresses
+  one with `past_useful_by` was never reached for exactly those rows. They
+  stayed at `queued` — a status the failure queue does not read — so a reminder
+  that quietly expired became invisible to everybody. The deadline is now asked
+  once, under the row lock, where the answer can be recorded.
+- **A contract gap, documented and then closed.** Every Edge Function until now
+  either authenticated a person or was deliberately open. The dispatch worker
+  is neither: it is called by a scheduler with nobody in the building. The gap
+  is written out at the top of `_shared/internal-auth.ts` and closed with one
+  shared secret compared in constant time, refusing everybody while unset. A
+  staff session is not a key to that door.
+
+Production still requires current provider-policy validation, approved
+templates, credentials, scheduler provisioning and the clinic privacy notice;
+those are release dependencies, not permission to invent a second provider path
+or to weaken the approved policy. The **unverified-WABA question is narrowed
+and still open** — `reference/WHATSAPP.md` §0 and `operations/ROLLOUT.md` §9.5.
+
+**The next bounded step is not more of Slice 3.** What remains in it — the
+recall cohort (owner item 80) and the frontend messaging workspace — are both
+larger than this slice, and neither can be validated until a real provider
+connection exists.
 
 | Question | Approved policy, 15 September 2026 | Status |
 |---|---|---|
