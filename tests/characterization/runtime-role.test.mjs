@@ -90,6 +90,23 @@ async function ownSchema(owner) {
         select c.relname, c.relkind from pg_class c
           join pg_namespace n on n.oid = c.relnamespace
          where n.nspname = 'jmc' and c.relkind in ('r', 'v', 'S')
+           -- A sequence that belongs to a column is not a thing you can hand
+           -- to somebody on its own: PostgreSQL raises 0A000, "cannot change
+           -- owner of sequence ... is linked to table". It does not need to
+           -- be, either — ALTER TABLE ... OWNER TO carries its owned sequences
+           -- with it, so skipping them here leaves them correctly owned.
+           --
+           -- This is filtered rather than tolerated because the alternative is
+           -- an exception handler, and an exception handler here would also
+           -- swallow the day a real table refuses to change hands. Slice 3A's
+           -- communication_consents.sequence_no was the first identity column
+           -- in jmc, and it broke this loop the moment it landed.
+           and not (c.relkind = 'S' and exists (
+             select 1 from pg_depend d
+              where d.classid = 'pg_class'::regclass
+                and d.objid = c.oid
+                and d.refclassid = 'pg_class'::regclass
+                and d.deptype in ('a', 'i')))
       loop
         execute format('alter %s jmc.%I owner to %I',
           case item.relkind when 'r' then 'table' when 'v' then 'view' else 'sequence' end,

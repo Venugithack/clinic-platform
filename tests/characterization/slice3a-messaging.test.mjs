@@ -531,14 +531,27 @@ describe('a reminder exists only while there is something to be reminded about',
 
   test('a booking made after 18:00 the day before gets a confirmation instead', async () => {
     const { owner, patientId } = await clinic()
+
+    // A week out, like every other booking in this file, and that distance is
+    // load-bearing rather than arbitrary. `book_appointment` reads the real
+    // clock — only the sync below is handed one — so the booking's own kind is
+    // decided by the hour this test happens to run at. Booked for tomorrow,
+    // 18:00 "the day before" is 18:00 today: run the suite in the morning and
+    // the booking is a reminder, run it after six and the booking is already a
+    // confirmation, there is no reminder left to supersede, and the assertions
+    // below fail on a clock rather than on a defect. It did, nightly, until
+    // 18 September 2026.
+    //
+    // Seven days out, 18:00 on day six is ahead of now at every hour of the
+    // day, so the booking is always a reminder and this test is about what it
+    // says it is about: the sync after the boundary replacing it.
     const booked = await as(owner, 'book_appointment', {
-      patientId, scheduledAt: await at(1, '09:00'), reason: 'Review',
+      patientId, scheduledAt: await at(7, '10:30'), reason: 'Review',
     })
 
-    // The clock is supplied rather than read, so this says the same thing at
-    // any hour: it is now the morning of the appointment, and 18:00 yesterday
-    // has gone.
-    const morningOfTheAppointment = await clinicInstant(1, '08:00:00')
+    // Supplied rather than read: it is now the morning of the appointment, and
+    // 18:00 the day before has gone.
+    const morningOfTheAppointment = await clinicInstant(7, '08:00:00')
     await db.transaction(() => messaging.syncAppointmentSchedule({
       actorId: owner.id,
       bookingId: booked.data.bookingId,

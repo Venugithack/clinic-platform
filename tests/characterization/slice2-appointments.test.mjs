@@ -1336,22 +1336,51 @@ describe('the work lists behind the counts', () => {
 
   test('a booking past its half hour is offered for no-show review, and stays checkable-in', async () => {
     const { doctor, nurse, patientId } = await clinic()
+
+    // One instant, computed once and passed in, rather than `now()` evaluated
+    // again inside the insert. The two halves of this test ask different
+    // questions of the same timestamp and they must be asking about the same
+    // one, even if the clock ticks between statements.
+    const scheduledAt = String(await scalar(
+      `select to_char(now() - interval '45 minutes', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`))
+
     await rows(
       `insert into jmc.appointment_bookings
          (id, patient_id, doctor_id, scheduled_at, duration_minutes, reason, status, booked_by)
-       values ($1,$2,$3, now() - interval '45 minutes', 15, 'Fever', 'booked', $3)`,
-      [randomUUID(), patientId, doctor.id],
+       values ($1,$2,$3,$4::timestamptz, 15, 'Fever', 'booked', $3)`,
+      [randomUUID(), patientId, doctor.id, scheduledAt],
     )
     const token = await tokenFor(nurse)
 
+    // No-show review is deliberately NOT bounded to the clinic day — a booking
+    // from last Thursday that nobody closed is exactly what it is for — so
+    // this half is true at every hour and is asserted unconditionally.
     const review = await edgeGet('workspace', '?view=list&list=list.no_show_review', token)
     assert.equal(review.body.list.count, 1)
     assert.ok(review.body.list.rows[0].minutes_late >= 45)
 
+    // The other half is bounded to the clinic day, and for forty-five minutes
+    // after clinic-local midnight the two cannot both be true of one booking:
+    // `appointments_today` wants today, `late` wants NO_SHOW_AFTER_MINUTES (30)
+    // elapsed, and a clinic day eighteen minutes old has no instant that is
+    // both. That is the policy being correct, not a defect, so the test asks
+    // the database which day the booking landed on and asserts whichever
+    // statement is the true one — rather than asserting the overlap and going
+    // red nightly between 00:00 and 00:44, which is what it did until
+    // 19 September 2026.
+    const sameClinicDay = await scalar(
+      `select ($1::timestamptz at time zone 'Asia/Kolkata')::date
+            = (now() at time zone 'Asia/Kolkata')::date`, [scheduledAt])
+
     const expected = await edgeGet('workspace', '?view=list&list=list.appointments_today', token)
-    assert.equal(expected.body.list.count, 1,
-      'a late patient is still the person about to walk through the door')
-    assert.equal(expected.body.list.rows[0].late, true)
+    if (sameClinicDay === true) {
+      assert.equal(expected.body.list.count, 1,
+        'a late patient is still the person about to walk through the door')
+      assert.equal(expected.body.list.rows[0].late, true)
+    } else {
+      assert.equal(expected.body.list.count, 0,
+        'the clinic day has just turned over, so a booking 45 minutes ago belongs to yesterday')
+    }
   })
 
   test('the queue list carries the urgency the snapshot withholds', async () => {
