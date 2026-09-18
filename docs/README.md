@@ -324,9 +324,11 @@ It is rewritten here against what `npm run` actually does today.
 | `npm run test:db` | **888 tests** over thirty files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83, and Slice 3B's provider adapter, dispatch worker and authenticated webhook — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, and a consent withdrawal racing a worker that is already preparing it. **No test here makes an external provider request**: the messaging channel is injected, the test adapter refuses at construction to address anything but loopback, and the Slice 3B suite replaces `fetch` itself with a stub that throws and records, then asserts at the end that nothing was ever attempted. |
 | `npm run test:browser` | **66 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
-| `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
+| `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. A **fresh dump**, out and back. |
+| `npm run staging:archive-drill` | **85 checks.** The stored-object restore proof, rehearsed against a directory standing in for the bucket: the real `scripts/db-restore-archive.sh` selects an object out of a retention prefix, downloads it, compares sizes, decrypts it with a throwaway age identity, verifies the gzip stream, restores it into a generated loopback scratch database and counts it. The rest of the checks are the refusals — traversal, cross-prefix, an unencrypted object, a zero-byte object, a short transfer, corrupted ciphertext, a wrong identity, a broken gzip stream, unloadable SQL, a non-loopback target, the live and staging database names, an existing database, the backup writer's own credentials — plus that no rclone write ever runs, that nothing secret or identifying reaches the output, and that the temporary files and the scratch database are gone afterwards on every path. It reaches no network. |
 
-`test:db`, `test:browser`, `staging:rehearse` and `staging:drill` all refuse any
+`test:db`, `test:browser`, `staging:rehearse`, `staging:drill` and
+`staging:archive-drill` all refuse any
 database that is not a loopback scratch database — `scripts/staging/guard.mjs`,
 and `docs/operations/STAGING.md` §2 explains why that guard is not optional here.
 
@@ -394,15 +396,34 @@ Storage in the clinic. Every rule *this application* enforces is exercised;
 that the bucket is private and refuses an anonymous read is a deployment check,
 in `docs/operations/STAGING.md` §7.2.
 
-**Backups run; the archive itself has never been restored from.**
-`.github/workflows/backup.yml` dumps five times a day plus a nightly and a
-monthly, encrypts with `age` and uploads to R2. A nightly `restore-drill` job
-proves the dump-and-restore path works — but read what it actually does: it
-takes a *fresh* dump from the live database and restores that onto plain
-PostgreSQL 17. It never downloads the object it uploaded, never decrypts it,
-and so cannot tell you that what is sitting in R2 is readable. That gap is the
-one worth closing first, because it is the one that only shows up on the day it
-matters.
+**Backups run. The tooling to restore one now exists and is tested. No
+object in R2 has been restored from.** Those are three different things and
+this section has to keep them apart, because two of them are green and the
+third is the one that matters.
+
+1. **The dump-and-restore path is proven.** `.github/workflows/backup.yml`
+   dumps five times a day plus a nightly and a monthly, encrypts with `age` and
+   uploads to R2; its nightly `restore-drill` job takes a *fresh* dump from the
+   live database and restores it onto plain PostgreSQL 17. `npm run
+   staging:drill` is the same two scripts against staging. This proves
+   `pg_dump` output can be put back. It says nothing about the bucket.
+2. **The stored-object restore path is now built and tested — against a
+   directory.** `scripts/db-restore-archive.sh` selects an object from a
+   retention prefix, downloads it, checks it against the remote's size and
+   whatever checksum the remote offers, decrypts it with the age identity,
+   verifies the gzip stream, restores it into a generated loopback scratch
+   database, validates it by structure and counts only, and removes both the
+   scratch database and every temporary file. `npm run staging:archive-drill`
+   rehearses it end to end with synthetic fixtures, a generated throwaway
+   identity and a local directory acting as the bucket — 85 checks, no network.
+   This proves the tooling. It does not prove the clinic's archive.
+3. **No object in R2 has ever been fetched, decrypted or restored.** That is
+   still true, it is still W9, and it is still the gap worth closing first,
+   because it is the one that only shows up on the day it matters. Closing it
+   needs a read-only R2 token and the age identity on a protected GitHub
+   environment, and one approved run of `.github/workflows/archive-restore.yml`.
+   `docs/operations/ROLLOUT.md` §8.1 is the procedure and the exact owner
+   actions. **Production must not go live before it has been done once.**
 
 **There is still no branch protection.** Nothing forces a green CI before a
 merge to `main`.

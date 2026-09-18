@@ -250,7 +250,7 @@ Read a row and its entry together.
 | W6 | 3 | **built, unprovisioned** — Slice 3A (contract and state machine) and Slice 3B (adapter, signed webhook, protected worker contract) are implemented against owner items 76–83. No scheduler, no credential, nothing sent | done: `20260924000000` adds the five tables; `20260925000000` adds `message_provider_events` | low | official-provider validation, approved templates, credentials, scheduler provisioning and the privacy notice — **not** this programme's to provision | failure queue; consent suppression; delivery states; signature and replay; duplicate and out-of-order evidence; concurrent workers |
 | W7 | 4 | blocked on D13–D17 | yes: catalogue, orders, results | low | an external lab's report format, eventually | pending-review and overdue queues |
 | W8 | 5 | blocked on D18–D22 | yes: grants, intake, uploads | low | none | grant issue/revoke; what a grant resolves to |
-| W9 | 6 | open | none | none | **R2 credentials in CI — needs explicit approval** | none (operational) |
+| W9 | 6 | **open — tooling done, archive unproven** | none | none | **read-only R2 credentials and the age identity on a protected environment — needs owner approval** | none (operational) |
 | W10 | 6 | open | yes: export jobs, integration events | low | none | export request/status/download |
 | W11 | 7 | blocked on D23–D27 | yes: procurement profiles, supplier columns | **medium** — Orders UI must keep working | none | editable package-aware PO lines; `mark placed` |
 | W12 | 8 | open (D28–D30c refine it) | yes: discrepancies, credit-note columns | **high** — two live callers, one legacy | real supplier invoices (owner evidence gate I.1) | receiving prefill from a PO; discrepancy resolution |
@@ -420,14 +420,43 @@ and the token index — is as proposed.
 - *Now:* `.github/workflows/backup.yml` dumps, encrypts with `age` and uploads
   to R2. The nightly `restore-drill` takes a **fresh dump** from the live
   database and restores that (`scripts/db-restore-drill.sh`). It never downloads
-  the uploaded object, never decrypts it. `docs/README.md` §6 describes this
-  accurately and calls it the gap worth closing first. It still is.
-- *Gap:* the archive's readability is unproven.
+  the uploaded object, never decrypts it.
+- *Gap:* the archive's readability is unproven. **Still true.**
 - *Policy:* safe technical default; the credential step needs approval.
 - *Contract:* a drill that fetches the actual stored object, checks integrity,
   decrypts and restores into a disposable scratch target.
-- *Blocker:* needs R2 credentials in CI. **Do not provision them without a new
-  instruction.** Implement the local/CI logic and report the external step.
+- *Built, 18 September 2026:* `scripts/db-restore-archive.sh` is that contract.
+  It selects one object from an approved retention prefix — by exact name or
+  the newest valid one — downloads it read-only, compares the transfer against
+  the remote size and whatever checksum the remote offers (naming which, since
+  on R2 the MD5 is the ETag and exists only for a single-part upload),
+  decrypts with the age identity, verifies the gzip stream, restores through
+  the existing `db-restore-drill.sh` into a generated
+  `clinic_restore_drill_archive_<random>` on loopback, validates by structure
+  and counts only, and removes the scratch database and every temporary file on
+  every exit path. `.github/workflows/archive-restore.yml` runs it behind a
+  `workflow_dispatch` and the protected `archive-restore` environment.
+  `npm run staging:archive-drill` rehearses the whole thing against a directory
+  standing in for the bucket: 85 checks, no network, synthetic fixtures, a
+  throwaway identity generated per run. Two objects are built from one dump so
+  that the rehearsal cannot pass by restoring the local dump instead of the
+  stored one — the newer object carries a marker table that exists nowhere else
+  and every plaintext is deleted before the first case runs.
+- *Three defects the rehearsal found in the tooling it was written for,* all
+  fixed and each now pinned by a case: the pre-existence check used
+  `psql -c "... :'db'"`, which does not interpolate, so it answered "no such
+  database" to every question and would have dropped a database the run did not
+  create; a `while read` over a newline-stripped `$(...)` dropped the final
+  line of a listing, which in a prefix holding exactly one object is the
+  object; and `rclone`'s exit status was being swallowed, so a refused
+  credential would have been reported as an empty bucket.
+- *Still open, and why:* **no object in R2 has been fetched.** Proving the
+  archive needs a read-only R2 token and the age private identity on a
+  protected GitHub environment, and this work was not authorized to create,
+  change or read any secret. The external steps are written out in
+  `operations/ROLLOUT.md` §8.1. **W9 closes when that workflow has run once,
+  cleanly, with the run URL and the object basename recorded here — not
+  because the script and the workflow exist.**
 
 **W10 · Exports are narrow and there is no integration-event contract**
 

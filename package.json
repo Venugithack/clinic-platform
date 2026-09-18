@@ -20,6 +20,7 @@
     "staging:down": "node scripts/staging/down.mjs",
     "staging:destroy": "node scripts/staging/down.mjs --destroy",
     "staging:drill": "node scripts/staging/restore-drill.mjs",
+    "staging:archive-drill": "node scripts/staging/archive-restore-rehearsal.mjs",
     "staging:rehearse": "node scripts/staging/migration-rehearsal.mjs"
   },
   "dependencies": {

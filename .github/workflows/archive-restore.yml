@@ -1,0 +1,181 @@
+name: Archive restore proof
+
+# The one thing the nightly Backup workflow does not prove.
+#
+# `backup.yml` dumps the clinic, encrypts it with age and uploads it to R2, and
+# its `restore-drill` job restores a FRESH dump onto a plain PostgreSQL 17. It
+# never downloads the object it uploaded and never decrypts one, so it cannot
+# tell you that what is sitting in R2 is readable. `docs/README.md` §6 calls
+# that the gap worth closing first, and W9 in
+# `docs/reference/BACKEND_PROGRAMME_REGISTER.md` is the item.
+#
+# This workflow closes it, once, by hand.
+#
+# ── WHY IT IS MANUAL AND WHY IT IS BEHIND AN ENVIRONMENT ──────────────────
+#
+# Running it means putting a credential that can read every clinical record in
+# the clinic's history in front of a CI runner, and putting the age private
+# identity beside it. That is not a thing to do on a schedule and not a thing
+# to do without somebody deciding to. So:
+#
+#   * workflow_dispatch only. No push trigger, no pull_request trigger, no
+#     schedule. Nothing makes this run by itself.
+#   * `environment: archive-restore`, which must be configured with an
+#     owner-approved REQUIRED REVIEWER. GitHub holds environment secrets back
+#     until the protection rules pass, so the five values below are not
+#     readable by this job — or by a pull request that edits this file — until
+#     a named human approves the run. That is the whole point of the
+#     environment: it is the approval, not just a label.
+#   * deployment branches for the environment should be limited to the default
+#     branch, so an approval cannot be spent on a workflow file from a fork or
+#     a topic branch.
+#
+# ── THE SECRETS, WHICH THIS REPOSITORY DOES NOT CREATE ────────────────────
+#
+# Five, all on the `archive-restore` environment and nowhere else:
+#
+#   R2_RESTORE_ACCESS_KEY_ID      an R2 API token restricted to "Object Read
+#   R2_RESTORE_SECRET_ACCESS_KEY  only" on the one clinic backup bucket. In
+#                                 Cloudflare's own words that permission
+#                                 "allows the ability to read and list objects
+#                                 in specific buckets" — no write, no delete,
+#                                 no bucket configuration. It must NOT be the
+#                                 token backup.yml uploads with.
+#   R2_RESTORE_ENDPOINT           https://<account>.r2.cloudflarestorage.com
+#   R2_RESTORE_BUCKET             the bucket name alone.
+#   BACKUP_AGE_IDENTITY           the PRIVATE age identity, beginning
+#                                 AGE-SECRET-KEY-1. This is NOT
+#                                 BACKUP_AGE_RECIPIENT, which is the public
+#                                 half and cannot decrypt anything;
+#                                 db-restore-archive.sh refuses the recipient
+#                                 by name if it is handed one.
+#
+# BACKUP_DB_URL is deliberately absent. It is not referenced anywhere in this
+# file, and scripts/db-restore-archive.sh refuses to start if it finds it — or
+# the backup writer's R2 credentials — in its environment at all.
+#
+# ── WHAT THIS WORKFLOW WILL NOT DO ───────────────────────────────────────
+#
+# It does not write, delete, rename or prune an object; it does not change the
+# retention set or the backup schedule; it does not upload an encrypted or a
+# decrypted database anywhere. The only artifact is the privacy-safe report,
+# which is schema names, table counts and byte counts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Which retention prefix to restore from
+        type: choice
+        options: [daily, hourly, monthly]
+        # daily rather than hourly: a daily object has survived a full day of
+        # pruning, so proving one is the closer answer to "can we recover from
+        # yesterday", which is the question this exists to answer.
+        default: daily
+      object:
+        description: >-
+          Exact object basename, e.g. clinic-20260918T163000Z.sql.gz.age.
+          Leave empty to take the newest valid object in the prefix.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two of these at once would race for the same scratch database name space on
+  # different runners and, more to the point, would spend two approvals on one
+  # question. Queue rather than cancel: a cancelled run mid-restore is the one
+  # shape that can leave a scratch database behind.
+  group: clinic-archive-restore
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    name: fetch · decrypt · restore · count
+    runs-on: ubuntu-24.04
+    environment: archive-restore
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install PostgreSQL 17, age and rclone
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-17 postgresql-client-17 age rclone
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Start a disposable PostgreSQL 17 on loopback
+        run: ./scripts/db-start.sh
+        env:
+          PGPORT: '54329'
+          PGHOST: 127.0.0.1
+          PGDATABASE: clinic_scratch_host
+
+      - name: Fetch one stored object, decrypt it, restore it and count
+        env:
+          # The read-only remote. Named `r2restore`, deliberately not `r2`:
+          # backup.yml's writer configures `r2`, and db-restore-archive.sh
+          # refuses to start if it finds RCLONE_CONFIG_R2_ACCESS_KEY_ID set.
+          RCLONE_CONFIG_R2RESTORE_TYPE: s3
+          RCLONE_CONFIG_R2RESTORE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2RESTORE_ACCESS_KEY_ID: ${{ secrets.R2_RESTORE_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2RESTORE_SECRET_ACCESS_KEY: ${{ secrets.R2_RESTORE_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2RESTORE_ENDPOINT: ${{ secrets.R2_RESTORE_ENDPOINT }}
+          R2_RESTORE_BUCKET: r2restore:${{ secrets.R2_RESTORE_BUCKET }}
+          BACKUP_AGE_IDENTITY: ${{ secrets.BACKUP_AGE_IDENTITY }}
+          ARCHIVE_KIND: ${{ inputs.kind }}
+          ARCHIVE_OBJECT: ${{ inputs.object }}
+          ARCHIVE_PROOF_REPORT: ${{ runner.temp }}/archive-restore-proof.txt
+          PGHOST: 127.0.0.1
+          PGPORT: '54329'
+        run: |
+          test -n "${R2_RESTORE_BUCKET#r2restore:}" || { echo "R2_RESTORE_BUCKET is not set on the archive-restore environment" >&2; exit 1; }
+          test -n "${BACKUP_AGE_IDENTITY}" || { echo "BACKUP_AGE_IDENTITY is not set on the archive-restore environment" >&2; exit 1; }
+          ./scripts/db-restore-archive.sh
+
+      # The script drops its scratch database and removes its temporary
+      # directory in a trap on every exit path. This step is for the path a
+      # trap cannot cover: the runner being cancelled or killed mid-restore.
+      # It only ever touches databases whose names say they are drill scratch.
+      - name: Clean up, whatever happened above
+        if: always()
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '54329'
+        run: |
+          set +e
+          psql -tAX -d postgres -c \
+            "select datname from pg_database where datname like 'clinic\_restore\_drill%'" \
+          | while read -r db; do
+              [ -n "${db}" ] || continue
+              # The LIKE above already filtered these, but the name is about to
+              # be interpolated into DROP DATABASE, so it is checked as a name.
+              case "${db}" in
+                clinic_restore_drill|clinic_restore_drill_*) ;;
+                *) echo "not dropping ${db}: not a scratch name"; continue ;;
+              esac
+              echo "dropping leftover scratch database ${db}"
+              psql -q -d postgres -c "drop database if exists ${db} with (force)"
+            done
+          # Both, because the script's mktemp follows TMPDIR and a runner does
+          # not always point that at /tmp.
+          rm -rf /tmp/clinic-archive-restore.* 2>/dev/null
+          rm -rf "${RUNNER_TEMP}"/clinic-archive-restore.* 2>/dev/null
+          exit 0
+
+      # The report and nothing else. It carries the retention kind, the object
+      # basename, byte counts, the encrypted object's SHA-256, schema names,
+      # table and row counts and the stage reached. No encrypted archive, no
+      # decrypted archive, no SQL, no clinic data. scripts/staging/
+      # archive-restore-cases.sh asserts that emptiness on every rehearsal.
+      - name: Upload the privacy-safe proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-restore-proof
+          path: ${{ runner.temp }}/archive-restore-proof.txt
+          retention-days: 30
+          if-no-files-found: ignore

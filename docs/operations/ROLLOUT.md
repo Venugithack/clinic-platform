@@ -296,7 +296,7 @@ select count(*) from information_schema.role_table_grants
 | The GST treatment of a refund that exceeds the payment it reverses | Whether a credit or debit note is required, against which original document, and in whose name. Nothing in this release issues, reverses or adjusts a tax document, and no accountant has read any of it. | Clinic accountant — I.7, policy item 57 |
 | Supabase Storage bucket policy: private, anonymous reads refused, service key not exposed | Staging writes to a directory; it exercises this application's rules, not Supabase's. | Deployment |
 | The deployed database role's attributes | §7.4 of `SCHEMA_AND_TYPES.md`. The application is tested against the pessimistic case — `NOSUPERUSER NOBYPASSRLS` — so it works either way, but what the role actually is has never been read. | Deployment |
-| **That a stored R2 backup can actually be recovered** | Neither the staging drill nor the nightly CI job downloads the encrypted object, decrypts it with the age identity, and restores it — both take a *fresh* dump and restore that. The dump-and-restore path is proven; the archive is not. **Production must not go live before this is done once, by hand.** | Deployment |
+| **That a stored R2 backup can actually be recovered** | The *tooling* now exists and is tested: `scripts/db-restore-archive.sh` fetches one object, verifies it against the remote size and checksum, decrypts it, checks the gzip stream, restores it into a generated loopback scratch database and validates it by structure and counts, and `npm run staging:archive-drill` rehearses all of that — 85 checks — against a directory standing in for the bucket. **No object in R2 has been fetched.** Nothing here has ever held a read-only R2 credential or the age private identity, and this task was not authorized to create one. So the archive's readability is still unproven, exactly as before; what has changed is that proving it is now one approved workflow run rather than an afternoon of improvisation on the day it matters. §8.1 is the procedure. **Production must not go live before it has been done once.** | Owner, then Deployment — W9 |
 | **Everything about actually sending a WhatsApp message** | Slice 3A built the durable contract and no transport. Meta's live policy has not been re-read against `reference/WHATSAPP.md` §0 and §11 — including whether an unverified WABA may send a template to a non-test recipient at all — no template has been submitted to Meta or approved by it, no credential exists, and the clinic has no published privacy notice, which Meta requires and DPDP requires separately. No number in the clinic's own records has been checked for whether it is a WhatsApp number. None of this is a defect in the release: with the connection unconfigured every scheduled message is suppressed into the admin's queue with a reason. It is the list of what a later slice has to close before one is ever sent. | Owner and clinic — policy section M's closing paragraph |
 | The browser CI job | Has never run; nothing has been pushed. | First green run |
 | Tablets on clinic Wi-Fi | Not simulated. | Clinic |
@@ -315,14 +315,19 @@ select count(*) from information_schema.role_table_grants
 # The same two scripts, rehearsed against a scratch database. Needs no secret
 # and reaches nothing outside this machine.
 npm run staging:drill
+
+# The STORED-object restore path, rehearsed against a directory standing in for
+# the bucket. Also needs no secret and reaches no network. What it does not do
+# is touch R2 — see 8.1.
+npm run staging:archive-drill
 ```
 
 One thing that drill does **not** prove, and it is worth knowing before you
 lean on it: neither it nor the nightly CI job ever downloads the encrypted
 object from R2 and decrypts it. Both take a fresh dump and restore that. The
-dump-and-restore path is proven; the archive sitting in R2 is not. Before
-cutover, pull one object down by hand, decrypt it with the age identity, and
-restore it. That is the backup you will actually reach for.
+dump-and-restore path is proven; the archive sitting in R2 is not. §8.1 at the
+end of this section is what to do about that, and that object is the backup you
+will actually reach for.
 
 **A migration failed part-way.** It cannot have. Each runs in one transaction,
 so it either applied or it did not. Check which of the six are present
@@ -413,6 +418,85 @@ receipt attached, and give it to whoever keeps the books. Clearing it needs item
 reset their PIN. Image tickets die with the session; patient data is
 server-side; no clinical photograph is in local storage or a device gallery.
 Then read the image access report for anything that happened after the loss.
+
+---
+
+### 8.1 Proving the archive in R2 can be restored — W9
+
+**Status: the tooling is built and tested. No object in R2 has been fetched.
+Do not treat W9 as closed until the run below has been done once.**
+
+Three different things, and they are easy to confuse:
+
+| | Proves | State |
+|---|---|---|
+| `npm run staging:drill`, and the nightly `restore-drill` job | A `pg_dump` can be restored. | Green, and has been for a while. |
+| `npm run staging:archive-drill` | The stored-object restore path works, including every refusal, against a directory standing in for the bucket. 85 checks, no network, synthetic data, a throwaway age identity. | Green. |
+| One approved run of `.github/workflows/archive-restore.yml` | **That the clinic's own archive is readable.** | **Never run.** |
+
+#### What the owner has to do, in order
+
+None of it has been done, and none of it was done by the work that built this.
+
+1. **Create a read-only R2 API token** scoped to the one clinic backup bucket,
+   with Cloudflare's **"Object Read only"** permission — in their words it
+   "allows the ability to read and list objects in specific buckets", and it
+   cannot write, delete, or change bucket configuration. **It must be a
+   different token from the one `backup.yml` uploads with.** Keep the Access
+   Key ID and Secret Access Key; Cloudflare shows the secret once.
+2. **Create a GitHub environment named `archive-restore`** on this repository
+   and add an **owner-approved required reviewer** to it. Limit its deployment
+   branches to the default branch. This is not decoration: GitHub withholds an
+   environment's secrets from a job until the protection rules pass, so the
+   required reviewer is what stands between the workflow file and a credential
+   that can read every clinical record the clinic has.
+3. **Add five secrets to that environment**, and to nowhere else:
+   `R2_RESTORE_ACCESS_KEY_ID`, `R2_RESTORE_SECRET_ACCESS_KEY`,
+   `R2_RESTORE_ENDPOINT` (`https://<account>.r2.cloudflarestorage.com`),
+   `R2_RESTORE_BUCKET` (the bucket name alone) and `BACKUP_AGE_IDENTITY`.
+   The last one is the **private** identity, beginning `AGE-SECRET-KEY-1`. It
+   is not `BACKUP_AGE_RECIPIENT`, which is the public half and cannot decrypt
+   anything; the script refuses the recipient by name if it is handed one.
+4. **Dispatch `Archive restore proof` manually**, leaving the retention kind at
+   `daily`, and approve it when GitHub asks.
+5. **Read the report.** It is the only artifact, and it carries the retention
+   kind, the object basename, the remote and downloaded byte sizes, the
+   encrypted object's SHA-256, the decrypted size, the restored schema names,
+   the table and row counts, the maximum `jmc.clinic_revision`, and the stage
+   reached. No clinic data, no SQL, no connection string, no bucket name, no
+   key. Check that the object basename is a recent one and that the counts are
+   the size of the clinic rather than the size of an empty schema.
+6. **Record the run URL and the object basename** in this file and in
+   `reference/BACKEND_PROGRAMME_REGISTER.md` under W9, and only then mark W9
+   closed.
+7. **Decide what happens to the token.** Revoking it after the run is the safe
+   default and costs one token creation to repeat the proof. Retaining it makes
+   the proof repeatable and leaves a readable credential in existence; if it is
+   retained, it stays on the `archive-restore` environment behind the required
+   reviewer and nowhere else, and it is rotated on the same schedule as the
+   writer.
+
+#### What the run will and will not do
+
+It fetches exactly one object and writes nothing. It never dumps, never calls
+`pg_dump`, never receives `BACKUP_DB_URL` — the script refuses to start if that
+variable is merely present in its environment, along with the backup writer's
+own R2 credentials — and issues no rclone subcommand that can write, delete,
+rename or prune. It restores only into a database it generates, named
+`clinic_restore_drill_archive_<random>`, on the runner's own loopback; it
+refuses `clinic`, `clinic_staging` and `postgres` by name, refuses any
+non-loopback target before it opens a single database connection, and refuses
+outright if a database of its generated name already exists rather than
+dropping one it did not create. The decrypted archive lives in a `mktemp -d`
+directory at mode 700 and is removed on success, on failure and on interrupt.
+
+And what a green run still does not prove, which the report says itself: who
+uploaded the object. age authenticates the ciphertext against its recipient, so
+an altered, spliced or truncated object is refused rather than decrypted, but
+anybody holding the public recipient could have produced a file that decrypts.
+The SHA-256 in the report names those exact bytes for a later run to compare
+against; there is no trusted stored digest or signature to check them against
+today.
 
 ---
 

@@ -13,14 +13,15 @@ missing.
 
 ## 1. What you get
 
-Five commands, no Supabase account, no Deno, no `supabase/config.toml`:
+Six commands, no Supabase account, no Deno, no `supabase/config.toml`:
 
 ```bash
-npm run staging:up       # a PostgreSQL 17 container, the migrations, the fixtures
-npm run test:db          # the characterization suite against it
-npm run staging:drill    # the real backup and restore scripts, rehearsed
-npm run staging:rehearse # every migration from Slice 2 on, over a clinic with history
-npm run staging:down     # stop it (add :destroy to remove it entirely)
+npm run staging:up            # a PostgreSQL 17 container, the migrations, the fixtures
+npm run test:db               # the characterization suite against it
+npm run staging:drill         # the real backup and restore scripts, rehearsed
+npm run staging:archive-drill # the STORED-object restore proof, rehearsed — §5c
+npm run staging:rehearse      # every migration from Slice 2 on, over a clinic with history
+npm run staging:down          # stop it (add :destroy to remove it entirely)
 ```
 
 `staging:up` prints the connection string the other commands want:
@@ -418,6 +419,59 @@ reach a port bound inside one. If every journey fails to reach the page while
 shell.
 
 ---
+
+## 5c. Rehearsing the stored-object restore proof
+
+`staging:drill` and `staging:archive-drill` answer two different questions and
+it is worth being exact about which, because for a year the first was mistaken
+for the second.
+
+| | What it does | What it proves |
+|---|---|---|
+| `npm run staging:drill` | Runs `scripts/db-backup.sh` and `scripts/db-restore-drill.sh` against staging: a **fresh dump**, straight back into a scratch database. | `pg_dump` output can be restored, and the three-schema selection brings `jmc` back. |
+| `npm run staging:archive-drill` | Runs `scripts/db-restore-archive.sh` against a **directory standing in for the bucket**: select an object, download it, compare sizes, decrypt, verify the gzip stream, restore, count, clean up. | The restore-proof tooling works, including every refusal. |
+| *(nothing yet)* | Fetch a real object from R2 with read-only credentials and the real age identity. | **That the clinic's archive is readable.** Not done. W9. `ROLLOUT.md` §8.1. |
+
+The rehearsal runs in its own container — `postgres:17` plus `age` and
+`rclone`, built once from `scripts/staging/archive-restore.Dockerfile` — for
+the same reason the restore drill does: it runs the real bash script rather
+than a Windows reimplementation of it, and a rehearsal of a reimplementation
+rehearses the reimplementation. The first run builds the image and needs the
+network for one `apt-get`. Nothing after that step reaches a network at all.
+
+What it sets up, and why each piece is there:
+
+- **A directory as the bucket.** `rclone` addresses a local path as a remote,
+  so the same `lsf` and `copyto` calls run that will run against R2. No MinIO,
+  no second container, no credential.
+- **A throwaway age identity**, generated per run by `age-keygen` and destroyed
+  with the temporary directory. A second, wrong identity exists so that
+  "decrypts with the wrong key" can be tested rather than assumed.
+- **Two objects built from one dump.** The older object is the dump. The newer
+  one is the dump plus a marker table that exists nowhere else on the machine,
+  and every plaintext copy is deleted before the first case runs. Selecting the
+  newest restores one more table than selecting the older by name, and each
+  run's reported SHA-256 matches the object it claims to have fetched. That is
+  what stops the rehearsal passing because it restored the dump lying next to
+  it, which is precisely the flaw in the nightly drill that W9 exists to fix.
+- **Recording shims for `rclone` and `psql`**, so "it issues no write to the
+  bucket" and "it refuses a non-loopback target before any database command"
+  are assertions about what actually ran, not greps over the source.
+
+Eighty-five checks. The failures are as important as the success: an empty
+prefix, a prefix that will not list, a prefix holding exactly one object, a
+missing object, an unencrypted `.sql.gz`, a wrong extension, path traversal, a
+cross-prefix name, shell metacharacters, control characters, a zero-byte
+object, a short transfer, corrupted ciphertext, a wrong identity, a broken
+gzip stream, unloadable SQL, a non-loopback target, the live and staging
+database names, a database that already exists, and an environment carrying the
+backup writer's credentials. Each one also asserts that the temporary files and
+the scratch database are gone afterwards.
+
+The restore target is a PostgreSQL 17 started inside the rehearsal container on
+its own loopback, never the staging container, and its database name is
+generated as `clinic_restore_drill_archive_<random>` — which is what
+`scripts/staging/guard.mjs` already allows and what nothing else uses.
 
 ## 6. What is still missing
 
