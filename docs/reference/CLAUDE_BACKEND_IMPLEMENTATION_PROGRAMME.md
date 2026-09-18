@@ -7,7 +7,10 @@
 > into these slices.
 
 Status: **Slices 0, 1 and 2 are complete and accepted. Slice 3's owner policies
-D8–D12c are approved as items 76–83; the slice is ready and has not started.** Slice 0's
+D8–D12c are approved as items 76–83, and its first bounded half — Slice 3A,
+the durable contract and domain state machine — is implemented. Slice 3B, which
+is the provider adapter, the authenticated webhook and the scheduler, has not
+started and sends nothing until it does.** Slice 0's
 verified evidence, work register, decision register, contract sequence, and
 compatibility map are in
 [`BACKEND_PROGRAMME_REGISTER.md`](BACKEND_PROGRAMME_REGISTER.md); Slice 1's
@@ -692,6 +695,16 @@ response as patient delivery.
 - If no safe scheduler is currently available, implement the durable data and
   protected worker contract, document the required scheduling mechanism, and
   stop before provisioning it.
+
+> **Slice 3A, implemented 18 September 2026.** The five tables, the state
+> machine, nine commands, four on-demand reads and an injectable channel
+> exist, against owner items 76–83. `docs/SCHEMA_AND_TYPES.md` §15 is the
+> contract. The last boundary above is the one that decided the shape: no
+> scheduler is provisioned, the worker is a pair of exported functions nothing
+> invokes on a timer, and the required mechanism is written down in §15.8
+> rather than built. The capabilities still outstanding — the authenticated
+> webhook endpoint, the provider adapter, and the saved recall cohort — are
+> Slice 3B.
 
 ### Acceptance
 

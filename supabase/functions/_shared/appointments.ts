@@ -34,11 +34,18 @@
  *
  * ── AND ONE THING IT NEVER DOES ────────────────────────────────────────────
  *
- * Send anything. Owner decisions D8 to D12c — channel, timing, quiet hours,
- * consent scope, who owns a failed delivery — are all unanswered, and a
- * reminder built on top of an invented answer to any of them is worse than no
- * reminder. `appointment_events` is the durable hook a later scheduler reads;
- * this slice writes it and stops there.
+ * Send anything. That was true when this file was written because owner
+ * decisions D8 to D12c were unanswered; it is still true now that they are
+ * owner items 76 to 83, and for a better reason.
+ *
+ * Slice 3A gave the clinic somewhere to record that a patient should be
+ * reminded, so `book_appointment`, `reschedule_appointment`,
+ * `cancel_appointment`, `mark_no_show` and `check_in_appointment` each call
+ * `syncAppointmentSchedule` inside the transaction they already open. That
+ * writes a row and contacts nobody: there is no provider adapter, no webhook
+ * and no scheduler in that slice either, and with the clinic's Meta connection
+ * unconfigured every one of those schedules is suppressed into a staff queue
+ * rather than sent. None of the responses below changed.
  */
 import { randomUUID } from 'node:crypto'
 import { audit, db, isoNow, transaction } from './db.ts'
@@ -50,6 +57,7 @@ import {
   requireChoice, requireRole, sequence, value, type Payload,
 } from './command-input.ts'
 import { runInventoryCommand } from './inventory.ts'
+import { syncAppointmentSchedule } from './messaging.ts'
 import {
   BOOKING_HORIZON_DAYS, DEFAULT_DURATION_MINUTES, MAX_DURATION_MINUTES,
   NO_SHOW_AFTER_MINUTES,
@@ -1028,6 +1036,11 @@ export async function runAppointmentCommand(
           await audit(session.staffId, 'appointment.booked', 'appointment_booking', id,
             `Booked ${moment.clinicDate}${placed.overbooked ? ' (overbooked)' : ''}`)
 
+          // Owner item 77. One reminder at 18:00 the day before, or — when
+          // that moment has already gone by — the confirmation that replaces
+          // it. A row, not a send: see this file's header.
+          await syncAppointmentSchedule({ actorId: session.staffId, bookingId: id })
+
           return {
             message: placed.overbooked
               ? `Booked for ${moment.clinicDate}, beside an appointment already in that slot.`
@@ -1187,6 +1200,11 @@ export async function runAppointmentCommand(
           await audit(session.staffId, 'appointment.rescheduled', 'appointment_booking', bookingId,
             `Moved to ${moment.clinicDate}: ${reason}`)
 
+          // The old reminder was about a time that is no longer true. It is
+          // superseded rather than deleted, and the new time gets its own —
+          // or its confirmation, if 18:00 the day before has now passed.
+          await syncAppointmentSchedule({ actorId: session.staffId, bookingId })
+
           return {
             message: cancelledArrival
               ? `Moved to ${moment.clinicDate}. ${cancelledArrival} has been taken out of today's queue.`
@@ -1250,6 +1268,9 @@ export async function runAppointmentCommand(
         })
         await audit(session.staffId, 'appointment.cancelled', 'appointment_booking', bookingId,
           `Cancelled: ${reason}`)
+
+        // Nothing to attend, so nothing to be reminded about.
+        await syncAppointmentSchedule({ actorId: session.staffId, bookingId })
 
         return {
           message: cancelledArrival
@@ -1315,6 +1336,8 @@ export async function runAppointmentCommand(
         })
         await audit(session.staffId, 'appointment.no_show', 'appointment_booking', bookingId,
           reason ? `Did not attend: ${reason}` : 'Did not attend')
+
+        await syncAppointmentSchedule({ actorId: session.staffId, bookingId })
 
         return {
           message: 'Recorded as not attended. The appointment keeps its history.',
@@ -1398,6 +1421,10 @@ export async function runAppointmentCommand(
          */
         await audit(session.staffId, 'appointment.created', 'appointment', arrivalId,
           `Checked in appointment ${token}`)
+
+        // The patient is standing in the clinic. A reminder tomorrow morning
+        // about a visit that has already happened is worse than none.
+        await syncAppointmentSchedule({ actorId: session.staffId, bookingId })
 
         return {
           message: `Checked in. Queue token ${token}.`,

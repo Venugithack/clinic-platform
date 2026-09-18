@@ -397,6 +397,10 @@ describe('the security posture, measured rather than described', () => {
       'prescription_lines', 'prescription_line_resolutions', 'prescription_line_outcomes',
       'stock_movements', 'invoice_lines', 'payment_allocations',
       'clinical_images', 'image_access_events', 'image_consents',
+      // Slice 3A. Consent evidence is append-only outright; a delivery attempt
+      // is written once and settled once, which is the same guarantee about
+      // the thing that matters — nothing is ever rewritten.
+      'communication_consents', 'message_attempts',
     ]
     const triggers = await rows(`
       select c.relname, count(*)::int as triggers

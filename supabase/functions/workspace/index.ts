@@ -18,6 +18,10 @@
  *   ?view=calendar&from=…&to=…        who is expected, and the published hours
  *   ?view=appointments&patientId=…     one patient’s appointments and their history
  *   ?view=reconciliation&key=…         what one consultation attempt committed
+ *   ?view=communication_due            reminders and recalls due now or shortly
+ *   ?view=communication_failures       the delivery-failure queue, owner item 79
+ *   ?view=communication_consent&patientId=…  what this patient agreed to receive
+ *   ?view=communication_outcome&outboxId=…   what happened to one message
  *
  * Reads only, and GET only. Every write in this application is a command, and
  * a GET that writes is a GET that a retry, a prefetch or a browser's
@@ -41,6 +45,10 @@ import {
   readPatientContext, readReconciliation, readSafeExit, readVisitProgress,
   readWorkList, readWorkload, searchPatients,
 } from '../_shared/workspace.ts'
+import {
+  readCommunicationConsent, readCommunicationDue, readCommunicationFailures,
+  readDeliveryOutcome,
+} from '../_shared/messaging.ts'
 
 /** Which capability each view spends. The routing table IS the gate. */
 const VIEWS: Record<string, CapabilityId> = {
@@ -56,6 +64,11 @@ const VIEWS: Record<string, CapabilityId> = {
   calendar: 'view.appointment_calendar',
   appointments: 'view.patient_appointments',
   reconciliation: 'view.consultation_reconciliation',
+  // Slice 3A.
+  communication_due: 'view.communication_due',
+  communication_failures: 'view.communication_failures',
+  communication_consent: 'view.communication_consent',
+  communication_outcome: 'view.communication_outcome',
 }
 
 Deno.serve(async (request) => {
@@ -188,6 +201,35 @@ Deno.serve(async (request) => {
           session, key, patientId, param('openedVisitId'))
         if (!reconciliation) return json({ ok: false, message: 'That patient was not found.' }, 404)
         return json({ ok: true, reconciliation })
+      }
+
+      case 'communication_due': {
+        const hours = Number(param('withinHours') || '24')
+        return json({
+          ok: true,
+          due: await readCommunicationDue(session, {
+            withinHours: Number.isFinite(hours) ? hours : 24,
+          }),
+        })
+      }
+
+      case 'communication_failures':
+        return json({ ok: true, failures: await readCommunicationFailures(session) })
+
+      case 'communication_consent': {
+        const patientId = param('patientId')
+        if (!patientId) return json({ ok: false, message: 'No patient asked for.' }, 400)
+        const consent = await readCommunicationConsent(session, patientId)
+        if (!consent) return json({ ok: false, message: 'That patient was not found.' }, 404)
+        return json({ ok: true, consent })
+      }
+
+      case 'communication_outcome': {
+        const outboxId = param('outboxId')
+        if (!outboxId) return json({ ok: false, message: 'No message asked about.' }, 400)
+        const outcome = await readDeliveryOutcome(session, outboxId)
+        if (!outcome) return json({ ok: false, message: 'That message was not found.' }, 404)
+        return json({ ok: true, outcome })
       }
 
       default:

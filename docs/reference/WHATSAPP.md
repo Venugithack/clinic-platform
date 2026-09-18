@@ -8,6 +8,19 @@ Internal reference. Decides §10 of `PLAN.md` and §4 of `PROPOSAL.md`.
 > eligibility questions. Those approved policies supersede any recommendation
 > or example choice in this research note. This file remains the provider-risk
 > background and must still be revalidated before production release.
+>
+> **Implementation status, 18 September 2026:** Slice 3A built the durable
+> foundation — see [`../SCHEMA_AND_TYPES.md`](../SCHEMA_AND_TYPES.md) §15.
+> Rule 1 of §10 below (official Cloud API only), rule 2 (no opt-in row, no
+> send), rule 3 (the fact and a link, never the record), rule 4 (defensibly
+> utility) and rule 8 (every send is a row before it is a send) are now
+> enforced in the schema or the command layer rather than being intentions.
+> Nothing has contacted Meta: there is no adapter, no webhook and no
+> credential. Rule 9 — monitoring the quality rating — has nothing to monitor
+> yet, and rule 10 stands: **re-verify this document before the contract is
+> signed.** The §0 question about whether an unverified WABA may send a
+> template to a non-test recipient at all is still unresolved and is still a
+> release gate.
 
 **"Grey area" is not one thing.** It is six unrelated ambiguities that get
 lumped together, and they carry very different risk. Three are survivable design

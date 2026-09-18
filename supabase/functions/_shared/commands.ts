@@ -4,6 +4,7 @@ import { deliveredOrderStatus } from './order-status.ts'
 import { audit, db, isoNow, transaction } from './db.ts'
 import { hashPassword } from './password.ts'
 import { sendWhatsAppText } from './whatsapp.ts'
+import { cancelRecallForFollowUp } from './messaging.ts'
 import {
   booleanValue, CommandRefusal, numberValue, optional, optionalDate,
   optionalPositiveInteger, requireChoice, requireRole, sequence, value,
@@ -2791,6 +2792,24 @@ export async function runCommand(session: SessionView, action: string, payload: 
           : await db.prepare(`update follow_ups set status='cancelled',cancelled_at=now(),cancelled_by=?
               where id=? and doctor_id=? and status='open'`).run(session.staffId, followUpId, session.staffId)
         if (result.changes !== 1) throw new Error('That follow-up is already closed or belongs to another doctor.')
+
+        /*
+         * Owner item 83: "Completing, cancelling, or superseding that
+         * instruction removes eligibility before release."
+         *
+         * A recall released against this follow-up is stopped here rather than
+         * being left for the worker to notice, because the worker's own check
+         * happens at the due date and the instruction stopped being true now.
+         * No row is deleted; the schedule records why it stopped.
+         */
+        await cancelRecallForFollowUp({
+          actorId: session.staffId,
+          followUpId,
+          reason: status === 'completed'
+            ? 'The follow-up was completed, so there is nothing to recall the patient for.'
+            : 'The doctor cancelled the follow-up.',
+        })
+
         await audit(session.staffId, `follow_up.${status}`, 'follow_up', followUpId, `${status} follow-up`)
       })
       return { message: status === 'completed' ? 'Follow-up completed.' : 'Follow-up cancelled.' }

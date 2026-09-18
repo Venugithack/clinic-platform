@@ -247,7 +247,7 @@ Read a row and its entry together.
 | W3 | 1 | **closed** — `workspace` workload, list, progress, obligations | indexes only (`20260919000000`) | none | none | done — contract §5–§7 |
 | W4 | 1 | **closed** — `workspace?view=outcome` | none | none — no existing union was widened; the answer is a new endpoint, not a new status member | none | done — contract §8 |
 | W5 | 2 | **closed — accepted 17 September 2026 after six corrections** — `20260920000000` + `20260921000000` + `20260922000000` + `20260923000000` | yes: six tables, five columns on `appointments` and seven on `appointment_events`, three unique indexes, three composite FKs, two checks added, one index dropped and one constraint replaced | low — walk-in path untouched; one refusal code changed on a path the deployed client cannot reach | none | done — [`SLICE2_FRONTEND_CONTRACT.md`](SLICE2_FRONTEND_CONTRACT.md) |
-| W6 | 3 | **ready, not started** — D8–D12c approved as owner items 76–83 | yes: template/consent/outbox tables | low | official-provider validation and credentials — **not** this programme's to provision | failure queue; consent suppression; delivery states |
+| W6 | 3 | **half built** — Slice 3A is implemented against owner items 76–83; Slice 3B (adapter, webhook, scheduler) has not started | done: `20260924000000` adds the five tables | low | official-provider validation and credentials — **not** this programme's to provision | failure queue; consent suppression; delivery states |
 | W7 | 4 | blocked on D13–D17 | yes: catalogue, orders, results | low | an external lab's report format, eventually | pending-review and overdue queues |
 | W8 | 5 | blocked on D18–D22 | yes: grants, intake, uploads | low | none | grant issue/revoke; what a grant resolves to |
 | W9 | 6 | open | none | none | **R2 credentials in CI — needs explicit approval** | none (operational) |
@@ -740,11 +740,21 @@ consultation/visit reconciliation questions were approved on 15 September 2026
 as owner-policy items 65–74, and [§12](#12-slice-2-what-was-built) records
 what each of them became. W1 and W5 are both closed.
 
-**Slice 3 is ready and has not started.** D8 to D12c were approved on
+**Slice 3A is built; Slice 3B has not started.** D8 to D12c were approved on
 17 September 2026 as owner-policy items 76–83: channel, timing and quiet hours,
 per-purpose consent, delivery-failure ownership and escalation, recall cohorts,
-template approval/versioning, opt-out, and clinician-created eligibility. Slice
-2 left the durable hook (`appointment_events`) and sent nothing. Production
+template approval/versioning, opt-out, and clinician-created eligibility.
+
+Slice 3A, 18 September 2026, turned all of that into a durable contract and a
+domain state machine and stopped there. It sends nothing, provisions nothing
+and holds no credential; with the clinic's Meta connection unconfigured every
+due message is suppressed into the admin's queue with a reason, which is owner
+item 76's own instruction rather than a placeholder.
+
+**Slice 3B is the next bounded step**: the provider adapter behind the existing
+injectable channel, an authenticated deduplicated statuses webhook calling the
+`applyProviderEvidence` semantics that already exist and are tested, and the
+scheduling mechanism written down in `SCHEMA_AND_TYPES.md` §15.8. Production
 still requires current provider-policy validation, approved templates,
 credentials and the clinic privacy notice; those are release dependencies, not
 permission to invent a second provider path or to weaken the approved policy.
@@ -774,7 +784,7 @@ behind every idempotency key.
 |---|---|---|---|---|
 | **1** | `encounters.idempotency_key` + unique index (W1); `patients` search indexes; read-model indexes | `sign_consultation` gains an optional key | patient search; workload counts; visit progress; safe-exit obligations; outcome lookup; eligible-equivalent lookup | No — all additive |
 | **2** — **built**, and in one respect differently from this proposal: the future is `appointment_bookings`, a table of its own, because `jmc.appointments` IS the live queue (owner item 70) | `appointment_types`, `provider_availability`, `appointment_bookings`, `appointment_events`, `consultation_attempt_resolutions`; **`appointments.token` unique index, partial on the open rows**; five appointment columns; `appointments_token_idx` dropped | `create_appointment_type`, `update_appointment_type`, `publish_availability`, `retire_availability`, `book_appointment`, `reschedule_appointment`, `cancel_appointment`, `mark_no_show`, `check_in_appointment`, `set_queue_priority`, `resolve_consultation_attempt` | day/range calendar; patient appointment history; attempt reconciliation; two work lists | No — walk-in path untouched |
-| **3** | `message_templates`, `communication_consents`, `communication_schedules`, `message_outbox`, `message_attempts` | `schedule_reminder`, `cancel_reminder`, `resend_message` | due reminders; failed deliveries; consent suppression | No |
+| **3** — **3A built**, with six commands more than this proposed, each justified in `messaging.ts` against the owner item that requires it | `message_templates`, `communication_consents`, `communication_schedules`, `message_outbox`, `message_attempts` | `schedule_reminder`, `cancel_reminder`, `resend_message`, plus `draft_message_template`, `approve_message_template`, `record_provider_template_state`, `record_communication_consent`, `withdraw_communication_consent`, `record_manual_fallback` | due reminders; failed deliveries; consent suppression; delivery outcome | No |
 | **4** | `investigation_catalogue`, `investigation_orders`, `investigation_order_items`, `investigation_results`, `result_documents`, `result_reviews` | `order_investigation`, `record_result`, `review_result`, `authorize_result_notification` | pending review; overdue results | No |
 | **5** | `share_grants`, `intake_forms`, `intake_submissions`, `patient_uploads` | `issue_share_grant`, `revoke_share_grant`, `accept_patient_upload`, `reject_patient_upload` | grant resolution (unauthenticated, rate-limited, minimum-necessary) | No |
 | **6** | `export_jobs`, `integration_events` | `request_export` | export status/download; degraded-state health | No |

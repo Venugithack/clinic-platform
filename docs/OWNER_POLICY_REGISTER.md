@@ -494,6 +494,17 @@ register entries D8–D12c. They authorize Slice 3's backend contracts and
 workers; they do not provision a provider, send a live message, or authorize a
 frontend redesign.
 
+> **Implementation note, 18 September 2026.** Slice 3A turned these eight items
+> into schema and code — `docs/SCHEMA_AND_TYPES.md` §15. It has sent nothing
+> and provisioned nothing. Two numbers in it have no owner decision behind them
+> and say so where they are defined: the retry spacing inside item 79's ceiling,
+> and the moment a clinical recall stops being worth sending on its due date.
+> One phrase was interpreted: item 79's “four clinic hours” is read as four
+> elapsed hours moved forward to the next dispatch opening if that would land
+> outside clinic hours, so a failure at seven in the evening reaches the
+> owner-doctor at eight the next morning rather than at eleven at night. If
+> that is not what was meant, one expression changes.
+
 | # | Question | Approved policy | Status |
 |---:|---|---|---|
 | 76 | Which channel is used for patient messaging? | Use **both**, for different jobs. Automated clinic-initiated patient messages use only the official WhatsApp Cloud API. Patient-initiated conversations and a staff-confirmed fallback may start through a `wa.me` deep link or QR code. A deep link never masquerades as an automated delivery, and no unofficial WhatsApp library or QR-paired automation is permitted. If the official channel is unavailable or not approved, suppress the automated send and put the work in a staff queue. | Approved |

@@ -59,6 +59,13 @@ const REACHED_BY = {
   'view.patient_appointments': (ids) => `appointments&patientId=${ids.patientId}`,
   'view.consultation_reconciliation': (ids) =>
     `reconciliation&key=nothing-committed-this&patientId=${ids.patientId}`,
+  // Slice 3A. `communication_outcome` names a message that does not exist, so
+  // a role that holds it gets a 404 and one that does not still gets a 403 —
+  // which is the distinction this matrix is for.
+  'view.communication_due': () => 'communication_due',
+  'view.communication_failures': () => 'communication_failures',
+  'view.communication_consent': (ids) => `communication_consent&patientId=${ids.patientId}`,
+  'view.communication_outcome': () => 'communication_outcome&outboxId=no-such-message',
 }
 
 const staff = {}

@@ -28,6 +28,7 @@ import {
   booleanValue, optional, requireChoice, requireRole, value, type Payload,
 } from './command-input.ts'
 import { deleteObject } from './storage.ts'
+import { runMessagingCommand } from './messaging.ts'
 
 export type ImageRow = {
   id: string
@@ -384,7 +385,15 @@ export async function runImageCommand(session: SessionView, action: string, payl
       }
     }
 
+    /*
+     * Slice 3A's messaging commands are the last link in the chain that starts
+     * in `commands.ts` and runs through `appointments.ts`, `inventory.ts`,
+     * `counter.ts` and here. They are last because they are the newest and
+     * because nothing else routes through them; the end of the chain still
+     * throws 'Unknown action.' for anything nobody recognises, so the contract
+     * at this boundary is unchanged.
+     */
     default:
-      throw new Error('Unknown action.')
+      return runMessagingCommand(session, action, payload)
   }
 }

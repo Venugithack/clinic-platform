@@ -235,6 +235,14 @@ each of them a thing no database test can see:
   tablet orientation on the widest table this application draws; and the
   review queue offered to a doctor and not to the pharmacy.
 
+Slice 3A added no journey at all, and that is worth saying rather than leaving
+to be noticed. It builds a backend contract with no screen in front of it: the
+four messaging read models are reachable and typed, nothing renders them, and
+there is nothing for a browser to drive. What it did add to this suite is a
+negative — the whole gate ran unchanged, which is the evidence that five new
+tables and a call inside five appointment commands changed nothing anybody
+touches.
+
 The consultation-attempt work now contributes ten journeys, and they are the only
 journeys in the suite that assert on something invisible: the reference a
 consultation is signed under. They read `sessionStorage` directly rather than a

@@ -53,7 +53,7 @@ export function webhookVerifyToken() {
  * a twenty-digit number that either fails or reaches a stranger. It stops here
  * instead, where somebody at the desk can read why and fix the record.
  */
-function dialable(raw: string): { ok: true; to: string } | { ok: false; reason: 'missing' | 'unusable' } {
+export function dialable(raw: string): { ok: true; to: string } | { ok: false; reason: 'missing' | 'unusable' } {
   // Spaces, dots, dashes and brackets are how a number is written down, not
   // part of it; a leading + or 00 is the international prefix spelled two ways.
   const digits = raw.replace(/[\s().-]/g, '').replace(/^(?:\+|00)/, '')

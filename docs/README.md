@@ -22,12 +22,19 @@ equally current.
 | [`SCHEMA_AND_TYPES.md`](SCHEMA_AND_TYPES.md) | Current database, API, and shared type contract |
 | [`AGENT_IMPLEMENTATION_BRIEF.md`](AGENT_IMPLEMENTATION_BRIEF.md) | Implementation constraints, slice order, safety boundaries, invariants, and definition of done |
 
-Backend programme status: Slices 0–2 are complete and accepted. The bounded
-Slice 2 frontend safety cutover is also implemented locally: the consultation
-screen holds one attempt across visit changes and gives doctors the audited
-reconciliation workflow. The full appointment-calendar UI is not implemented.
-Messaging policies D8–D12c are approved as owner items 76–83, so Slice 3 is
-ready but has not started.
+Backend programme status: Slices 0–2 are complete and accepted, and the bounded
+**Slice 3A** — the durable foundation for reminders, recalls and delivery truth
+— is implemented. The bounded Slice 2 frontend safety cutover is also
+implemented locally: the consultation screen holds one attempt across visit
+changes and gives doctors the audited reconciliation workflow. The full
+appointment-calendar UI is not implemented.
+
+Slice 3A adds five tables, a provider-neutral state machine and the commands
+and on-demand reads around them, against owner items 76–83. **It sends
+nothing**: there is no provider adapter, no webhook endpoint, no scheduler and
+no credential, and with the clinic's Meta connection unconfigured every due
+message is suppressed into a staff queue with a reason. `SCHEMA_AND_TYPES.md`
+§15 is the contract and §15.8 is the list of what a later Slice 3B owes.
 
 ### Read by task
 
@@ -166,7 +173,8 @@ supabase/
                         snapshot · types · db · http · password · money ·
                         packages · images · storage · whatsapp · order-status ·
                         capabilities · idempotency · workspace ·
-                        appointments · clinic-policy · command-input
+                        appointments · clinic-policy · command-input ·
+                        messaging
     <thirteen dirs>/    index.ts each, one Deno.serve per endpoint
   migrations/           forward-only SQL, named by timestamp. Creates `jmc`
 scripts/
@@ -254,7 +262,8 @@ What the functions actually read, all through `Deno.env`:
 |---|---|
 | `SUPABASE_DB_URL` | injected by Supabase. Nothing to set |
 | `CLINIC_SESSION_SECRET` | **required.** `auth.ts` refuses to start without it — unconditionally, with no development fallback, because the previous guard was `NODE_ENV === 'production'` and an Edge Function never sets that, so every deployment hashed its session tokens with a secret published in the source. Set it on the deployed functions: `npx supabase secrets set CLINIC_SESSION_SECRET=...` |
-| `WHATSAPP_*` | five values. Until all of them exist the application keeps real send controls disabled and never reports a message as sent. Drafting still works |
+| `WHATSAPP_*` | five values. Until all of them exist the application keeps real send controls disabled and never reports a message as sent. Drafting still works, and from Slice 3A every automatically scheduled message is suppressed into the admin's queue with `channel_not_configured` against it rather than silently dropped |
+| `CLINIC_PUBLIC_PAGE_URL` | optional. The one destination a Slice 3A template may link to. A template that interpolates `{{link}}` is suppressed with `link_destination_unavailable` while this is unset |
 
 ---
 
@@ -298,7 +307,7 @@ It is rewritten here against what `npm run` actually does today.
 | `npm test` | Forty unit tests over four files, no database, no network. |
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
-| `npm run test:db` | **758 tests** over twenty-seven files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, and the consultation/visit reconciliation against items 72–75 — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, and two doctors reconciling one attempt. |
+| `npm run test:db` | **835 tests** over twenty-nine files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, and Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83 — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, and a consent withdrawal racing a worker that is already preparing it. **No test here makes an external provider request**: the messaging channel is injected and the test adapter refuses at construction to address anything but loopback. |
 | `npm run test:browser` | **66 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. |
@@ -325,7 +334,14 @@ held either, failing before it typechecks a line. Deno is not a dependency here;
 **The bounded safety cutover is not the full Slice 2 UI programme.** The current
 consultation screen implements attempt recovery and reconciliation, but the
 appointment calendar and broader appointment-management screens remain unbuilt.
-Slice 3 messaging has not started.
+
+**Slice 3A is a backend foundation and nothing else.** No message has ever been
+sent by it, no provider has ever been called by it, and no screen renders its
+four read models. The whole of what it deliberately leaves for later — the
+provider adapter, the authenticated webhook, the scheduler, the recall cohort,
+the frontend, the approved Meta templates, the credentials and the clinic
+privacy notice — is enumerated in `SCHEMA_AND_TYPES.md` §15.8. Nothing in it
+has been validated against Meta's live policy or the clinic's real numbers.
 
 **Retrospective finished-visit linking is not discoverable in this bounded
 screen.** The accepted command can link Same attendance to a visit already

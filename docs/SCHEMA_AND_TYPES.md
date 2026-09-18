@@ -3179,3 +3179,229 @@ of the printed SQL and matched one phrase of the message; it now cuts the
 statement out of the refusal text itself and executes those characters, so
 "verbatim" is a fact rather than a claim. And `docs/README.md` said thirty-six
 unit tests where the gate reports thirty-eight.
+
+---
+
+## 15. Backend programme Slice 3A: communication truth
+
+`20260924000000_slice3a_communication_truth.sql`. Five new tables, two new
+trigger functions, no change to any existing table, column, index or command
+response. Owner policy items 76–83.
+
+**Nothing in this slice sends a message.** There is no provider network
+adapter, no webhook endpoint, no scheduler, no credential and no live call, and
+§15.8 lists what is deferred and what a later slice has to satisfy.
+
+### 15.1 The five tables
+
+| Table | What one row is |
+|---|---|
+| `message_templates` | One immutable version of one wording. `series_id` + `version`; the clinic's approval and Meta's approval are separate states. |
+| `communication_consents` | One append-only piece of consent evidence, scoped to a channel and a purpose. |
+| `communication_schedules` | One intended send, tied to an authoritative record a person created. |
+| `message_outbox` | One message. Created when the intention is, long before any provider contact. |
+| `message_attempts` | One provider call. Committed before the call and settled once afterwards. |
+
+Owner item 78's four purposes — `appointment`, `clinical_recall`,
+`ready_for_collection`, `service_interruption` — are the same check constraint
+on four of them. A fifth is a policy decision, not a value somebody may add.
+
+Slice 3A builds schedule sources for `appointment` and `clinical_recall` only.
+The other two purposes exist for consent and for templates and have no source
+yet; that is stated rather than implied, and §15.8 records it.
+
+### 15.2 The state machine
+
+```text
+scheduled ─┬─ prepare ──▶ queued ──┬─ accepted ─▶ sent_to_provider ─┬─▶ delivered
+           │                       │                                └─▶ failed_terminal
+           │                       ├─ refused, retryable ─▶ failed_retryable ─┐
+           │                       ├─ refused, terminal ──▶ failed_terminal   │
+           │                       └─ reply lost ─────────▶ outcome_unknown   │
+           ├─ no consent / no template / no channel ─────▶ suppressed         │
+           └─ source cancelled ──────────────────────────▶ cancelled          │
+                                                          ◀──── retry ────────┘
+```
+
+Three of those states exist because the truth is awkward and the alternatives
+are lies:
+
+**`sent_to_provider` is not `delivered`.** Meta's `POST /messages` answers
+`accepted`, `held_for_quality_assessment` or `paused`; only the statuses
+webhook ever says `delivered`. A message held for quality assessment has
+demonstrably reached nobody, and an HTTP 200 reported as delivery would be
+wrong most reliably on the days the channel was degraded.
+
+**`outcome_unknown` is what a lost reply leaves.** The attempt row commits
+before the provider is called, so a process that dies mid-call leaves an
+`in_flight` attempt and a message that says nobody knows. No worker picks it up
+again: only provider evidence settles it, because a blind retry is how one
+reminder becomes two.
+
+**`suppressed` is a decision with a reason**, not a silence. Owner item 76 sends
+that work to a staff queue, and the suppressed row is the queue entry. The
+reasons are a closed list: `no_consent`, `consent_withdrawn`,
+`channel_not_configured`, `no_approved_template`,
+`provider_template_not_approved`, `no_contact_number`,
+`link_destination_unavailable`, `variable_unavailable`, `past_useful_by`.
+
+### 15.3 Templates, and what a new version is for
+
+Owner item 81. `approval_state` is the clinic's verdict and `provider_state` is
+Meta's; a message needs both, and either can be withdrawn alone — Meta pausing
+a template for quality suppresses the next send with a reason rather than
+failing it.
+
+`protect_message_template` refuses to let a version become a different
+template. Wording, purpose, variables, locale, link destination, provider
+category, the content fingerprint, the creator and the supersession pointer are
+all fixed once written; an approval cannot return to draft; and who approved a
+version and when cannot be rewritten. Two partial unique indexes make "the
+approved template for this purpose" a question with exactly one answer.
+
+Two content guards are structural rather than procedural. `variables_json` is
+constrained to a six-name whitelist — `patient_given_name`, `clinic_name`,
+`appointment_date`, `appointment_time`, `due_date`, `link` — so there is no
+variable for a medicine, a diagnosis, a balance or an image and therefore no
+way to interpolate one. And the body is refused if it carries a currency
+marker or the words *balance*, *amount*, *payment* or *outstanding*, which is
+owner item 22 and item 81 expressed as a check constraint. Medicine names and
+diagnoses cannot be caught by a regex, so the command checks the body against
+the formulary and the approved diagnosis vocabulary instead. None of this
+replaces the doctor's approval; item 81 requires that separately.
+
+### 15.4 Consent
+
+Append-only, and the effective answer is a query rather than a column: the
+latest applicable row for a patient, channel and purpose wins, and **no row at
+all means no**. An unqualified withdrawal applies to every purpose; a
+purpose-specific one applies to that purpose alone.
+
+Ordering is by `sequence_no`, an identity column, and not by `recorded_at`.
+`now()` is the transaction's start time, so two consents recorded at one desk
+in one transaction tie — and the patient's latest instruction decided by a uuid
+is not a property anybody should have to reason about.
+
+A check constraint refuses an opt-in whose source is `patient_chat`. Owner item
+82's last sentence is that a patient-initiated conversation does not silently
+restore standing consent, and this schema has no way to do so even by accident.
+
+**Nothing was backfilled.** `patients.whatsapp_consent` is a blanket
+registration flag that names no purposes, and item 78 says a registration
+choice is valid only for the purposes it names. The table starts empty and the
+automated channel starts fully suppressed, which is the only honest place to
+start from. The consequence is stated plainly in §15.7.
+
+`withdraw_communication_consent` takes the patient's schedules under `for
+update` before sweeping their messages, and every preparation takes the message
+row under `for update` first. Either order of a withdrawal racing a preparation
+therefore ends with nothing sendable, and
+`tests/characterization/slice3a-messaging.test.mjs` runs the race rather than
+reasoning about it.
+
+### 15.5 Timing, and what is owner policy versus an implementation bound
+
+Every rule below is computed in `Asia/Kolkata` in Postgres, never in
+JavaScript. `clinic-policy.ts` holds each number with the owner item it comes
+from, or with an explicit statement that it has none.
+
+| Rule | Value | Source |
+|---|---|---|
+| Dispatch window | 08:00 inclusive to 20:00 exclusive | owner item 77 |
+| Appointment reminder | 18:00 on the previous clinic day | owner item 77 |
+| Late booking | its confirmation replaces the reminder | owner item 77 |
+| Clinical recall | 09:00 on the due date | owner item 77 |
+| Provider attempts | at most 3, within 2 hours of the first | owner item 79 |
+| Failure ownership | admin, from the first failed attempt | owner item 79 |
+| Owner-doctor escalation | 4 clinic hours unresolved | owner item 79 |
+| Retry backoff | 15 then 40 minutes | **no owner item** — an implementation bound that fits three attempts inside two hours |
+| Recall usefulness deadline | 20:00 on the due date | **no owner item** — the narrowest reading that cannot become a second day's chase |
+| "Four clinic hours" | 4 elapsed hours, moved to the next dispatch opening if that lands outside clinic hours | **an interpretation**, recorded below |
+
+That last row is the one interpretation in this slice and it is written down
+rather than buried. "Four clinic hours" could mean four hours of wall-clock
+time regardless of the hour, or four hours during which the clinic is open.
+The implementation moves the escalation moment forward to the next 08:00 when
+four elapsed hours would land outside the window, so a failure at 19:00 reaches
+the owner-doctor at 08:00 rather than at 23:00 when nobody is there to act on
+it. It never escalates earlier than four elapsed hours. If the owner means the
+other reading, one expression in `readCommunicationFailures` changes.
+
+**No retry ever crosses a night**, and that is a property rather than a rule
+anybody wrote: two hours from any moment inside the dispatch window ends before
+the next morning's 08:00, so an evening failure has no legal retry slot and
+becomes a terminal failure the admin owns that evening. It is asserted as such.
+
+### 15.6 Idempotency, privacy and audit
+
+`message_outbox.idempotency_key` is `<schedule uuid>:<generation>`, and a check
+constraint holds it to that shape. It carries no patient id, phone number,
+name, purpose or clinical word, because it is the one string in this schema
+designed to be repeated in logs. `message_attempts.provider_reference` is
+unique, so one provider message maps to one attempt and a duplicate webhook
+resolves to the same row.
+
+`message_attempts.error_detail` is redacted before it is stored: any run of six
+or more digits becomes `[number]`, because a provider's error text quotes the
+recipient's number back and that string is read by screens and pasted into
+support threads.
+
+Every command writes an `audit_events` row. Nothing here reaches the snapshot:
+the programme's rule since Slice 1 is that no read model joins the
+fifteen-second poll, and all four messaging reads are on-demand `workspace`
+views behind `capabilities.ts` entries.
+
+### 15.7 Compatibility
+
+`send_order`, `send_patient_whatsapp`, `whatsapp_messages` and
+`_shared/whatsapp.ts` are unchanged except that `dialable` is now exported so
+the outbox normalizes a number the same way rather than a second way.
+`tests/characterization/slice3a-whatsapp-compatibility.test.mjs` was written
+before this slice and holds both commands to what they answered.
+
+Five appointment commands and `complete_follow_up` gained a call that maintains
+schedule rows inside the transaction they already open. No response changed, no
+column they read was altered, and nothing they do can now contact anybody.
+
+**The staff message composer still uses the old blanket flag.**
+`send_patient_whatsapp` is a member of staff typing a message and pressing
+send, which is not an automated clinic-initiated purpose message, and moving it
+onto per-purpose consent is deferred work rather than an oversight. It is named
+in §15.8.
+
+### 15.8 Deferred, explicitly
+
+None of these is unfinished Slice 3A work; each is a named piece of Slice 3B or
+later, and the clinic is complete and honest without them.
+
+- **The provider adapter.** `officialWhatsAppChannel.send` refuses terminally.
+  It is unreachable in practice because `configured()` is false without the
+  five `WHATSAPP_*` variables and the prepare step then suppresses every due
+  message into the staff queue.
+- **The authenticated provider webhook.** `applyProviderEvidence` holds the
+  semantics — monotonic rank, duplicates and out-of-order evidence ignored,
+  terminal truth never regressed — and is tested directly. No endpoint calls
+  it, because an endpoint that takes delivery evidence must verify Meta's
+  signature and there are no credentials to verify against.
+- **Scheduler provisioning.** Nothing invokes the worker. `pg_cron`, `pg_net`,
+  Vault and Supabase Queues are all unprovisioned. The contract a later slice
+  has to satisfy: call `prepareDueMessages` and then `dispatchQueuedMessages`
+  on a schedule no coarser than five minutes, with one caller at a time or
+  relying on the row locks, from something that can hold a secret. Supabase's
+  current answer is `pg_cron` plus `pg_net` with the token in Vault; an
+  external scheduler calling an authenticated Edge Function is equivalent.
+  **Do not rely on in-process background work**: a Deno isolate recycled
+  mid-call is exactly the `outcome_unknown` case.
+- **The full recall-cohort release.** Slice 3A releases one recall at a time,
+  by the responsible doctor or an authorized one. Owner item 80's saved,
+  frozen, dry-runnable cohort is not built.
+- **The frontend messaging workspace.** No screen exists. The four read models
+  are reachable and typed; nothing renders them.
+- **Production provider-policy validation, approved Meta templates,
+  credentials, and the clinic privacy notice.** Owner section M's closing
+  paragraph names these as release gates, and this slice does not waive them.
+- **Moving `send_patient_whatsapp` onto per-purpose consent**, and deciding
+  whether the registration checkbox should prompt for the purposes it covers.
+- **`ready_for_collection` and `service_interruption` schedule sources.** Both
+  purposes exist for consent and templates; neither has an authoritative record
+  behind it yet.

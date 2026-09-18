@@ -125,6 +125,55 @@ export const CAPABILITIES = {
     mirrors: 'resolve_consultation_attempt is doctor-only (owner items 72-74), and this read carries the signed consultation it names.',
   },
 
+  /*
+   * Slice 3A. Four reads about patient messaging, and every one of their role
+   * lists is copied from a gate that already governs the same facts rather
+   * than decided here.
+   *
+   * `view.communication_due` and `view.communication_consent` mirror
+   * `send_patient_whatsapp`, which has gated contacting a patient on
+   * requireRole(admin, doctor, nurse) since it was written — "the roles with a
+   * Patients workspace and its message composer", in its own comment. Pharmacy
+   * is absent from both for the same reason it is absent from
+   * `PATIENT_CONTEXT_SECTIONS.arrival`: the counter identifies a patient by
+   * prescription and has no station that contacts anybody.
+   *
+   * `view.communication_failures` is wider at the capability and narrower
+   * inside it, which is owner item 79 rather than a preference: the admin owns
+   * the queue, appointment-contact failures are also visible to nurse and
+   * admin, and recall failures are also visible to the responsible doctor. A
+   * single role list cannot say that, so the capability admits the three roles
+   * that can own or act on a failure and the read model filters each row to
+   * the person looking at it.
+   *
+   * `view.communication_outcome` carries one message's attempts and whether
+   * the provider ever said it was delivered. It is the same audience again,
+   * and it deliberately does NOT reuse `view.outcome`: that one answers what a
+   * command's idempotency key committed, which is a different question about a
+   * different mechanism, and borrowing it would tie two unrelated audiences
+   * together the first time either changed.
+   */
+  'view.communication_due': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'Reminders and recalls due now or shortly, and whether the clinic may dispatch yet.',
+    mirrors: 'send_patient_whatsapp gates on requireRole(admin, doctor, nurse) — the roles that contact a patient.',
+  },
+  'view.communication_failures': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'Messages that failed, were suppressed, or whose outcome is unknown.',
+    mirrors: 'owner item 79 — admin owns the queue, nurse/admin see appointment-contact failures, the responsible doctor sees recall failures. The read model applies the per-row half.',
+  },
+  'view.communication_consent': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'What one patient has agreed to receive, per purpose, and the evidence behind it.',
+    mirrors: 'send_patient_whatsapp — the same three roles already read patients.whatsapp_consent through the composer.',
+  },
+  'view.communication_outcome': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'What happened to one message, attempt by attempt, and whether it was ever delivered.',
+    mirrors: 'view.communication_failures — the same audience, and this is the drill-down behind one of its rows.',
+  },
+
   'list.today_queue': {
     roles: ['admin', 'doctor', 'nurse'],
     purpose: 'Patients arrived and not yet finished.',
