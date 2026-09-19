@@ -43,16 +43,83 @@ function containerState() {
   }
 }
 
-async function waitForPostgres() {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+/**
+ * Wait until the database can actually answer a query, over the connection
+ * everything else will use.
+ *
+ * ── THE BUG THIS REPLACES, WHICH COST ABOUT THREE HOURS ────────────────────
+ *
+ * This used to be `docker exec jmc-staging pg_isready`, in a retry loop, and
+ * it was wrong in a way that only shows up on a FRESH container — so it
+ * passed every time anybody ran it twice.
+ *
+ * The postgres image's entrypoint, on an empty data directory, runs `initdb`
+ * and then starts a **temporary server** to run the initialization scripts.
+ * That server listens on the Unix socket only. `docker exec … pg_isready`
+ * talks to the Unix socket. So it answers "accepting connections" — about a
+ * second before the temporary server is shut down and the real one starts.
+ * The container's own log says all of it:
+ *
+ *     [60] LOG:  database system is ready to accept connections   ← temporary
+ *     [60] LOG:  database system is shut down
+ *     PostgreSQL init process complete; ready for start up.
+ *     [85] FATAL: the database system is starting up              ← us
+ *     [1]  LOG:  database system is ready to accept connections   ← real, 96ms later
+ *
+ * `up()` then threw on that FATAL and exited non-zero, which is correct and is
+ * not the problem. The problem is what it looks like downstream: a container
+ * that IS running, a `jmc` schema with nothing in it, and a database suite
+ * that fails in every file in about five milliseconds with `relation
+ * "jmc.staff" does not exist`. Two hundred red tests that all look like a
+ * broken migration, and none of them is.
+ *
+ * ── WHY THIS SHAPE ─────────────────────────────────────────────────────────
+ *
+ * Ask the question the way every consumer asks it: over TCP, from the host,
+ * as a real client, running a real statement. The temporary server does not
+ * listen on TCP at all, so it cannot answer this — the whole class of
+ * false-ready disappears rather than being timed around.
+ *
+ * Twice, a moment apart, because "answered once" and "is up" are different
+ * claims and this is the one place in the repository where the difference has
+ * already cost a day. A server that answers and then goes away fails the
+ * second ask.
+ *
+ * Exported so `tests/staging-readiness.test.mjs` can point it at things that
+ * are not a ready database and watch it refuse them.
+ */
+export async function awaitReady(url, { attempts = 60, waitMs = 500 } = {}) {
+  let consecutive = 0
+  let lastError
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const client = postgres(url, {
+      max: 1,
+      prepare: false,
+      onnotice: () => {},
+      connect_timeout: 5,
+      // One attempt per loop. The driver's own retrying would hide exactly the
+      // transition this is here to see.
+      max_lifetime: null,
+    })
     try {
-      docker(['exec', CONTAINER, 'pg_isready', '-U', 'postgres', '-d', DATABASE])
-      return
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      await client`select 1`
+      consecutive += 1
+      if (consecutive >= 2) return
+    } catch (error) {
+      // Never the connection string: it carries a password.
+      lastError = error?.code ?? error?.message ?? 'unknown'
+      consecutive = 0
+    } finally {
+      await client.end({ timeout: 5 }).catch(() => {})
     }
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
   }
-  throw new Error(`${CONTAINER} did not become ready within 30 seconds.`)
+
+  throw new Error(
+    `The staging database did not accept a query within ${Math.round((attempts * waitMs) / 1000)} ` +
+    `seconds. Last answer: ${lastError}.`,
+  )
 }
 
 async function seed(url) {
@@ -95,7 +162,11 @@ export async function up({ fresh = true } = {}) {
     console.log(`${CONTAINER} is already running`)
   }
 
-  await waitForPostgres()
+  /*
+   * Over TCP, on the URL the guard already approved, so the readiness check
+   * and every consumer are asking the same server the same way.
+   */
+  await awaitReady(url)
 
   if (fresh) {
     // A staging database that carries yesterday's experiment is a staging

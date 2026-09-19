@@ -78,10 +78,11 @@ password. The same guard runs in CI. There is no weaker rule for automation.
 
 ---
 
-## 3. Two things found while building this
+## 3. Three things found the hard way
 
-Both were found by trying to build a database from the committed migrations,
-which nothing had done before.
+The first two were found by trying to build a database from the committed
+migrations, which nothing had done before. The third was found on 19 September
+2026 by the staging script itself, and had been misdiagnosed twice before that.
 
 ### 3.1 The migrations only land in `jmc` if something wraps them in a transaction
 
@@ -151,6 +152,56 @@ this. The backup does carry `public` and `app`, so a restore-then-migrate path
 works; a migrate-from-scratch path does not. Making the hardening migration
 tolerate absent legacy objects would fix it, and would edit a migration that
 has already been applied — see §6.1 of the Slice 0 report.
+
+---
+
+### 3.3 `staging:up` called the database ready a second too early
+
+Found on 19 September 2026, while running the Slice 4 gate, after being
+suspected twice the day before.
+
+`up.mjs` decided the container was ready by running
+`docker exec jmc-staging pg_isready` in a retry loop. On a **fresh** container
+that is wrong, and on a warm one it is right — which is why running the
+command a second time always "fixed" it and nobody caught it.
+
+The postgres image's entrypoint, on an empty data directory, runs `initdb` and
+then starts a **temporary server** to run the initialization scripts. That
+server listens on the Unix socket only. `docker exec … pg_isready` talks to
+the Unix socket. The container's own log has the whole thing in five lines:
+
+```text
+[60] LOG:  database system is ready to accept connections   ← the temporary one
+[60] LOG:  database system is shut down
+PostgreSQL init process complete; ready for start up.
+[85] FATAL: the database system is starting up              ← us, in the gap
+[1]  LOG:  database system is ready to accept connections   ← the real one, 96 ms later
+```
+
+`up()` threw on that FATAL and exited 1, which is correct and was never the
+problem. The problem is what it leaves behind: a container that **is**
+running, a `jmc` schema with nothing in it, and — for anybody who then runs
+the database suite anyway — two hundred red tests in every file, each about
+five milliseconds long, all saying `relation "jmc.staff" does not exist`. It
+looks exactly like a broken migration and is nothing of the kind. A uniform
+few-millisecond failure across unrelated suites is the tell.
+
+**The fix** is to ask the question the way every consumer asks it:
+`awaitReady` opens a real client connection over **TCP from the host** and
+runs `select 1`, twice, a moment apart. The temporary server does not listen
+on TCP at all, so the entire class of false-ready disappears rather than being
+timed around; and "answered once" and "is up" stay different claims.
+
+`tests/staging-readiness.test.mjs` — in `npm test`, no Docker, no database —
+holds the predicate against the two states the old check mistook for ready:
+nothing listening, and a socket that accepts and never speaks. It also holds
+the refusal to printing no connection string, for the reason §2 gives.
+
+**One thing this did not change**, because it was already true: the command
+exits non-zero when migrations, verification or fixtures do not finish. What
+hid that during the incident was the invocation, not the script —
+`npm run staging:up | tail -3` reports `tail`'s exit status, and an `&&` chain
+after it runs happily. Do not pipe a gate command.
 
 ---
 
