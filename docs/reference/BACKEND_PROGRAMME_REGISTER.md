@@ -248,7 +248,7 @@ Read a row and its entry together.
 | W4 | 1 | **closed** — `workspace?view=outcome` | none | none — no existing union was widened; the answer is a new endpoint, not a new status member | none | done — contract §8 |
 | W5 | 2 | **closed — accepted 17 September 2026 after six corrections** — `20260920000000` + `20260921000000` + `20260922000000` + `20260923000000` | yes: six tables, five columns on `appointments` and seven on `appointment_events`, three unique indexes, three composite FKs, two checks added, one index dropped and one constraint replaced | low — walk-in path untouched; one refusal code changed on a path the deployed client cannot reach | none | done — [`SLICE2_FRONTEND_CONTRACT.md`](SLICE2_FRONTEND_CONTRACT.md) |
 | W6 | 3 | **built, unprovisioned** — Slice 3A (contract and state machine) and Slice 3B (adapter, signed webhook, protected worker contract) are implemented against owner items 76–83. No scheduler, no credential, nothing sent | done: `20260924000000` adds the five tables; `20260925000000` adds `message_provider_events` | low | official-provider validation, approved templates, credentials, scheduler provisioning and the privacy notice — **not** this programme's to provision | failure queue; consent suppression; delivery states; signature and replay; duplicate and out-of-order evidence; concurrent workers |
-| W7 | 4 | blocked on D13–D17 | yes: catalogue, orders, results | low | an external lab's report format, eventually | pending-review and overdue queues |
+| W7 | 4 | **in progress — policy unblocked 19 September 2026** (owner items 84–88) | yes: six tables, one widened purpose list across four Slice 3A tables | low — additive; the widening admits a fifth purpose value and changes no existing row | an external lab's report format, eventually | pending-review and overdue queues |
 | W8 | 5 | blocked on D18–D22 | yes: grants, intake, uploads | low | none | grant issue/revoke; what a grant resolves to |
 | W9 | 6 | **open — tooling done, archive unproven** | none | none | **read-only R2 credentials and the age identity on a protected environment — needs owner approval** | none (operational) |
 | W10 | 6 | open | yes: export jobs, integration events | low | none | export request/status/download |
@@ -388,7 +388,13 @@ and the token index — is as proposed.
   which pharmacy cannot see and which carry consent semantics meant for
   photographs.
 - *Gap:* the whole order → result → review → notify loop.
-- *Policy:* **owner decision required** — D13–D17.
+- *Policy:* **approved 19 September 2026** — owner items 84–88, closing D13–D17.
+  Catalogue authority is the owner-doctor or an explicitly authorized doctor;
+  a flag has one of three named sources and is never inferred; clinic clinical
+  review is required before the patient may be told and external technical
+  validation does not substitute for it; a critical result alerts and escalates
+  on an acknowledgement clock; and a notification is one fixed sentence with a
+  separate doctor authorization behind it.
 - *Contract:* catalogue, order tied to patient and encounter, explicit state
   machine, private result documents with provenance and supersession, an
   abnormal flag whose source is explicit, review acknowledgment, notification
@@ -679,11 +685,11 @@ may choose and record, **O** = owner decision required before the slice.
 
 | # | Question | Class |
 |---|---|---|
-| D13 | Who owns the investigation catalogue | **O** |
-| D14 | Where an abnormal flag may come from | **O** — external report, imported structured flag, or authorized manual flag only; never inferred |
-| D15 | Who must review a result before the patient may be told | **O** |
-| D16 | How long before an unreviewed result escalates, and to whom | **O** |
-| D17 | May a notification contain clinical detail, or only "your result is ready" | **O**; `WHATSAPP.md` §5 argues strongly for the latter |
+| D13 | Who owns the investigation catalogue | **A** — owner item 84: the owner-doctor owns it; another explicitly authorized *doctor* may approve, version or retire clinical content; an admin may prepare non-clinical metadata only. An elevated software permission is never doctor-level authority |
+| D14 | Where an abnormal flag may come from | **A** — owner item 85: an explicit flag on the received report, an imported structured flag from an identified source, or an authorized doctor's manual flag. Never inferred from free text, a reference range, OCR, a diagnosis, a model or an application threshold |
+| D15 | Who must review a result before the patient may be told | **A** — owner item 86: the responsible, ordering or explicitly delegated doctor. External technical validation is retained as evidence and is not clinic clinical review; nurse and admin may transcribe and track, never review or release |
+| D16 | How long before an unreviewed result escalates, and to whom | **A** — owner item 87: a critical result alerts the responsible and owner doctor immediately and needs an acknowledgement, escalating visibly after 15 unacknowledged minutes; anything else unreviewed reaches the owner-doctor after four clinic hours or at closing, whichever is earlier. Time never releases a result. One interpretation remains, recorded under item 87: this application holds no configured clinic closing time |
+| D17 | May a notification contain clinical detail, or only "your result is ready" | **A** — owner item 88: the latter, in one fixed sentence with no value, status, diagnosis, medicine, advice, attachment or link. Review plus a separate authorization, and delivery only from authenticated provider evidence or an audited manual contact. `WHATSAPP.md` §5 argued for this and the owner decided it |
 
 ### Patient links, intake, uploads (Slice 5)
 
@@ -816,6 +822,24 @@ and still open** — `reference/WHATSAPP.md` §0 and `operations/ROLLOUT.md` §9
 recall cohort (owner item 80) and the frontend messaging workspace — are both
 larger than this slice, and neither can be validated until a real provider
 connection exists.
+
+**Slice 4 is policy-unblocked.** D13 to D17 were approved on 19 September 2026
+as owner-policy items 84–88: catalogue authority, where a flag may come from,
+who must review before the patient is told, the unreviewed-result escalation
+clock, and what an automated result notification may say. W7 moves from
+*blocked* to *in progress*, and nothing in those five items provisions a
+provider or contacts a laboratory.
+
+One thing they do not settle, and it is recorded rather than decided here:
+item 87 escalates at "four clinic hours or at clinic closing, whichever is
+earlier", and **this application holds no configured clinic closing time.**
+`provider_availability` is one doctor's optional published consulting windows,
+not the clinic's day. The implementation therefore uses owner item 77's 20:00
+messaging dispatch cutoff as a conservative technical ceiling, under its own
+constant, and says so where it is defined. That is a technical interpretation
+of an approved policy, not a new policy and not an unresolved deployment
+dependency, and the three are kept apart deliberately: the owner value that
+would replace it is one line.
 
 | Question | Approved policy, 15 September 2026 | Status |
 |---|---|---|

@@ -1,7 +1,7 @@
 # Owner policy register
 
 **Jayamurugan Clinic**  
-**Owner-supplied decisions recorded 11–17 September 2026**
+**Owner-supplied decisions recorded 11–19 September 2026**
 
 This is the authoritative product-policy register for the current programme.
 It supersedes the open-question status in `archive/docs/current-programme/OWNER_DECISIONS.md`, while retaining
@@ -24,7 +24,9 @@ Status meanings:
 Section K was added on 13 September 2026 for item 64. Section L was added on
 15 September 2026 for items 65–74 and gained item 75 on 16 September 2026.
 Section M was added on 17 September 2026 for items 76–83, and the references
-moved from M to N to keep the bibliography last. Nothing else was re-lettered; the earlier shift of old
+moved from M to N to keep the bibliography last. Section N was added on
+19 September 2026 for items 84–88, and the references moved again, from N to O,
+for the same reason. Nothing else was re-lettered; the earlier shift of old
 H→I, I→J, J→K on 12 September still holds.
 
 ---
@@ -554,7 +556,79 @@ release; this approval does not waive that release gate.
 
 ---
 
-## N. Policy rationale references
+## N. Investigations, referrals, results, review and result notification
+
+Items 84–88 were approved on 19 September 2026. They close backend decision
+register entries D13–D17. They authorize Slice 4's backend contracts — the
+catalogue, the order, the received result, the clinical review and the
+notification authorization — and they do not provision a provider, send a live
+message, contact an external laboratory, or authorize a frontend.
+
+The through-line in all five is the same sentence written five ways: **a
+clinical judgment has a clinician's name on it, or it does not exist.** A flag
+the application inferred, a review the laboratory performed, a release the
+clock granted and a delivery an HTTP 200 implied are all the same mistake — a
+fact with no author — and each of the five items below refuses one of them.
+
+| # | Question | Approved policy | Status |
+|---:|---|---|---|
+| 84 | Who owns the investigation and referral catalogue? | The **owner-doctor** owns it. Another **explicitly authorized registered doctor** may approve, publish, version, retire, or replace clinical catalogue content. An administrator may prepare non-clinical metadata — external facility details, codes, operational labels — but may not approve clinical content. Nurses and pharmacy users may not approve or alter clinical catalogue content. "Doctor-level" never means a non-doctor holding an elevated software permission: the actor must hold the doctor role, and explicit authorization is an additional requirement on top of it, never a substitute for it. | Approved |
+| 85 | Where may an abnormal, urgent or critical flag come from? | From exactly three places: an **explicit flag on the received external report**, with its source and provenance recorded; an **imported structured flag** from an identified source; or an **authorized doctor's manual clinical flag**, with actor, time, classification and reason. Never inferred from free text, a reference range, OCR, a diagnosis, an AI model, or a threshold the application authored. A nurse or administrator may accurately transcribe a source-provided flag together with its provenance; they may not originate a clinical judgment. Pharmacy has no access. | Approved |
+| 86 | Who must review a result before the patient may be told? | The **responsible or ordering doctor, or an explicitly delegated doctor**, must clinically review every received or corrected result before the patient may be told that it is ready. External-laboratory technical validation and signatory evidence are retained as evidence, and do **not** replace the clinic doctor's clinical review. Nurses and administrators may attach, transcribe and operationally track results within minimum-necessary access; they may not mark a result clinically reviewed and may not authorize clinical release. Pharmacy users must not see result content or invoke result workflows. | Approved |
+| 87 | How long before an unreviewed result escalates, and to whom? | A **source-identified or doctor-identified critical result** raises an immediate internal alert to both the responsible doctor and the owner-doctor, and requires a doctor acknowledgement. If it is unacknowledged after **15 minutes** it remains visibly escalated to the owner-doctor and any explicitly configured backup doctor, carrying a manual-escalation obligation. Other unreviewed results escalate to the owner-doctor after **four clinic hours or at clinic closing, whichever is earlier**. Elapsed time never releases a result to the patient and never notifies one. | Approved, with the closing-time interpretation recorded below |
+| 88 | May a patient-facing notification contain clinical detail? | No. An automated notification may say only: **"Your investigation result has been reviewed and is ready. Please contact the clinic."** It must carry no result value, no abnormal or critical status, no diagnosis, no medicine, no clinical advice, no attachment, no report image and no download link. Critical-result communication is **clinician-led direct contact**, not an automated generic message. Notification requires completed doctor review **plus a separate doctor authorization**. Authorization, provider acceptance, delivery and manual patient contact are four distinct facts; the patient is never reported as notified on the strength of an authorization, a queue entry, an HTTP success response or provider acceptance. The final outcome comes from authenticated provider evidence or from an explicit audited manual-contact event. | Approved |
+
+### Item 87's closing time, which the clinic has not configured
+
+Item 87 names two boundaries — four clinic hours, and clinic closing — and
+takes whichever falls first. The first is a duration and needs nothing. The
+second is a daily clinic-local time, and **this application does not hold
+one.**
+
+What it holds is `provider_availability`, which is one doctor's published
+consulting windows and is optional, per-doctor and per-weekday; a clinic that
+has published none would have no closing time at all. What it also holds is
+the 20:00 clinic-local end of owner item 77's **messaging dispatch window**,
+which is a rule about when it is decent to send a patient a WhatsApp message
+and is not a statement about when the clinic's doors shut.
+
+So the implementation uses 20:00 clinic-local as a **conservative technical
+ceiling** on the unreviewed-result escalation, and says so where it is defined
+rather than describing it as the clinic's closing time. It is a separate named
+constant from the dispatch cutoff, so that setting the real one is a one-line
+change and not an archaeology exercise. The effect is that an unreviewed
+result never waits past 20:00 for the owner-doctor to be told about it, and
+reaches them earlier if four hours have passed.
+
+**If the clinic closes before 20:00 — and a clinic that starts at 09:00
+usually does — this ceiling is later than item 87 intends.** It is not a
+different rule; it is the same rule with the only boundary this application
+can prove. One owner value closes it: the clinic's local closing time. Until
+then the four-hour half of item 87 is exact and the closing-time half is an
+upper bound that never escalates later than the messaging day ends.
+
+### What these five items do not authorize
+
+They do not make this application a laboratory system. There is no analyzer
+integration, no structured result vocabulary, no patient portal and no screen.
+A result arrives here as the report the laboratory actually sent, preserved as
+it was sent, with whatever flag the laboratory itself put on it.
+
+They do not claim the application verifies anybody's professional
+registration. Item 84 requires a registered doctor, and what the application
+can prove is the doctor role plus the explicit authorization flag an
+administrator sets. **Whether that person holds a current medical registration
+is an onboarding and governance obligation the clinic owns**, recorded here as
+a dependency rather than implied by a permission check.
+
+They do not waive the release gates in section M's closing paragraph. A
+result-ready notification is a clinic-initiated WhatsApp message and needs the
+same approved template, credential, privacy notice and provider validation
+every other one needs, and needs its own purpose-specific consent on top.
+
+---
+
+## O. Policy rationale references
 
 - CDSCO, [Drugs Rules, 1945](https://cdsco.gov.in/opencms/resources/UploadCDSCOWeb/2022/drug_rules/Drugs%20Rules%201945_2024%2009.pdf), Rule 65: scheduled prescription dispensing, repeat directions, substitution restrictions, records, expiry segregation, and registered-pharmacist supervision of supply outside the manufacturer's container.
 - Pharmacy Council of India, [FAQ on registered-pharmacist responsibility](https://pci.gov.in/en/faqs/), including dispensing only the medicine prescribed and not substituting the prescription.
