@@ -3668,3 +3668,390 @@ Everything in §15.8 except the adapter and the webhook, and specifically:
 - **The full recall-cohort release**, **the frontend messaging workspace**, the
   `send_patient_whatsapp` consent cutover, and the `ready_for_collection` and
   `service_interruption` schedule sources.
+
+---
+
+## 17. Backend programme Slice 4: the outpatient diagnostics loop
+
+`20260926000000_slice4_diagnostics.sql`. **Six** new tables, one new sequence,
+and one widened value list across four Slice 3A tables. No existing row is
+rewritten, no existing column changes type or meaning, no command response
+changes, and there is no backfill.
+
+Owner policy items 84–88, approved 19 September 2026, closing backend decision
+register entries D13 to D17.
+
+**Nothing in this slice contacts a laboratory.** There is no analyzer feed, no
+HL7, no results inbox and no external integration of any kind. A report
+arrives because a member of staff typed it in or attached the file the
+laboratory emailed, and that is the whole intake path.
+
+### 17.1 The six tables
+
+| Table | What one row is |
+|---|---|
+| `investigation_catalogue` | One version of one investigation or referral. Clinical content is fixed and doctor-approved; the operational half beside it is an administrator's to maintain. |
+| `investigation_orders` | One request form, `REQ-000123`. `open` or `cancelled` is the only stored state. |
+| `investigation_order_items` | One requested investigation or referral, with the four facts the form printed copied onto it. |
+| `investigation_results` | One report as it arrived, with two flag pairs, external validation kept separate from clinic review, and the correction relationship. |
+| `result_documents` | One stored file: identity, media type, size, checksum, provenance, uploader, supersession. **No URL column.** |
+| `result_reviews` | One doctor's clinical review. `unique (result_id)`. |
+
+### 17.2 The rule the whole slice is built on
+
+**A clinical judgment has a clinician's name on it, or it does not exist.**
+
+Four different mistakes are the same mistake — a fact with no author — and
+each of the five owner items refuses one:
+
+| The fact | Where it may come from | What cannot produce it |
+|---|---|---|
+| a flag | the report, an identified feed, or a doctor | free text, a reference range, OCR, a diagnosis, a model, an application threshold |
+| a review | a doctor with standing on the order | the laboratory's technical validation, however signed |
+| a release | that review **plus** a separate authorization | a review on its own, or elapsed time |
+| a delivery | authenticated provider evidence, or an audited telephone call | an authorization, a queue entry, an HTTP 200, Meta accepting the message |
+
+The four things a clock is allowed to do here are: make a request overdue,
+make an unreviewed result escalate, make a message due, and make one stop
+being worth sending. It never reviews, never flags, never authorizes and
+never releases.
+
+### 17.3 Where a flag comes from, in two column pairs
+
+Owner item 85 allows three origins, and the first two are transcription while
+the third is a clinical act. So `investigation_results` carries **two flags**:
+
+- `source_flag` / `source_flag_origin` / `source_flag_reference` — what the
+  report itself said, or what an identified structured feed carried. A nurse
+  or an administrator may write this down; item 86 lets them transcribe, and
+  the provenance reference is required by a check constraint, because a
+  transcribed flag with nothing to trace it to is somebody's opinion.
+- `doctor_flag` / `doctor_flag_by` / `doctor_flag_at` / `doctor_flag_reason` —
+  an authorized doctor's own judgment, with a reason.
+
+Each pair is write-once, held by `protect_investigation_result`. Two columns
+rather than one because the alternative is a doctor raising a laboratory's
+`abnormal` to `critical` by overwriting it, after which nobody can say what
+the laboratory reported — a clinical record where the doctor's judgment has
+erased the source's is a record that cannot be defended.
+
+`effective_flag` is a **stored generated column** taking the more severe of
+the two. It is generated rather than computed in code deliberately: taking the
+maximum of two recorded flags is the only operation on a flag that exists
+anywhere in this application, and putting it in the schema means it can be
+read rather than searched for. There is no branch that reads a number, a range
+or a word and decides something is abnormal.
+
+"Authorized" in item 85 is read as **authorized for this result** — the
+responsible doctor, the ordering doctor, or one explicitly delegated. Item 85
+names the authority without defining it; item 86 defines exactly that set for
+the neighbouring act, and borrowing the definition from the item next door is
+more defensible than inventing a fourth.
+
+### 17.4 The wrong patient, made unstorable
+
+Every table below the order carries `patient_id` although its parent already
+has one, and that redundancy is the point. Composite foreign keys chain the
+whole way down:
+
+```text
+investigation_orders      unique (id, patient_id)
+  └─ encounter_id, patient_id  ──▶ encounters (id, patient_id)
+investigation_order_items unique (id, patient_id)
+  └─ order_id, patient_id      ──▶ investigation_orders (id, patient_id)
+investigation_results     unique (id, patient_id)
+  ├─ order_item_id, patient_id ──▶ investigation_order_items (id, patient_id)
+  └─ supersedes_result_id, patient_id ──▶ investigation_results (id, patient_id)
+result_documents
+  └─ result_id, patient_id     ──▶ investigation_results (id, patient_id)
+result_reviews
+  └─ result_id, patient_id     ──▶ investigation_results (id, patient_id)
+```
+
+Checking it in the command is necessary and is not sufficient. There is no
+arrangement of identifiers, however they arrive, that files one patient's
+report against another patient's request — and the upload endpoint does not
+accept a caller-supplied patient id at all: it reads the one on the result.
+
+This is the same device `20260921000000` added for consultation-attempt
+reconciliation, and it reuses that migration's `encounters_id_patient` index
+rather than creating a second.
+
+### 17.5 A correction appends, and cannot inherit anything
+
+A corrected report is a **new row** that supersedes the old one. The old row
+keeps its text, its flag, its documents and its review; it stops being
+current.
+
+`investigation_results_current`, a partial unique index on `(order_item_id)
+where superseded_at is null`, is what makes "current" a fact rather than a
+convention. It also forces the order of a correction — stamp the old one
+superseded, then insert the new — which is why `superseded_at` is required and
+`superseded_by_result_id` is filled a line later. The same ordering problem
+`communication_schedules.superseded_by` has, for the same reason.
+
+The consequence worth stating: **because a review belongs to a result id and a
+correction is a new result id, a correction cannot inherit a review.** That is
+not a rule the code remembers to apply; it is the shape of the tables. The
+same is true of a notification authorization, which lives on the result row
+and starts null on the new one.
+
+`investigation_results_one_correction`, a partial unique index on
+`supersedes_result_id`, means one report is corrected by at most one
+successor, so two concurrent corrections meet an index rather than each other.
+
+### 17.6 Review, and what an external signature is not
+
+`result_reviews` has `unique (result_id)`, and that index does three jobs:
+
+1. Two doctors pressing Review at the same moment produce one review; the
+   loser is told who got there first rather than the record acquiring two
+   opinions with no order between them.
+2. A corrected report has no review, per §17.5.
+3. A review cannot be edited into a different review — the trigger refuses an
+   update and the index refuses a second row.
+
+`basis` records **which** authority the reviewer held —
+`responsible_doctor`, `ordering_doctor` or `delegated_doctor` — because who
+was responsible for a patient in September is not a question a query in March
+should be answering.
+
+The owner-doctor is deliberately **not** a fourth basis. Item 86 names three,
+and an owner-doctor who needs to take a stranded result over does it by
+delegating — to themselves if that is what is happening — which leaves an
+explicit, audited delegation rather than an implicit standing nothing records.
+Item 87's escalation is what makes that workable: a result nobody has reviewed
+reaches the owner-doctor's queue, and `delegate_result_review` is open to them
+so the queue has an action behind it.
+
+The laboratory's own technical validation lives in `external_validated_by`,
+`external_validated_at` and `external_signatory_reference` — different names,
+a different table from the review, and **no staff foreign key**, because the
+person who signed the report does not work here. Item 86: it is retained as
+evidence and it is not the clinic's clinical review.
+
+### 17.7 Item 87's clock, and the boundary the clinic has not set
+
+| Rule | Value | Source |
+|---|---|---|
+| Critical result alerts responsible + owner doctor | immediately | owner item 87 |
+| Critical acknowledgement owed after | 15 minutes | owner item 87 |
+| Unreviewed result escalates after | 4 clinic hours | owner item 87 |
+| …or at clinic closing, whichever is earlier | **20:00 clinic-local** | **a technical ceiling, not the clinic's closing time** |
+
+"Four clinic hours" is read exactly as Slice 3A reads the identical phrase in
+item 79: four elapsed hours, moved forward to the next dispatch opening if
+they would land when nobody is there. One interpretation used twice rather
+than two that happen to agree today.
+
+The second boundary is the honest gap. **This application holds no configured
+clinic closing time.** `clinic_settings` has no such column, and
+`provider_availability` is one doctor's optional published consulting windows
+rather than the clinic's day — a clinic that has published none would have no
+closing time at all. So `RESULT_ESCALATION_CEILING_HOUR` takes owner item 77's
+20:00 messaging dispatch cutoff as a conservative ceiling, under its own
+constant rather than a second reference to `DISPATCH_WINDOW_END_HOUR`, because
+the two mean different things and will stop being equal the day the owner
+supplies a closing time.
+
+What it costs while it stands: a clinic that shuts at 18:00 has unreviewed
+results reaching the owner-doctor at 20:00 rather than at closing — later than
+item 87 intends, never later than the messaging day, and usually irrelevant
+because the four-hour half fires first. Owner policy item 87 records the
+interpretation and the one value that replaces it.
+
+**There is no explicitly configured backup doctor.** Item 87 names "any
+explicitly configured backup doctor"; the clinic has configured none and this
+application has nowhere to hold one. `readResultEscalations` returns
+`backupDoctorConfigured: false` as a field rather than letting a screen imply
+one exists.
+
+### 17.8 The fifth messaging purpose, and why it is not the fourth
+
+Owner item 88 authorizes one automated patient-facing message and fixes its
+entire wording:
+
+> Your investigation result has been reviewed and is ready. Please contact the
+> clinic.
+
+Slice 3A's comment on its purpose list read: "A fifth purpose is a policy
+decision and not a column value somebody may add in passing." Item 88 is that
+decision. `result_ready` is added to the purpose check on `message_templates`,
+`communication_consents`, `communication_schedules` and `message_outbox`;
+`result_ready` to the schedule kinds; `investigation_result` to the source
+types.
+
+It is **not** `ready_for_collection`. That one is the pharmacy telling
+somebody their medicine is on the counter, and a patient who agreed to be told
+that has not agreed to be told that a test result exists. Owner item 78's
+whole architecture is that consent is per purpose; folding the two together
+would silently enrol everybody who ticked the pharmacy box.
+
+Two suppression reasons are added — `result_superseded` and
+`result_not_authorized` — and they are the honest half of item 88. A queued
+notice can stop being true between the authorization and the send.
+`resultNoticeStillStands` asks, under the row lock, in **both**
+`prepareOne` and `claimAttempt`: is the result still current, is the request
+still open, is there still a review, is there still an authorization, has it
+since been flagged critical. Everything else — consent, opt-out, template
+approval, usefulness, the schedule's own cancellation — is Slice 3A's generic
+recheck and is unchanged.
+
+There is no second outbox, no direct provider call and no result-shaped
+exception to any of Slice 3A's rules. `messaging.ts` reaches the diagnostics
+tables with plain SQL, exactly as it already reaches `appointment_bookings`
+and `follow_ups`, and imports nothing from `diagnostics.ts`; the command chain
+therefore runs `… → images.ts → diagnostics.ts → messaging.ts`, with
+diagnostics in front so the two never import each other.
+
+A critical result **cannot hold an authorization at all**: a check constraint
+on `investigation_results` refuses one, and the command refuses it with
+`CRITICAL_RESULT_NEEDS_DIRECT_CONTACT`. Item 88's clinician-led contact is not
+reachable by any ordering of events.
+
+### 17.9 The states, and what derives each one
+
+Only the order's `open`/`cancelled` is stored. Everything a screen wants to
+say about a line is derived, in `deriveItemState`, in precedence order — the
+first thing that is true is the answer:
+
+| State | What makes it true |
+|---|---|
+| `cancelled` | the line or its order was cancelled, with actor, time and reason |
+| `manually_contacted` | somebody recorded a telephone call or a conversation |
+| `notified` | `message_outbox.status = 'delivered'`, which only an authenticated provider status event produces |
+| `provider_outcome_unknown` | the provider's reply was lost |
+| `notification_pending` | authorized, and anything short of delivered — queued, accepted, suppressed, failed |
+| `closed` | reviewed as no action needed, or action taken |
+| `reviewed` | reviewed as patient to be informed, and not yet released |
+| `awaiting_review` | a current result exists and nobody has read it |
+| `overdue` | past the expected-by date the ordering doctor set, nothing back |
+| `in_progress` | the specimen went, or the patient was sent |
+| `ordered` | none of the above |
+
+`notified` requires provider evidence and nothing weaker. An authorization, a
+queued message, `sent_to_provider` and an HTTP 200 are each two or more steps
+short of it, and each has its own name in this list so a screen cannot round
+them up.
+
+### 17.10 Who may see what
+
+Owner item 86 has three tiers and one absolute, and they are applied per
+patient and per field by `mayAccessResults` rather than by a role list:
+
+| | |
+|---|---|
+| **doctor** | everything |
+| **nurse** | everything, while involved in that patient's care. `nurse_care_involvement` — the clinic's existing answer to that question for photographs, derived from work the nurse actually did — decides which patients |
+| **admin** | that the request exists, what was asked for, when it came back, how long it has waited and who owes it a review. Not the report, not the flag, not the review note |
+| **pharmacy** | nothing, refused at the top of the `results` endpoint and absent from every capability |
+
+The three patient-shaped reads and the `results` endpoint each report which of
+the two access levels they gave, so a screen never implies more than it has.
+`view.result_escalations` does not: it is doctor-only, so the answer is always
+clinical.
+
+**The derived state of a line is not gated**, and that is deliberate. It is a
+fact about the clinic rather than about the reader, so it is computed from
+ungated facts and only then is the payload minimized — the first version
+derived it from the already-minimized view and reported `reviewed` to an
+administrator where a doctor saw `closed`. Whether a line still owes somebody
+work is exactly what item 86 lets an administrator see.
+
+One asymmetry is deliberate: an administrator **may attach** a report and
+**may not open** one. Item 86 says both halves, and they are not in tension —
+filing a PDF already in your hand is not the same capability as being able to
+open anybody's.
+
+### 17.11 Documents, and the consent semantics that are not borrowed
+
+`result_documents` uses the same private object store, the same
+sixty-second single-purpose HMAC ticket and the same checksum-on-the-way-out
+as clinical photographs, through a second storage **area**: two buckets in the
+clinic (`CLINIC_DOCUMENT_BUCKET`, default `result-documents`), two directories
+in staging (`CLINIC_DOCUMENT_ROOT`). Both default to the image behaviour when
+unset, so every caller written before this slice means what it meant.
+
+What it does **not** reuse is `image_consents`. A photograph is something this
+clinic does to a patient, under a consent recorded before the shutter; a
+laboratory report is a document the clinic receives, with no shutter and no
+moment to consent to. Asking a front-desk clerk to record a photography
+consent before filing a PDF would teach everybody that the consent screen is a
+formality.
+
+**There is no URL column** — not public, not signed, not expiring — and a test
+walks `information_schema.columns` across all six tables asserting that no
+column is named like one. Duplicate uploads are answered twice over: by the
+idempotency reference, and by `unique (result_id, checksum)`, because the same
+bytes filed twice against one report is somebody pressing Attach again rather
+than a second document. A row refused after the bytes were written removes the
+orphan object.
+
+### 17.12 Idempotency
+
+`order_investigation`, `record_result` and the document upload each require an
+`idempotencyKey` and store it beside a `request_fingerprint` of the material
+request, with a unique index. Same key and the same request returns the
+original outcome; same key and a materially different request is refused
+rather than answered with somebody else's record.
+
+The receipt is located **before** any mutable prerequisite is consulted. An
+exact retry that lands after the patient has been discharged, after a
+catalogue entry has been retired, or after the request has been cancelled
+still gets its answer — and the order replay says `cancelled: true` beside it,
+so it is accurate about the past without being silent about the present. This
+is the fault Slice 2's third acceptance review reproduced twice, and the rule
+is inherited rather than rediscovered.
+
+The remaining consequential commands are idempotent by construction rather
+than by key: `review_result` through `unique (result_id)`, and
+`flag_result`, `acknowledge_critical_result`, `authorize_result_notification`
+and `record_patient_result_contact` through write-once columns the trigger
+protects. A second press returns the original outcome; a second press by a
+different person is refused and names who got there first.
+
+There is no receipts table. `appointment_command_receipts` and its `once()`
+are Slice 2's, and generalizing them would mean editing accepted Slice 2 code;
+duplicating them would be a second mechanism. Every consequential command here
+has exactly one durable effect row, so that row carries the key — which is
+Slice 3A's pattern on `communication_schedules`, not a new one.
+
+### 17.13 Compatibility
+
+Nothing existing changed behaviour. The four Slice 3A purposes still behave
+exactly as they did and a test asserts it; the staff WhatsApp composer still
+reads `patients.whatsapp_consent` and still writes nothing to the outbox;
+`send_order`, `send_patient_whatsapp`, the appointment book, consultation
+signing, dispensing and the counter are untouched.
+
+Nothing joins the snapshot. There are now **sixteen** Edge Functions; the new
+one is `results`, and it is the third that is not a general-purpose staff
+endpoint — it moves bytes and nothing else.
+
+### 17.14 Deferred, explicitly
+
+None of these is unfinished Slice 4 work. Each is named rather than implied.
+
+- **The frontend.** No screen renders any of this. The contract is
+  [`reference/SLICE4_FRONTEND_CONTRACT.md`](reference/SLICE4_FRONTEND_CONTRACT.md).
+- **A clinic closing time** (§17.7) and **a configured backup doctor**, both
+  owner values, both recorded rather than invented.
+- **Professional registration.** Item 84 requires a registered doctor. What
+  this application can prove is the doctor role plus the explicit
+  authorization flag; whether that person holds a current medical registration
+  is an onboarding and governance obligation the clinic owns, and nothing here
+  claims otherwise.
+- **Structured laboratory values.** No analyte, value, unit or reference
+  range, because no approved bounded catalogue exists and inventing one
+  invites the one line of code owner item 85 forbids.
+- **Any external integration**: no analyzer feed, no laboratory portal, no
+  HL7, no results inbox. `imported_structured_feed` is a provenance value a
+  human records, not a connection.
+- **Sending a result notice.** The channel is unconfigured, exactly as in
+  §16.9: every authorized notice is suppressed into the admin's queue with
+  `channel_not_configured`, and every release gate in owner section M's
+  closing paragraph still stands — plus this purpose's own approved Meta
+  template, which does not exist either.
+- **Backfill.** Nothing historical was converted. There is no investigation in
+  this clinic's past to migrate, and turning clinical images into results
+  would invent evidence.

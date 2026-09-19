@@ -729,6 +729,16 @@ events, terminal failure, retry exhaustion, and role visibility.
 
 ## 10. Slice 4 — investigation, referral, result, review, and notification loop
 
+> **Built, 19 September 2026**, against owner policy items 84–88 — the answers
+> to D13–D17, approved the same day.
+> [`BACKEND_PROGRAMME_REGISTER.md`](BACKEND_PROGRAMME_REGISTER.md) §13 is what
+> it found and decided, `SCHEMA_AND_TYPES.md` §17 is the contract, and
+> [`SLICE4_FRONTEND_CONTRACT.md`](SLICE4_FRONTEND_CONTRACT.md) is what a screen
+> would be built against. **No screen renders any of it**, nothing contacts a
+> laboratory, and no result notice has been sent — the clinic's WhatsApp
+> connection is unconfigured and every authorized one is suppressed into the
+> admin's queue. The requirements below are kept as they were written.
+
 Close the common outpatient diagnostics loop without building a LIMS, RIS,
 PACS, or analyzer integration platform.
 

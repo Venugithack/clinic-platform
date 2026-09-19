@@ -65,6 +65,21 @@ if (!process.env.CLINIC_IMAGE_ROOT && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.log(`  clinical images -> ${root}`)
 }
 
+/*
+ * And where Slice 4's received reports go, which is a different place.
+ *
+ * `storage.ts` keeps photographs and laboratory reports in two areas — two
+ * buckets in the clinic, two directories here — because they are governed by
+ * different owner items and a retention decision about one must not be able to
+ * reach the other. Set explicitly rather than left to fall back on the image
+ * root, so that staging has the same shape the clinic will.
+ */
+if (!process.env.CLINIC_DOCUMENT_ROOT && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  const root = mkdtempSync(join(tmpdir(), 'jmc-staging-documents-'))
+  process.env.CLINIC_DOCUMENT_ROOT = root
+  console.log(`  result documents -> ${root}`)
+}
+
 /**
  * `Deno.serve`, replaced. The real one starts listening; this one hands the
  * handler back to the loop below, which is the only difference that matters.

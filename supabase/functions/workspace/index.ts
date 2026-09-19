@@ -22,6 +22,10 @@
  *   ?view=communication_failures       the delivery-failure queue, owner item 79
  *   ?view=communication_consent&patientId=…  what this patient agreed to receive
  *   ?view=communication_outcome&outboxId=…   what happened to one message
+ *   ?view=result_review_queue          results back and nobody has read them
+ *   ?view=result_escalations           owner item 87's two escalations
+ *   ?view=investigation_order&orderId=…  one request form, end to end
+ *   ?view=patient_investigations&patientId=…  one patient's investigations
  *
  * Reads only, and GET only. Every write in this application is a command, and
  * a GET that writes is a GET that a retry, a prefetch or a browser's
@@ -38,7 +42,7 @@
  * tries every role against every entry, and a view added without an entry
  * cannot reach its handler — the default below refuses it.
  */
-import { json, preflight, sessionFrom } from '../_shared/http.ts'
+import { json, logFailure, preflight, sessionFrom } from '../_shared/http.ts'
 import { CAPABILITIES, mayUse, type CapabilityId } from '../_shared/capabilities.ts'
 import {
   readCalendar, readEquivalents, readOutcome, readPatientAppointments,
@@ -49,6 +53,10 @@ import {
   readCommunicationConsent, readCommunicationDue, readCommunicationFailures,
   readDeliveryOutcome,
 } from '../_shared/messaging.ts'
+import {
+  readInvestigationOrder, readPatientInvestigations, readResultEscalations,
+  readResultReviewQueue,
+} from '../_shared/diagnostics.ts'
 
 /** Which capability each view spends. The routing table IS the gate. */
 const VIEWS: Record<string, CapabilityId> = {
@@ -69,6 +77,11 @@ const VIEWS: Record<string, CapabilityId> = {
   communication_failures: 'view.communication_failures',
   communication_consent: 'view.communication_consent',
   communication_outcome: 'view.communication_outcome',
+  // Slice 4.
+  result_review_queue: 'view.result_review_queue',
+  result_escalations: 'view.result_escalations',
+  investigation_order: 'view.investigation_order',
+  patient_investigations: 'view.patient_investigations',
 }
 
 Deno.serve(async (request) => {
@@ -232,11 +245,50 @@ Deno.serve(async (request) => {
         return json({ ok: true, outcome })
       }
 
+      case 'result_review_queue':
+        return json({ ok: true, queue: await readResultReviewQueue(session) })
+
+      case 'result_escalations':
+        return json({ ok: true, escalations: await readResultEscalations(session) })
+
+      case 'investigation_order': {
+        const orderId = param('orderId')
+        if (!orderId) return json({ ok: false, message: 'No request asked for.' }, 400)
+        const order = await readInvestigationOrder(session, orderId)
+        if (order === null) return json({ ok: false, message: 'That request was not found.' }, 404)
+        /*
+         * `refused` and not 404, and the two are kept apart on purpose.
+         *
+         * A nurse who is not involved in this patient's care is told exactly
+         * that, so they know to record the vitals they came for or to ask the
+         * doctor. Answering 404 would be a smaller disclosure and a worse
+         * instruction; the identifier is a uuid the caller already had, so
+         * there is nothing here they could not already guess at.
+         */
+        if (order === 'refused') {
+          return json({ ok: false, message: 'Your role cannot read this patient’s investigations.' }, 403)
+        }
+        return json({ ok: true, order })
+      }
+
+      case 'patient_investigations': {
+        const patientId = param('patientId')
+        if (!patientId) return json({ ok: false, message: 'No patient asked for.' }, 400)
+        const investigations = await readPatientInvestigations(session, patientId)
+        if (investigations === null) {
+          return json({ ok: false, message: 'That patient was not found.' }, 404)
+        }
+        if (investigations === 'refused') {
+          return json({ ok: false, message: 'Your role cannot read this patient’s investigations.' }, 403)
+        }
+        return json({ ok: true, investigations })
+      }
+
       default:
         return json({ ok: false, message: 'Unknown workspace view.' }, 400)
     }
   } catch (error) {
-    console.error('workspace read failed:', error)
+    logFailure('workspace read failed', error)
     return json({ ok: false, message: 'That could not be read.' }, 500)
   }
 })

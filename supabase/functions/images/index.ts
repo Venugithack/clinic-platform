@@ -28,7 +28,7 @@
 import { randomUUID } from 'node:crypto'
 import { hasRole } from '../_shared/auth.ts'
 import { audit, db, transaction } from '../_shared/db.ts'
-import { cors, json, preflight, sessionFrom } from '../_shared/http.ts'
+import { cors, json, logFailure, preflight, sessionFrom } from '../_shared/http.ts'
 import { mayAccessImage, recordImageAccess, type ImageRow } from '../_shared/images.ts'
 import {
   checksumOf, getObject, issueTicket, newStorageKey, putObject, storageConfigured,
@@ -81,7 +81,7 @@ Deno.serve(async (request) => {
     // The message is the staff member's, not the stack's. An upload that
     // failed must never look like one that worked.
     const message = error instanceof Error ? error.message : 'That could not be done.'
-    console.error('images:', error)
+    logFailure('images', error)
     return json({ ok: false, message }, 400)
   }
 })

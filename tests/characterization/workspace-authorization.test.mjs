@@ -66,6 +66,23 @@ const REACHED_BY = {
   'view.communication_failures': () => 'communication_failures',
   'view.communication_consent': (ids) => `communication_consent&patientId=${ids.patientId}`,
   'view.communication_outcome': () => 'communication_outcome&outboxId=no-such-message',
+  /*
+   * Slice 4. The two patient-shaped reads name a record that does not exist,
+   * for the same reason `communication_outcome` does: a role that holds the
+   * capability gets a 404 and one that does not still gets a 403, which is
+   * the distinction this matrix is for.
+   *
+   * It matters more here than there. Owner item 86 puts a SECOND gate behind
+   * these two — `mayAccessResults`, which refuses a nurse who is not involved
+   * in that patient's care and withholds the clinical half from an
+   * administrator — and a real identifier would make this matrix fail on that
+   * second gate while saying nothing about the first. That gate has its own
+   * tests, per patient and per field, in `slice4-diagnostics.test.mjs`.
+   */
+  'view.result_review_queue': () => 'result_review_queue',
+  'view.result_escalations': () => 'result_escalations',
+  'view.investigation_order': () => 'investigation_order&orderId=no-such-request',
+  'view.patient_investigations': () => 'patient_investigations&patientId=no-such-patient',
 }
 
 const staff = {}

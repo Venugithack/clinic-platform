@@ -134,6 +134,16 @@ const SERIES = {
   DSP: 'dispense_seq',
   INV: 'invoice_seq',
   RCP: 'receipt_seq',
+  /*
+   * Backend programme Slice 4: a request form.
+   *
+   * `REQ` and not `INV`, which an invoice already holds, and not `LAB`,
+   * because the same series numbers a referral to a cardiologist as well as a
+   * blood test — they are one act, the doctor sending a patient out for
+   * something and expecting a report back, and one number is one thing to read
+   * back over a telephone.
+   */
+  REQ: 'investigation_order_seq',
 } as const
 
 /**
@@ -145,7 +155,7 @@ const SERIES = {
  * are the ones somebody reads back over a telephone.
  */
 const WIDTH: Partial<Record<keyof typeof SERIES, number>> = {
-  RX: 6, INV: 6, RCP: 6, DSP: 6,
+  RX: 6, INV: 6, RCP: 6, DSP: 6, REQ: 6,
 }
 
 export async function sequence(prefix: keyof typeof SERIES) {

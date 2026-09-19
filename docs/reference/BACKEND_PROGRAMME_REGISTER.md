@@ -19,8 +19,9 @@ it says so.
 
 Status: **Slice 0 complete, 14 September 2026. Slice 1 complete, 14 September
 2026. Slice 2 accepted, 17 September 2026, after six bounded acceptance
-corrections. Slice 3 policy approved, 17 September 2026, and ready but not
-started.** Slices 4–12 not started.
+corrections. Slice 3A and Slice 3B built, 18 September 2026 — and sending
+nothing. Slice 4 built, 19 September 2026, against owner items 84–88.**
+Slices 5–12 not started. No screen renders Slice 3 or Slice 4.
 Slice 1's own record is [§11](#11-slice-1-what-was-built), Slice 2's is
 [§12](#12-slice-2-what-was-built), and the six acceptance corrections are
 §12.1 to §12.6; what each changed in the tables below is marked in place.
@@ -47,6 +48,7 @@ Where they disagree, the later section is the current behaviour.
 12.5 [Returned a fifth time: a convention is not a capability](#125-returned-a-fifth-time-a-convention-is-not-a-capability)
 12.6 [The sixth correction: the words are the doctor's too](#126-the-sixth-correction-the-words-are-the-doctors-too)
 12.7 [Slice 2 accepted](#127-slice-2-accepted)
+13. [Slice 4: what was built](#13-slice-4-what-was-built)
 
 ---
 
@@ -3016,3 +3018,153 @@ documentation; the preceding full browser gate was 64/64. Acceptance closes
 W5 as a backend capability. It is not a deployment, and the later frontend
 programme still owes the calendar and reconciliation controls described in
 `SLICE2_FRONTEND_CONTRACT.md`.
+
+---
+
+## 13. Slice 4: what was built
+
+**19 September 2026.** W7, closed. Owner policy items 84–88, approved the same
+day, closing decision register entries D13 to D17.
+
+`SCHEMA_AND_TYPES.md` §17 is the contract and
+[`SLICE4_FRONTEND_CONTRACT.md`](SLICE4_FRONTEND_CONTRACT.md) is what a screen
+would be built against. This section is what the slice found, decided and left
+open, which is what this register is for.
+
+### The migration
+
+`20260926000000_slice4_diagnostics.sql`. Six tables —
+`investigation_catalogue`, `investigation_orders`,
+`investigation_order_items`, `investigation_results`, `result_documents`,
+`result_reviews` — one sequence, and one widened value list across four
+Slice 3A tables. No existing row is rewritten and nothing is backfilled.
+
+### Fourteen commands, and why each one exists
+
+The programme names four. The other ten are here because an approved state
+cannot otherwise be created truthfully, which is the bar the brief sets, and
+each is justified in the code beside itself:
+
+| Command | Why it is not optional |
+|---|---|
+| `order_investigation` · `record_result` · `review_result` · `authorize_result_notification` | the four the programme names |
+| `draft_investigation` · `approve_investigation` | without them there is no catalogue at all, and a seeded one would be clinical content nobody approved — the argument `draft_message_template` makes for item 81 |
+| `retire_investigation` | item 84 names retirement beside versioning, and they differ: a version replaces a definition, retirement withdraws one with nothing in its place |
+| `update_investigation_metadata` | item 84's administrator clause. The only catalogue command an admin can complete, and the table's trigger — not this switch statement — is what keeps it away from clinical content |
+| `cancel_investigation_order` | `cancelled` is a state the programme names, and no other row implies it: an unreturned order and a withdrawn one are otherwise identical |
+| `mark_investigation_sent` | likewise for "referred or external work in progress" |
+| `flag_result` | item 85's third permitted origin. Without it a clinic whose laboratory sends an unflagged report cannot record a doctor noticing something in it |
+| `acknowledge_critical_result` | item 87 requires an acknowledgement by name and nothing else could stand for one |
+| `delegate_result_review` | item 86's "explicitly delegated doctor" is unimplementable without it, and item 87's escalation would reach an owner-doctor with nothing to do about it |
+| `record_patient_result_contact` | item 88 makes it one of four distinct facts, and a delivered WhatsApp message is not a telephone call |
+
+### Four decisions worth this register rather than only the contract
+
+**The flag is two columns, not one.** Item 85 allows three origins and the
+first two are transcription while the third is a clinical act. One column
+would mean a doctor raising a laboratory's `abnormal` to `critical` by
+overwriting it, after which nobody can say what the laboratory reported. So
+`source_flag` and `doctor_flag` are separate, each write-once, and
+`effective_flag` is a **generated column** taking the more severe — generated
+rather than computed in code so that the only operation this application
+performs on a flag is visible in the schema rather than findable by grep.
+
+**The owner-doctor is not an implicit reviewer.** Item 86 names three
+authorities and the owner-doctor is not among them; item 87 makes them an
+escalation target. Giving them a fourth, silent standing would have been the
+easy reading and would have made "who may review this?" unanswerable from the
+record. Instead `delegate_result_review` is open to them, so taking a stranded
+result over leaves an explicit, audited delegation — including to themselves,
+which is a real workflow and now a recorded one.
+
+**A correction cannot inherit a review, and that is the shape of the tables.**
+`result_reviews` has `unique (result_id)`; a corrected report is a new result
+id; therefore it has no review and no authorization until somebody writes
+them. Nothing had to remember this. The same index makes two doctors pressing
+Review produce one review.
+
+**A critical result cannot hold a notification authorization at all.** Item 88
+says critical communication is clinician-led. Implemented as a check
+constraint as well as a refusal, so there is no code path — this one or a
+later one — that can put one onto the automated channel.
+
+### What the gates caught that the implementation did not
+
+**A composite foreign key with no supporting index.**
+`slice3-gate.test.mjs`'s "every foreign key has an index that supports it"
+failed on `investigation_results_correction_is_this_patients`: the single
+-column index on `supersedes_result_id` does not serve a two-column key. Fixed
+in the migration. Five other composite keys in the slice were already covered;
+this one was written last and indexed like its neighbours rather than like
+itself.
+
+**A workspace view that nobody had routed in the matrix.**
+`workspace-authorization.test.mjs` requires every `view.*` capability to
+appear in its reach table, and refused to let four new ones in without it.
+Adding them exercised all five roles against all four.
+
+**And one the matrix's own assumption could not express.** Owner item 86 puts
+a *second* gate behind two of the new reads — `mayAccessResults`, per patient
+and per field — so a nurse who holds the capability still gets a 403 for a
+patient not in their care. The matrix asserts that holding a capability means
+never being refused, which is right about the capability gate and cannot be
+right about both. The two patient-shaped reads therefore name a record that
+does not exist, exactly as `view.communication_outcome` already did, and the
+second gate has its own tests per patient and per field.
+
+### Non-vacuity
+
+Eight guards were removed one at a time, the intended test watched to fail for
+the intended reason, and the guard restored:
+
+| Guard | The test, with it gone |
+|---|---|
+| `investigation_results_item_is_this_patients` | a cross-patient result inserts — "Missing expected rejection" |
+| the trigger's review-before-authorization check | a notice authorizes on an unreviewed report |
+| `investigation_results_check15` (critical) | a critical result takes an authorization |
+| `investigation_results_current` | two current reports on one line |
+| `result_reviews_result_id_key` | two reviews on one report |
+| the dispatch-time result recheck | a withdrawn authorization dispatches |
+| `requireStanding` | an unconnected doctor reviews |
+| the pharmacy refusal, in both places | a pharmacist reads a result |
+
+**Two of them were not provable the way they were first written, and that is
+worth recording.** The concurrency tests for "one current report" and "one
+review" kept passing with their unique indexes dropped — because
+`record_result` and `review_result` take the row `for update` and re-read, so
+the lock and the pre-check do the work and the index is never reached. The
+index is what holds when a later code path forgets the lock, so each got a
+second test that writes directly on two connections. Both then failed with the
+index gone. A guard proved only through a path that never reaches it is a
+guard nobody has.
+
+The same is true in the other direction for the dispatch-time recheck: a
+*correction* supersedes the schedule, so Slice 3A's existing schedule-status
+check catches it too and that test passes on either guard alone. The
+withdrawn-authorization test is the one the schedule-status check cannot see,
+and is therefore the one that proves the recheck is load-bearing. Both are
+noted in the tests rather than left implied.
+
+### What Slice 4 did not close
+
+- **No frontend.** The contract exists; no screen renders any of it.
+- **No laboratory integration**, and none planned in this slice: no analyzer
+  feed, no portal, no HL7, no results inbox. Every result was typed in or
+  attached by a member of staff, and `imported_structured_feed` is a
+  provenance value a human records rather than a connection.
+- **No structured laboratory values**, deliberately. There is no approved
+  bounded catalogue of analytes, and a `value numeric` beside a
+  `reference_high numeric` invites exactly the one line of code item 85
+  forbids.
+- **Nothing is sent.** The result-ready purpose exists, its wording is fixed
+  by item 88 and the clinic can approve it internally; Meta has approved
+  nothing, the connection is unconfigured, and every authorized notice is
+  suppressed into the admin's queue like every other purpose.
+- **Three owner values**, each recorded rather than invented: a clinic-local
+  closing time (item 87's second boundary — 20:00 is a technical ceiling and
+  says so), a configured backup doctor (there is none, and the read says so in
+  a field), and evidence of professional registration (item 84 requires a
+  registered doctor; this application can prove a role and a flag, and claims
+  no more).
+- **W9 is untouched.** No object in R2 has been fetched, decrypted or
+  restored. Slice 4 created no credential and reached no network.

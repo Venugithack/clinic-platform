@@ -386,6 +386,19 @@ The dose-reminder template needs care: naming the drug in the message body is
 both a privacy leak into a forwardable chat log and a step towards the line.
 Reminder text says *"today's medicines"* and links out.
 
+A laboratory result is the same argument at full strength, and owner item 88
+settled it on 19 September 2026 in the direction this section argued for. The
+whole permitted message is:
+
+> Your investigation result has been reviewed and is ready. Please contact the
+> clinic.
+
+No value, no abnormal or critical status, no diagnosis, no medicine, no
+advice, no attachment — and not even a link, which is stricter than rule 3
+below requires. A critical result does not go down this path at all: item 88
+makes that a clinician's telephone call, and a check constraint on
+`investigation_results` refuses an automated authorization for one.
+
 ---
 
 ## 6. Grey area five: Cloud API messages are not end-to-end encrypted
@@ -433,6 +446,7 @@ The practical output of all of the above.
 | Bill ready | us | utility | registration consent | low | per msg |
 | Daily dose digest | us | utility | **per-prescription opt-in** | low–medium — unanswered by design | per msg |
 | Clinic closed today | us | utility | registration consent | low — genuinely wanted | per msg |
+| **"Your result is ready"** (added 19 Sep 2026) | us | utility | **purpose-specific opt-in** — owner item 88, and the registration flag is not it | low — one fixed sentence, no value, no status, no diagnosis, no attachment, no link | per msg |
 | **"Doctor has arrived"** | us | **likely marketing** | would need marketing consent | **high — reportable, 6× cost** | **not built** |
 | Low-stock digest to staff | us | utility | employer, trivially consented | none | per msg |
 | **Purchase order to supplier** | us | utility | **absent** | **highest in the build** | per msg |

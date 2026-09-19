@@ -26,7 +26,31 @@
  * that will one day be somewhere real.
  */
 
-const BUCKET = Deno.env.get('CLINIC_IMAGE_BUCKET') ?? 'clinical-images'
+/**
+ * Two areas, and they are separate stores rather than two prefixes.
+ *
+ * `images` is clinical photographs, which this clinic TAKES of a patient under
+ * a recorded consent. `documents` is reports the clinic RECEIVES about a
+ * patient — Slice 4's laboratory PDFs and scans — which have no shutter and no
+ * moment to consent to, and which owner item 86 governs rather than item 27.
+ *
+ * Keeping them apart costs one parameter and buys three things: a bucket
+ * policy can differ, an accidental cross-fetch cannot resolve, and a retention
+ * decision about photographs cannot reach a report. The parameter defaults to
+ * `images`, so every caller written before Slice 4 means exactly what it
+ * meant.
+ */
+export type StorageArea = 'images' | 'documents'
+
+const BUCKETS: Record<StorageArea, string> = {
+  images: Deno.env.get('CLINIC_IMAGE_BUCKET') ?? 'clinical-images',
+  documents: Deno.env.get('CLINIC_DOCUMENT_BUCKET') ?? 'result-documents',
+}
+
+const ROOT_VARIABLES: Record<StorageArea, string> = {
+  images: 'CLINIC_IMAGE_ROOT',
+  documents: 'CLINIC_DOCUMENT_ROOT',
+}
 
 export type StoredObject = {
   key: string
@@ -61,12 +85,18 @@ function supabaseConfigured(): { url: string; key: string } | null {
  * configured" is a sentence a deployment can act on; a photograph quietly
  * written to /tmp and gone at the next restart is not.
  */
-function localRoot(): string {
-  const root = Deno.env.get('CLINIC_IMAGE_ROOT') ?? ''
+function localRoot(area: StorageArea): string {
+  const variable = ROOT_VARIABLES[area]
+  // A document root nobody set falls back to the image root rather than
+  // failing, because in staging one scratch directory is the whole point and
+  // the two areas are separate SUBDIRECTORIES of it — `newDocumentStorageKey`
+  // writes under `result-documents/`. In the clinic there is no fallback to
+  // reach: Supabase is configured and each area has its own bucket.
+  const root = Deno.env.get(variable) ?? Deno.env.get('CLINIC_IMAGE_ROOT') ?? ''
   if (!root) {
     throw new StorageUnavailable(
-      'Image storage is not configured. Set SUPABASE_SERVICE_ROLE_KEY for the clinic, ' +
-      'or CLINIC_IMAGE_ROOT for a local scratch directory.',
+      'Private storage is not configured. Set SUPABASE_SERVICE_ROLE_KEY for the clinic, ' +
+      `or ${variable} for a local scratch directory.`,
     )
   }
   return root
@@ -85,16 +115,36 @@ export function newStorageKey(patientId: string, contentType: string): string {
   return `${patientId}/${crypto.randomUUID()}-${crypto.randomUUID().slice(0, 8)}.${extension}`
 }
 
+/**
+ * The same, for a received report. Generated here and never taken from a
+ * caller, for the reason above — and prefixed, so that a local scratch
+ * directory keeps the two areas apart as visibly as two buckets do.
+ *
+ * The original filename never reaches the key. A laboratory's own naming is
+ * routinely `SMITH_JOHN_HIV_2026.pdf`, and a key is the one string about a
+ * document that ends up in a storage listing, a backup manifest and an error
+ * message.
+ */
+export function newDocumentStorageKey(patientId: string, contentType: string): string {
+  const extension = contentType === 'application/pdf'
+    ? 'pdf'
+    : contentType === 'image/png'
+    ? 'png'
+    : 'jpg'
+  return `result-documents/${patientId}/${crypto.randomUUID()}-${crypto.randomUUID().slice(0, 8)}.${extension}`
+}
+
 export async function putObject(
   key: string,
   bytes: Uint8Array,
   contentType: string,
+  area: StorageArea = 'images',
 ): Promise<StoredObject> {
   const checksum = await checksumOf(bytes)
   const supabase = supabaseConfigured()
 
   if (supabase) {
-    const response = await fetch(`${supabase.url}/storage/v1/object/${BUCKET}/${key}`, {
+    const response = await fetch(`${supabase.url}/storage/v1/object/${BUCKETS[area]}/${key}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${supabase.key}`,
@@ -110,7 +160,7 @@ export async function putObject(
       throw new StorageUnavailable(`Storage refused the upload (${response.status}).`)
     }
   } else {
-    const root = localRoot()
+    const root = localRoot(area)
     const path = `${root}/${key}`
     await Deno.mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true })
     await Deno.writeFile(path, bytes, { createNew: true })
@@ -119,16 +169,16 @@ export async function putObject(
   return { key, byteSize: bytes.byteLength, checksum, contentType }
 }
 
-export async function getObject(key: string): Promise<Uint8Array> {
+export async function getObject(key: string, area: StorageArea = 'images'): Promise<Uint8Array> {
   const supabase = supabaseConfigured()
   if (supabase) {
-    const response = await fetch(`${supabase.url}/storage/v1/object/${BUCKET}/${key}`, {
+    const response = await fetch(`${supabase.url}/storage/v1/object/${BUCKETS[area]}/${key}`, {
       headers: { authorization: `Bearer ${supabase.key}` },
     })
     if (!response.ok) throw new StorageUnavailable(`Storage could not return the object (${response.status}).`)
     return new Uint8Array(await response.arrayBuffer())
   }
-  return Deno.readFile(`${localRoot()}/${key}`)
+  return Deno.readFile(`${localRoot(area)}/${key}`)
 }
 
 /**
@@ -136,10 +186,10 @@ export async function getObject(key: string): Promise<Uint8Array> {
  * describing the image stays behind as a tombstone — policy register 29 calls
  * for an audited lifecycle event, not a disappearance.
  */
-export async function deleteObject(key: string): Promise<void> {
+export async function deleteObject(key: string, area: StorageArea = 'images'): Promise<void> {
   const supabase = supabaseConfigured()
   if (supabase) {
-    const response = await fetch(`${supabase.url}/storage/v1/object/${BUCKET}/${key}`, {
+    const response = await fetch(`${supabase.url}/storage/v1/object/${BUCKETS[area]}/${key}`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${supabase.key}` },
     })
@@ -149,7 +199,7 @@ export async function deleteObject(key: string): Promise<void> {
     return
   }
   try {
-    await Deno.remove(`${localRoot()}/${key}`)
+    await Deno.remove(`${localRoot(area)}/${key}`)
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error
   }
@@ -217,6 +267,7 @@ export async function ticketIsValid(
 }
 
 /** Whether bytes can be stored at all, for a screen that must not pretend. */
-export function storageConfigured(): boolean {
-  return supabaseConfigured() !== null || Boolean(Deno.env.get('CLINIC_IMAGE_ROOT'))
+export function storageConfigured(area: StorageArea = 'images'): boolean {
+  if (supabaseConfigured() !== null) return true
+  return Boolean(Deno.env.get(ROOT_VARIABLES[area]) ?? Deno.env.get('CLINIC_IMAGE_ROOT'))
 }

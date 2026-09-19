@@ -174,6 +174,49 @@ export const CAPABILITIES = {
     mirrors: 'view.communication_failures — the same audience, and this is the drill-down behind one of its rows.',
   },
 
+  /*
+   * Slice 4. Four reads about investigations and their results, and owner item
+   * 86 is the whole of their role lists.
+   *
+   * **Pharmacy is absent from all four, and that is not a narrowing.** Item
+   * 86: "Pharmacy users must not see result content or invoke result
+   * workflows." The `results` endpoint refuses a pharmacist before it reads a
+   * query string, for the same reason `images` does — no access is a property
+   * of the endpoint rather than of each SELECT inside it — and these
+   * capabilities are the second lock on the same door.
+   *
+   * **The role list is not the whole gate here, and it cannot be.** Item 86
+   * gives a nurse and an administrator different access from a doctor and
+   * from each other: a nurse may attach and transcribe a report, which is not
+   * possible without reading it, but only for a patient in their care; an
+   * administrator may see "operational/audit metadata needed to manage
+   * outstanding work, not unrestricted result content". One role list cannot
+   * say that, so — exactly as `view.communication_failures` does for owner
+   * item 79 — the capability admits the roles that have any business here and
+   * `mayAccessResults` in `diagnostics.ts` applies the per-patient and
+   * per-field half. Every read model reports which of the two it gave.
+   */
+  'view.result_review_queue': {
+    roles: ['admin', 'doctor'],
+    purpose: 'Results that have come back and nobody has clinically reviewed yet.',
+    mirrors: 'owner item 86 — review is a doctor act, and item 87 makes the outstanding work an admin has to chase. The read model gives a doctor the clinical half and an admin the operational half.',
+  },
+  'view.result_escalations': {
+    roles: ['doctor'],
+    purpose: 'Critical results nobody has acknowledged, and reviews past owner item 87’s clock.',
+    mirrors: 'owner item 87 escalates to the responsible doctor and the owner-doctor and names nobody else. An admin’s view of the same backlog is view.result_review_queue, without the flags.',
+  },
+  'view.investigation_order': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'One request form: what was asked for, what came back, who reviewed it, and what the patient was told.',
+    mirrors: 'owner item 86’s three tiers, applied per patient and per field by mayAccessResults rather than by this list.',
+  },
+  'view.patient_investigations': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'One patient’s investigations and referrals, newest first.',
+    mirrors: 'the same gate as view.investigation_order; one patient’s requests are no wider than one of them.',
+  },
+
   'list.today_queue': {
     roles: ['admin', 'doctor', 'nurse'],
     purpose: 'Patients arrived and not yet finished.',

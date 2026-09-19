@@ -159,3 +159,79 @@ export const RECALL_USEFUL_UNTIL_HOUR = DISPATCH_WINDOW_END_HOUR
  */
 export const CONSENT_CLINIC_NAME = 'Jayamurugan Clinic'
 export const CONSENT_WORDING_VERSION = 'en-2026.09'
+
+/* ────────────────────────── Slice 4: investigations, results and review ── */
+
+/**
+ * Owner policy register item 87. "Other unreviewed results escalate to the
+ * owner-doctor after four clinic hours or at clinic closing, whichever is
+ * earlier."
+ *
+ * This is the first half, and it is exact. It is measured from the moment the
+ * report was received, and "four clinic hours" is read the way Slice 3A reads
+ * the identical phrase in item 79: four elapsed hours, moved forward to the
+ * next dispatch opening if they would land when nobody is there. One
+ * interpretation used twice, rather than two that happen to agree today.
+ */
+export const UNREVIEWED_RESULT_ESCALATION_HOURS = 4
+
+/**
+ * Item 87's second half — and **this is not the clinic's closing time.**
+ *
+ * The item says "or at clinic closing, whichever is earlier". A daily
+ * clinic-local closing time is an owner value, and the clinic has not supplied
+ * one: `clinic_settings` has no such column, and `provider_availability` is
+ * one doctor's optional published consulting windows rather than the clinic's
+ * day — a clinic that has published none would have no closing time at all.
+ *
+ * So this is a conservative technical CEILING, and it takes its value from
+ * owner item 77's messaging dispatch cutoff because that is the only daily
+ * clinic-local boundary this application can prove. It is deliberately its own
+ * constant rather than a second reference to `DISPATCH_WINDOW_END_HOUR`: the
+ * two mean different things, they will stop being equal the day the owner
+ * supplies a closing time, and a shared constant is how that change silently
+ * moves the messaging window too.
+ *
+ * What it costs while it stands: a clinic that shuts at 18:00 has unreviewed
+ * results reaching the owner-doctor at 20:00 rather than at closing, which is
+ * later than item 87 intends and never later than the messaging day. The
+ * four-hour half is unaffected and is usually the earlier of the two anyway.
+ * Owner policy item 87 records the interpretation and what replaces it.
+ */
+export const RESULT_ESCALATION_CEILING_HOUR = 20
+
+/**
+ * Owner policy register item 87. "If it remains unacknowledged for 15
+ * minutes, it remains visibly escalated to the owner-doctor and any explicitly
+ * configured backup doctor, with a manual-escalation obligation."
+ *
+ * Fifteen minutes is the owner's number. What the clock does when it expires
+ * is make a row appear in a queue and say that somebody owes a telephone call;
+ * it releases nothing, reviews nothing and tells nobody. Item 87's own last
+ * sentence: "Never automatically release or notify the patient merely because
+ * time elapsed."
+ *
+ * **There is no explicitly configured backup doctor.** The clinic has
+ * configured none and this application has nowhere to hold one, so the
+ * escalation reaches the owner-doctor alone and the read model says so in a
+ * field rather than letting a screen imply otherwise.
+ */
+export const CRITICAL_ACKNOWLEDGEMENT_MINUTES = 15
+
+/**
+ * The hour a result-ready notice stops being worth sending — and **not** an
+ * owner decision.
+ *
+ * Item 88 decided what the message says and what has to be true before it
+ * goes. It said nothing about when an undelivered one stops being worth
+ * sending, and the schema requires every message to have a deadline. The end
+ * of the same day's dispatch window is the narrowest defensible answer: after
+ * that the honest thing is a telephone call, and the message becomes a row in
+ * the admin's queue with `past_useful_by` against it rather than a notice
+ * arriving two days late about a result the patient has since collected.
+ *
+ * Stated here as having no owner item behind it rather than borrowing item
+ * 88's. A number wearing somebody else's citation is worse than a number with
+ * none.
+ */
+export const RESULT_READY_USEFUL_UNTIL_HOUR = DISPATCH_WINDOW_END_HOUR

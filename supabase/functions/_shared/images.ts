@@ -28,7 +28,7 @@ import {
   booleanValue, optional, requireChoice, requireRole, value, type Payload,
 } from './command-input.ts'
 import { deleteObject } from './storage.ts'
-import { runMessagingCommand } from './messaging.ts'
+import { runDiagnosticsCommand } from './diagnostics.ts'
 
 export type ImageRow = {
   id: string
@@ -386,14 +386,22 @@ export async function runImageCommand(session: SessionView, action: string, payl
     }
 
     /*
-     * Slice 3A's messaging commands are the last link in the chain that starts
-     * in `commands.ts` and runs through `appointments.ts`, `inventory.ts`,
-     * `counter.ts` and here. They are last because they are the newest and
-     * because nothing else routes through them; the end of the chain still
-     * throws 'Unknown action.' for anything nobody recognises, so the contract
-     * at this boundary is unchanged.
+     * Slice 4's diagnostics commands are the next link in the chain that
+     * starts in `commands.ts` and runs through `appointments.ts`,
+     * `inventory.ts`, `counter.ts` and here, and Slice 3A's messaging commands
+     * are the last.
+     *
+     * Diagnostics goes in FRONT of messaging rather than behind it, and that
+     * is an import-graph decision rather than an ordering preference:
+     * `diagnostics.ts` has to call into `messaging.ts` to schedule the one
+     * notice owner item 88 allows, so messaging must not call into
+     * diagnostics. It reaches the diagnostics tables with plain SQL where it
+     * needs to, exactly as it already reaches `appointment_bookings` and
+     * `follow_ups`. The end of the chain still throws 'Unknown action.' for
+     * anything nobody recognises, so the contract at this boundary is
+     * unchanged.
      */
     default:
-      return runMessagingCommand(session, action, payload)
+      return runDiagnosticsCommand(session, action, payload)
   }
 }

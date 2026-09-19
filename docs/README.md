@@ -22,13 +22,16 @@ equally current.
 | [`SCHEMA_AND_TYPES.md`](SCHEMA_AND_TYPES.md) | Current database, API, and shared type contract |
 | [`AGENT_IMPLEMENTATION_BRIEF.md`](AGENT_IMPLEMENTATION_BRIEF.md) | Implementation constraints, slice order, safety boundaries, invariants, and definition of done |
 
-Backend programme status: Slices 0–2 are complete and accepted, and the bounded
+Backend programme status: Slices 0–2 are complete and accepted; the bounded
 **Slice 3A** — the durable foundation for reminders, recalls and delivery truth
 — and **Slice 3B** — the provider adapter, the authenticated webhook and the
-protected worker contract — are implemented. The bounded Slice 2 frontend safety cutover is also
+protected worker contract — are implemented; and **Slice 4** — the outpatient
+diagnostics loop, against owner items 84–88 — is implemented. The bounded
+Slice 2 frontend safety cutover is also
 implemented locally: the consultation screen holds one attempt across visit
 changes and gives doctors the audited reconciliation workflow. The full
-appointment-calendar UI is not implemented.
+appointment-calendar UI is not implemented, and **no screen renders any of
+Slice 3 or Slice 4.**
 
 Slice 3A adds five tables, a provider-neutral state machine and the commands
 and on-demand reads around them, against owner items 76–83. Slice 3B adds one
@@ -44,6 +47,17 @@ refuses every request, and the worker endpoint refuses every caller.
 `SCHEMA_AND_TYPES.md` §15 and §16 are the contract; §16.9 is what is still
 owed, and `operations/ROLLOUT.md` §9 is the procedure for switching it on.
 
+Slice 4 adds six tables, one sequence and a fifth messaging purpose against
+owner items 84–88: a versioned investigation and referral catalogue, a request
+form, the report as it arrived, its documents in private storage, and a
+doctor's clinical review. **Nothing in it contacts a laboratory** — a report
+arrives because a member of staff typed it in or attached the file the
+laboratory emailed — and the one patient-facing message it can authorize is
+one fixed sentence that carries no clinical detail and is, today, suppressed
+into the admin's queue like every other. `SCHEMA_AND_TYPES.md` §17 is the
+contract and `reference/SLICE4_FRONTEND_CONTRACT.md` is what a screen would be
+built against.
+
 ### Read by task
 
 | Task | Read next |
@@ -56,6 +70,7 @@ owed, and `operations/ROLLOUT.md` §9 is the procedure for switching it on.
 | Competitor features, workflows, and market positioning | [`reference/COMPETITIVE_LANDSCAPE_2026.md`](reference/COMPETITIVE_LANDSCAPE_2026.md) |
 | Backend implementation of the competitive and workflow improvements | [`reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md), then the current core documents it requires |
 | What that programme found, what it still has to decide, and in what order | [`reference/BACKEND_PROGRAMME_REGISTER.md`](reference/BACKEND_PROGRAMME_REGISTER.md) — the evidence baseline, work register, decision register and compatibility map |
+| Investigations, referrals, results, review, or telling a patient a result is ready | [`reference/SLICE4_FRONTEND_CONTRACT.md`](reference/SLICE4_FRONTEND_CONTRACT.md), then `SCHEMA_AND_TYPES.md` §17 and owner policy §N |
 | Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The bounded consultation safety cutover exists; the full appointment-book/calendar UI does not. |
 | Staging, rollout, or PIN recovery | The applicable runbook in [`operations/`](operations/) |
 | Product rationale from the design sessions | [`reference/PRODUCT_UX_DISCOVERY.md`](reference/PRODUCT_UX_DISCOVERY.md); later core documents take precedence |
@@ -129,7 +144,7 @@ and dies on sign-out.
 ### How the halves talk
 
 Every request goes to `NEXT_PUBLIC_FUNCTIONS_URL` with
-`Authorization: Bearer <token>`. There are fifteen — thirteen driven by a
+`Authorization: Bearer <token>`. There are sixteen — fourteen driven by a
 member of staff holding a session, and two, added by Slice 3B, that are not
 driven by a person at all:
 
@@ -146,6 +161,7 @@ driven by a person at all:
 | `reports` | fifteen named reports, each with its own role gate |
 | `inventory` | the stock ledger, goods receipts, a barcode lookup, the formulary — read on demand rather than polled |
 | `images` | clinical image tickets, bytes and metadata. Pharmacy is refused outright |
+| `results` | Slice 4's laboratory reports: attach one, mint a sixty-second ticket, fetch the bytes. A separate endpoint from `images` because a photograph the clinic takes and a report the clinic receives are governed by different owner items. Pharmacy is refused outright, and an administrator may attach a report without being able to open one |
 | `whatsapp` | **not a person.** Meta's verification challenge and its signed statuses webhook. Verifies `X-Hub-Signature-256` over the raw request bytes before parsing anything, and is the only thing in this application that can say a message was delivered |
 | `worker` | **not a person.** One dispatch cycle, behind `CLINIC_WORKER_TOKEN`. A staff session is refused here exactly as an anonymous caller is; see `SCHEMA_AND_TYPES.md` §16.6 |
 | `workspace` | what a workspace opens with — patient search, the patient band, actionable counts and their drill-downs, visit progress, safe-exit obligations, what an idempotency key committed, proven-equivalent products, and the three Slice 2 views: the appointment calendar, a patient's own appointments, and the reconciliation of an unresolved consultation attempt. Read on demand; its roles come from one capability table |
@@ -187,8 +203,8 @@ supabase/
                         capabilities · idempotency · workspace ·
                         appointments · clinic-policy · command-input ·
                         messaging · messaging-transport · whatsapp-cloud ·
-                        internal-auth
-    <fifteen dirs>/     index.ts each, one Deno.serve per endpoint
+                        internal-auth · diagnostics
+    <sixteen dirs>/     index.ts each, one Deno.serve per endpoint
   migrations/           forward-only SQL, named by timestamp. Creates `jmc`
 scripts/
   set-db-url.mjs        writes DATABASE_URL into .env.local without it passing
@@ -456,7 +472,7 @@ historical sources is an operating instruction.
 
 ### Complete documentation inventory
 
-There are **21 active Markdown documents** and two HTML design references. The
+There are **22 active Markdown documents** and two HTML design references. The
 11 tracked historical Markdown documents are listed separately; ignored local
 archives, generated files, and dependency documentation are deliberately not
 expanded here.
@@ -479,6 +495,7 @@ Current specialist references
   docs/reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md
   docs/reference/SLICE1_FRONTEND_CONTRACT.md
   docs/reference/SLICE2_FRONTEND_CONTRACT.md
+  docs/reference/SLICE4_FRONTEND_CONTRACT.md
   docs/reference/COMPETITIVE_LANDSCAPE_2026.md
   docs/reference/PRODUCT_UX_DISCOVERY.md
   docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md

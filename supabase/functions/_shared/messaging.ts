@@ -77,22 +77,36 @@ import {
   APPOINTMENT_REMINDER_HOUR, CLINICAL_RECALL_HOUR, CONSENT_CLINIC_NAME,
   CONSENT_WORDING_VERSION, DISPATCH_WINDOW_END_HOUR, DISPATCH_WINDOW_START_HOUR,
   FAILURE_ESCALATION_HOURS, MAX_PROVIDER_ATTEMPTS, RECALL_USEFUL_UNTIL_HOUR,
-  RETRY_BACKOFF_MINUTES, RETRY_WINDOW_MINUTES,
+  RESULT_READY_USEFUL_UNTIL_HOUR, RETRY_BACKOFF_MINUTES, RETRY_WINDOW_MINUTES,
 } from './clinic-policy.ts'
 
 type Row = Record<string, unknown>
 const text = (value: unknown) => String(value ?? '')
 
-/** Owner item 78's four purposes. A fifth is a policy decision, not a value. */
+/**
+ * Owner item 78's four purposes, and the fifth that owner item 88 added.
+ *
+ * Slice 3A's comment here read "A fifth purpose is a policy decision, not a
+ * value". `result_ready` is that policy decision, approved on 19 September
+ * 2026 as owner item 88, and it is deliberately NOT `ready_for_collection`:
+ * that one is the pharmacy saying a patient's medicine is on the counter, and
+ * somebody who agreed to be told that has not agreed to be told that a test
+ * result exists. Folding them together would enrol every patient who ticked
+ * the pharmacy box into being messaged about their investigations.
+ */
 export const PURPOSES = [
   'appointment', 'clinical_recall', 'ready_for_collection', 'service_interruption',
+  'result_ready',
 ] as const
 export type CommunicationPurpose = typeof PURPOSES[number]
 
 export const SCHEDULE_KINDS = [
-  'appointment_reminder', 'appointment_confirmation', 'clinical_recall',
+  'appointment_reminder', 'appointment_confirmation', 'clinical_recall', 'result_ready',
 ] as const
 export type ScheduleKind = typeof SCHEDULE_KINDS[number]
+
+/** What can authorize a schedule to exist. Owner items 83 and 88. */
+export type ScheduleSourceType = 'appointment_booking' | 'follow_up' | 'investigation_result'
 
 /** The variables a template may interpolate. The privacy boundary as a list. */
 export const ALLOWED_VARIABLES = [
@@ -473,7 +487,7 @@ async function openSchedule(input: {
   patientId: string
   purpose: CommunicationPurpose
   kind: ScheduleKind
-  sourceType: 'appointment_booking' | 'follow_up'
+  sourceType: ScheduleSourceType
   sourceId: string
   dueAt: string
   usefulUntil: string
@@ -532,7 +546,7 @@ async function openSchedule(input: {
  */
 async function closeSchedulesForSource(input: {
   actorId: string
-  sourceType: 'appointment_booking' | 'follow_up'
+  sourceType: ScheduleSourceType
   sourceId: string
   reason: string
   kinds?: readonly ScheduleKind[]
@@ -718,6 +732,100 @@ export async function cancelRecallForFollowUp(input: {
   })
 }
 
+/**
+ * The one notice owner item 88 allows, scheduled because a doctor authorized
+ * it.
+ *
+ * Slice 4's door into this file, and it is a narrow one on purpose: the caller
+ * passes a result and a doctor, and everything else — the purpose, the kind,
+ * the source type, the timing, the wording, the consent, the template — is
+ * decided here, by the same code that decides it for a reminder. There is no
+ * second outbox, no direct provider call and no result-shaped exception to any
+ * of Slice 3A's rules.
+ *
+ * The timing is the one thing worth reading. A result notice is due
+ * immediately, clamped into owner item 77's dispatch window, because a report
+ * a doctor has just released is not something to sit on until tomorrow — and
+ * 21:00 is still not a decent hour to message somebody, so an authorization
+ * after hours becomes a message at eight the next morning.
+ * `RESULT_READY_USEFUL_UNTIL_HOUR` is the deadline after which a telephone
+ * call is the honest answer, and it says in `clinic-policy.ts` that no owner
+ * item stands behind it.
+ *
+ * Returns null if a live notice for this result already exists, which is the
+ * partial unique index on `(source_type, source_id, schedule_kind)` answering
+ * rather than a race being lost.
+ */
+export async function openResultReadySchedule(input: {
+  actorId: string
+  patientId: string
+  resultId: string
+  responsibleDoctorId: string
+  now?: string
+}): Promise<{ scheduleId: string; outboxId: string } | null> {
+  const now = input.now ?? isoNow()
+  /*
+   * The instant arrives as ONE parameter and is then referred to as a column.
+   *
+   * `nextDispatchOpening` interpolates its argument five times, and
+   * `atClinicHour(clinicDateOf(...))` interpolates the result again — so
+   * passing `?::timestamptz` straight in would put ten placeholders in a
+   * statement bound with one value, which is exactly the shape the comment
+   * above `insideDispatchWindow` warns about: these helpers take a column or a
+   * literal, never a `?`. The one-row subquery makes it a column.
+   */
+  const timing = (await db.prepare(
+    `select to_char(${nextDispatchOpening('m.at')} at time zone 'utc',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as due_at,
+            to_char(${atClinicHour(
+              clinicDateOf(nextDispatchOpening('m.at')), RESULT_READY_USEFUL_UNTIL_HOUR,
+            )} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as useful_until
+       from (select ?::timestamptz as at) m`,
+  ).get(now)) as Row
+
+  return await openSchedule({
+    actorId: input.actorId,
+    patientId: input.patientId,
+    purpose: 'result_ready',
+    kind: 'result_ready',
+    sourceType: 'investigation_result',
+    sourceId: input.resultId,
+    dueAt: text(timing.due_at),
+    usefulUntil: text(timing.useful_until),
+    responsibleDoctorId: input.responsibleDoctorId,
+  })
+}
+
+/**
+ * A corrected or cancelled report takes its notice with it.
+ *
+ * Owner item 88: the authorization was about a result that is no longer
+ * current, so it stops. `superseded` rather than `cancelled` when a correction
+ * is replacing it, because something IS taking its place once a doctor has
+ * reviewed and authorized the correction — and a message that had already
+ * reached the provider is left alone, because it was sent and a row claiming
+ * otherwise would be the clinic lying to itself about what the patient
+ * received.
+ *
+ * Returns how many live schedules stopped, so the caller can say so.
+ */
+export async function closeResultReadySchedules(input: {
+  actorId: string
+  resultId: string
+  reason: string
+  as?: 'cancelled' | 'superseded'
+}): Promise<number> {
+  const closed = await closeSchedulesForSource({
+    actorId: input.actorId,
+    sourceType: 'investigation_result',
+    sourceId: input.resultId,
+    reason: input.reason,
+    kinds: ['result_ready'],
+    as: input.as,
+  })
+  return closed.length
+}
+
 /* ═════════════════════════════════════════════════════════════ the worker ══ */
 
 /**
@@ -734,6 +842,63 @@ export async function cancelRecallForFollowUp(input: {
  *
  * It contacts nothing. The channel is consulted only for `configured()`.
  */
+/**
+ * Is a result-ready notice still about something that is true?
+ *
+ * Owner item 88 requires that "review state, current-result identity,
+ * notification authorization, consent, opt-out, template approval, usefulness,
+ * and cancellation" are all rechecked under the protected preparation path.
+ * The last five are generic and are asked for every message in this file. The
+ * first three belong to one purpose, and this is where they are asked — from
+ * BOTH `prepareOne` and `claimAttempt`, under each one's row lock, because the
+ * gap between authorizing a notice and sending it is exactly where a corrected
+ * report arrives.
+ *
+ * Reached by plain SQL rather than by importing `diagnostics.ts`, which is the
+ * same thing this file already does for `appointment_bookings` and
+ * `follow_ups`, and which is what keeps the two modules from importing each
+ * other.
+ *
+ * Returns a suppression reason, or null when the notice still stands.
+ */
+async function resultNoticeStillStands(scheduleId: string): Promise<string | null> {
+  const row = (await db.prepare(
+    `select r.superseded_at, r.notification_authorized_at, r.effective_flag,
+            i.cancelled_at as item_cancelled_at, o.status as order_status,
+            exists (select 1 from result_reviews v where v.result_id = r.id) as reviewed
+       from communication_schedules s
+       join investigation_results r on r.id = s.source_id
+       join investigation_order_items i on i.id = r.order_item_id
+       join investigation_orders o on o.id = i.order_id
+      where s.id = ? and s.source_type = 'investigation_result'`,
+  ).get(scheduleId)) as Row | undefined
+
+  // No result behind the schedule at all. Fail closed: a notice about nothing
+  // is not a notice worth sending, and there is no reading of item 88 under
+  // which the patient should get it.
+  if (!row) return 'result_not_authorized'
+
+  // The report was corrected, or the request withdrawn. Either way this notice
+  // is about a result that is no longer the current one.
+  if (row.superseded_at !== null) return 'result_superseded'
+  if (row.item_cancelled_at !== null || text(row.order_status) !== 'open') {
+    return 'result_superseded'
+  }
+
+  // The two halves of item 88's release rule, asked separately so the admin's
+  // queue says which one is missing.
+  if (row.notification_authorized_at === null) return 'result_not_authorized'
+  if (row.reviewed !== true) return 'result_not_authorized'
+
+  // A critical flag raised after the authorization. A check constraint already
+  // refuses an authorization on a critical result and `flag_result` refuses a
+  // flag on an authorized one, so this is the belt behind both braces: item
+  // 88's clinician-led contact must not be reachable by any ordering of events.
+  if (text(row.effective_flag) === 'critical') return 'result_not_authorized'
+
+  return null
+}
+
 export async function prepareDueMessages(options: {
   now?: string
   limit?: number
@@ -812,6 +977,14 @@ async function prepareOne(
   if (text(message.useful_iso) <= now) return await suppress('past_useful_by')
 
   const purpose = text(message.purpose) as CommunicationPurpose
+
+  // Owner item 88's result-specific half of the recheck, asked under the same
+  // row lock as everything else here.
+  if (purpose === 'result_ready') {
+    const stale = await resultNoticeStillStands(text(message.schedule_id))
+    if (stale) return await suppress(stale)
+  }
+
   const consent = await effectiveConsent(text(message.patient_id), purpose)
   if (consent !== 'opt_in') {
     return await suppress(consent === 'withdraw' ? 'consent_withdrawn' : 'no_consent')
@@ -1103,6 +1276,26 @@ async function claimAttempt(
         where id = ?`,
     ).run(outboxId)
     return null
+  }
+
+  /*
+   * A correction that landed between preparing and dispatching.
+   *
+   * The same question `prepareOne` asks, asked again here for the same reason
+   * the schedule's status is: the two are separate pieces of code that have to
+   * agree, and the cost of them disagreeing is a patient told a result is
+   * ready when the report it was about has since been withdrawn.
+   */
+  if (text(message.purpose) === 'result_ready') {
+    const stale = await resultNoticeStillStands(text(message.schedule_id))
+    if (stale) {
+      await db.prepare(
+        `update message_outbox
+            set status = 'suppressed', suppression_reason = ?, next_attempt_at = null
+          where id = ?`,
+      ).run(stale, outboxId)
+      return null
+    }
   }
 
   // A withdrawal that landed between preparing and dispatching. Owner item 82

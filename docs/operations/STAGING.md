@@ -619,6 +619,18 @@ A durable, shareable image URL is the failure this design exists to prevent.
 If one can be produced by any means, stop and fix it before the feature is
 switched on for the clinic.
 
+**Slice 4 adds a second area and the same paragraph applies to it.** Result
+documents — the PDF the laboratory emailed, the scan of the paper report — go
+to their own bucket (`CLINIC_DOCUMENT_BUCKET`, default `result-documents`) and
+their own staging directory (`CLINIC_DOCUMENT_ROOT`, which
+`scripts/staging/functions-server.mjs` creates alongside the image one). Two
+areas rather than two prefixes, because photographs and received reports are
+governed by different owner items and a retention decision about one must not
+be able to reach the other. Both buckets need the same three checks above, and
+`result_documents` has **no URL column at all** — a test walks
+`information_schema.columns` across all six Slice 4 tables asserting that none
+of them is named like one.
+
 ### 7.3 What the database role is
 
 `§7.4` of `SCHEMA_AND_TYPES.md` sets out the whole argument. The short version:

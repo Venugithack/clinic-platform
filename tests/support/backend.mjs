@@ -56,6 +56,7 @@ export const password = await import('../../supabase/functions/_shared/password.
 export const commands = await import('../../supabase/functions/_shared/commands.ts')
 export const snapshot = await import('../../supabase/functions/_shared/snapshot.ts')
 export const messaging = await import('../../supabase/functions/_shared/messaging.ts')
+export const diagnostics = await import('../../supabase/functions/_shared/diagnostics.ts')
 
 /** Shorthand: the two things every characterization test reaches for. */
 export const runCommand = commands.runCommand
