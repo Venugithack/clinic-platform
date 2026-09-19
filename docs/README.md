@@ -99,7 +99,7 @@ The application is two programs that never share a process:
 | | | |
 |---|---|---|
 | **the page** | `app/`, `components/`, `lib/` | a **static export**. `next build` writes plain HTML, CSS and JavaScript to `out/`; Cloudflare serves those files. Nothing runs behind them |
-| **the backend** | `supabase/` | **Deno**. Thirteen Edge Functions deployed beside the database, talking to Postgres directly |
+| **the backend** | `supabase/` | **Deno**. Sixteen Edge Functions deployed beside the database, talking to Postgres directly |
 
 That split is not taste. Each half of it was forced, and each reason is a
 failure that already happened. The prose at the top of `next.config.ts`,
@@ -210,7 +210,7 @@ scripts/
   set-db-url.mjs        writes DATABASE_URL into .env.local without it passing
                         through a shell whose quoting rules you have to guess
 tests/
-  *.test.ts             four files of pure unit tests — `npm test`
+  *.test.ts/.mjs        five files of pure unit tests — `npm test`
   characterization/     the database suite — `npm run test:db`, §6
   browser/              real-Chrome journeys — `npm run test:browser`, §6
   support/              the bridge that points both suites at guarded staging
@@ -251,7 +251,7 @@ This repository has no `supabase/config.toml` — it was deleted with the retire
 application — so `supabase start` and `supabase functions serve` are not set up
 here. What replaced them is `npm run staging:up`: a disposable PostgreSQL 17 in
 Docker with the real migrations and synthetic fixtures, and
-`scripts/staging/functions-server.mjs`, which runs all thirteen real Edge
+`scripts/staging/functions-server.mjs`, which runs all sixteen real Edge
 Functions under Node. That is a complete offline stack and
 [`operations/STAGING.md`](operations/STAGING.md) is how to drive the application
 against it.
@@ -334,10 +334,10 @@ It is rewritten here against what `npm run` actually does today.
 | Command | What it is |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` over the page. Does **not** see `supabase/` — `tsconfig.json` excludes it. |
-| `npm test` | Forty unit tests over four files, no database, no network. |
+| `npm test` | **44 tests** over five files, no database, no network. Passwords, order status, money, the consultation attempt key, and — since the staging readiness repair — what counts as a database being ready. |
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
-| `npm run test:db` | **888 tests** over thirty files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83, and Slice 3B's provider adapter, dispatch worker and authenticated webhook — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, and a consent withdrawal racing a worker that is already preparing it. **No test here makes an external provider request**: the messaging channel is injected, the test adapter refuses at construction to address anything but loopback, and the Slice 3B suite replaces `fetch` itself with a stub that throws and records, then asserts at the end that nothing was ever attempted. |
+| `npm run test:db` | **987 tests** over 179 suites in thirty-one files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83, Slice 3B's provider adapter, dispatch worker and authenticated webhook, and Slice 4's diagnostics loop against owner items 84–88 — the catalogue's two-tier authority, the two flag origins and the generated effective flag, wrong-patient attachment refused by composite key, corrections invalidating a stale review and a stale authorization, owner item 87's escalation clock, and owner item 88's rule that acceptance is not delivery — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, a consent withdrawal racing a worker that is already preparing it, two doctors reviewing one result, a review racing a correction, and two authorizations of one result. **No test here makes an external provider request**: the messaging channel is injected, the test adapter refuses at construction to address anything but loopback, and the Slice 3B suite replaces `fetch` itself with a stub that throws and records, then asserts at the end that nothing was ever attempted. |
 | `npm run test:browser` | **66 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. A **fresh dump**, out and back. |
