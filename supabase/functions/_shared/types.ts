@@ -960,3 +960,14 @@ export interface CommandResponse {
   message: string
   data?: unknown
 }
+
+/*
+ * Slice 4's diagnostics read models, from the leaf that holds them.
+ *
+ * Re-exported here rather than declared here so that `diagnostics.ts` and
+ * `lib/types.ts` are looking at one file: this one has no imports and must
+ * keep none, and `diagnostics-types.ts` has none either. Both remain safe to
+ * pull into a browser bundle, which `diagnostics.ts` — with `npm:postgres`
+ * underneath it — is not.
+ */
+export * from './diagnostics-types.ts'

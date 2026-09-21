@@ -12,7 +12,7 @@
     "start": "wrangler dev --ip 0.0.0.0 --port 3000",
     "preview": "wrangler dev --ip 0.0.0.0 --port 3000",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/password.test.ts tests/order-status.test.ts tests/money.test.ts tests/attempt-key.test.ts tests/staging-readiness.test.mjs",
+    "test": "node --test tests/password.test.ts tests/order-status.test.ts tests/money.test.ts tests/attempt-key.test.ts tests/staging-readiness.test.mjs tests/result-recovery.test.ts tests/result-decisions.test.ts",
     "test:db": "node --import ./tests/support/register.mjs --test --test-concurrency=1 \"tests/characterization/*.test.mjs\"",
     "test:browser": "node scripts/staging/browser-gate.mjs",
     "check": "npm run typecheck && npm test && npm run build",

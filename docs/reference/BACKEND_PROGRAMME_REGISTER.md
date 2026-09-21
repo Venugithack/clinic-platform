@@ -21,7 +21,12 @@ Status: **Slice 0 complete, 14 September 2026. Slice 1 complete, 14 September
 2026. Slice 2 accepted, 17 September 2026, after six bounded acceptance
 corrections. Slice 3A and Slice 3B built, 18 September 2026 — and sending
 nothing. Slice 4 built, 19 September 2026, against owner items 84–88.**
-Slices 5–12 not started. No screen renders Slice 3 or Slice 4.
+Slices 5–12 not started. No screen renders Slice 3. **Slice 4's bounded
+doctor-review frontend cutover is implemented, 19 September 2026** — the
+review queue, the escalation list, one result and the six acts a doctor
+performs on it, inside the existing Review station. Ordering, the catalogue
+and report intake remain unbuilt; see
+[`SLICE4_FRONTEND_CONTRACT.md`](SLICE4_FRONTEND_CONTRACT.md) §10.
 Slice 1's own record is [§11](#11-slice-1-what-was-built), Slice 2's is
 [§12](#12-slice-2-what-was-built), and the six acceptance corrections are
 §12.1 to §12.6; what each changed in the tables below is marked in place.

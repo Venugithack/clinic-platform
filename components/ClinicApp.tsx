@@ -10,6 +10,7 @@ import {
   type ActionRunner,
 } from './clinic-context'
 import { NoAnswer, callApi, readToken, writeToken } from '@/lib/api'
+import { clearResultRecovery } from '@/lib/result-recovery'
 import {
   landingFor,
   moreFor,
@@ -123,6 +124,10 @@ export function ClinicApp() {
    */
   const dropSession = useCallback(() => {
     writeToken(null)
+    // The result station leaves itself a note about unfinished follow-up. It is
+    // per-tablet and four people share these tablets, so it goes when the
+    // session does — sign-out and the idle lock both arrive here.
+    clearResultRecovery()
     setHasSession(false)
     revision.current = null
     setData(null)

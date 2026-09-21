@@ -270,7 +270,10 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives sixty-six journeys through Chrome.
+starts the functions and the page, and drives ninety-eight journeys through
+Chrome. Ninety-three of those are written out; the other five come from the
+three loops in `clinic-gate.test.mjs` that run one journey at two shapes or
+once per role, which is why counting `test(` in the source comes up short.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -325,6 +328,26 @@ there is nothing for a browser to drive. What it did add to this suite is a
 negative — the whole gate ran unchanged, which is the evidence that five new
 tables and a call inside five appointment commands changed nothing anybody
 touches.
+
+Slice 4's doctor-review cutover contributes thirty-two, and they are unusual
+in one respect: they arrange their own state over HTTP through the real
+commands rather than through `fixtures.mjs`. A report that arrived through
+`order_investigation` and `record_result` is provably reachable, where a
+hand-written fixture row proves only that somebody can write a row — and the
+fixture file is shared with every other journey in the suite. Most of what
+they assert is words: that acceptance is not delivery, that a laboratory's
+signature is not a clinic review, that acknowledging a critical result is not
+reviewing it, and that nothing anywhere says the patient was notified unless
+the provider said so.
+
+Eight of them are about the reply that never comes back. They break `fetch`
+in the page, press the control, and — three of them — reload the tablet,
+then read the order back through `view.investigation_order` and count what is
+actually there: one review on the result, one authorization stamp, and a
+notification the record still does not call delivered. That count is the only
+way to prove that recovering from a lost reply did not quietly do the work
+twice. They also read `sessionStorage` directly, to prove the recovery note
+holds identifiers and nothing a patient would recognise.
 
 The consultation-attempt work now contributes ten journeys, and they are the only
 journeys in the suite that assert on something invisible: the reference a

@@ -85,9 +85,17 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     // accurate, so which one wins does not matter.
     { id: 'vitals', label: 'Vitals', eyebrow: 'When the nurse is away', icon: 'pulse' },
     { id: 'records', label: 'Records', eyebrow: 'Clinical record', icon: 'history' },
-    // Old prescription lines nobody can read. Only a doctor may say what one
-    // of them authorized, so only a doctor is offered the station.
-    { id: 'review', label: 'Review', eyebrow: 'Lines only a doctor can settle', icon: 'alert-circle' },
+    /*
+     * Two things only a doctor can settle, at one destination.
+     *
+     * Results that have come back and nobody has read are the live half —
+     * owner items 84-88 — and the old prescription lines nobody can read are
+     * the migration backlog. Both are refused to everybody but a doctor by
+     * the commands themselves, and both would otherwise need a rail entry
+     * each, which the plan's three-or-four daily destinations does not have
+     * room for.
+     */
+    { id: 'review', label: 'Review', eyebrow: 'Results and lines to settle', icon: 'alert-circle' },
     { id: 'stocktake', label: 'Stock-take', eyebrow: 'Approve a count', icon: 'boxes' },
     { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
   ],

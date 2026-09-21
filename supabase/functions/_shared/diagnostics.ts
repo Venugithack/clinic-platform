@@ -43,6 +43,24 @@ import { randomUUID } from 'node:crypto'
 import { hasRole } from './auth.ts'
 import { audit, db, isoNow, transaction } from './db.ts'
 import type { SessionView } from './types.ts'
+/*
+ * The read models, from the leaf that both halves import.
+ *
+ * Type-only, so nothing here reaches a browser bundle by accident — and the
+ * screen consuming them imports the same declarations through `lib/types.ts`
+ * rather than a hand-copy that agrees until the day it does not.
+ */
+import type {
+  Escalations, EscalationRow, InvestigationItemView, InvestigationOrderView,
+  ItemState, PatientInvestigations, ResultDocumentContentType, ResultDocumentSource,
+  ResultDocumentStatus, ResultFlag, ResultReviewView, ResultSource, ResultStanding,
+  ResultView, ReviewConclusion, ReviewQueue, ReviewQueueRow, SourceFlagOrigin,
+  NotificationState, NotificationSuppressionReason, PatientContactMethod,
+} from './diagnostics-types.ts'
+export type {
+  Escalations, EscalationRow, InvestigationItemView, InvestigationOrderView,
+  ItemState, PatientInvestigations, ResultStanding, ResultView, ReviewQueue, ReviewQueueRow,
+}
 import {
   CommandRefusal, optional, optionalDate, requireChoice, requireRole, sequence, value,
   type Payload,
@@ -162,8 +180,6 @@ function requireAuthorizedDoctor(session: SessionView, what: string): void {
     )
   }
 }
-
-export type ResultStanding = 'responsible_doctor' | 'ordering_doctor' | 'delegated_doctor'
 
 /**
  * Which authority, if any, this doctor holds over one order.
@@ -327,11 +343,6 @@ function catalogueFingerprint(material: {
  * ordering doctor set has passed and nothing has come back. It releases
  * nothing and reviews nothing.
  */
-export type ItemState =
-  | 'ordered' | 'in_progress' | 'overdue' | 'awaiting_review'
-  | 'reviewed' | 'notification_pending' | 'provider_outcome_unknown'
-  | 'notified' | 'manually_contacted' | 'closed' | 'cancelled'
-
 /**
  * What the state is derived FROM, kept apart from what a reader is shown.
  *
@@ -1701,32 +1712,6 @@ async function replayResult(
  * nothing consumes and that a real screen would immediately want to change.
  */
 
-export type ReviewQueueRow = {
-  resultId: string
-  orderId: string
-  orderNumber: string
-  patientName: string
-  itemName: string
-  receivedAt: string
-  waitingHours: number
-  responsibleDoctor: string
-  delegatedDoctor: string
-  escalatedToOwnerDoctor: boolean
-  /** Doctors only. Absent for an administrator — owner item 86. */
-  flag?: string
-  criticalUnacknowledged?: boolean
-  acknowledgementOverdue?: boolean
-}
-
-export type ReviewQueue = {
-  /** What this caller is being shown, so a screen never implies more. */
-  access: 'clinical' | 'operational'
-  escalationAfterClinicHours: number
-  escalationCeilingHour: number
-  criticalAcknowledgementMinutes: number
-  rows: ReviewQueueRow[]
-}
-
 /**
  * Everything current and not yet reviewed. Owner items 86 and 87.
  *
@@ -1820,7 +1805,7 @@ export async function readResultReviewQueue(session: SessionView): Promise<Revie
       escalatedToOwnerDoctor: row.escalated === true,
       ...(clinical
         ? {
-          flag: text(row.effective_flag),
+          flag: text(row.effective_flag) as ResultFlag,
           criticalUnacknowledged: text(row.effective_flag) === 'critical'
             && row.critical_acknowledged_at === null,
           acknowledgementOverdue: text(row.effective_flag) === 'critical'
@@ -1830,25 +1815,6 @@ export async function readResultReviewQueue(session: SessionView): Promise<Revie
         : {}),
     })),
   }
-}
-
-export type EscalationRow = {
-  resultId: string
-  orderNumber: string
-  patientName: string
-  itemName: string
-  flag: string
-  receivedAt: string
-  reason: 'critical_unacknowledged' | 'unreviewed_past_clinic_hours'
-  manualEscalationOwed: boolean
-  responsibleDoctor: string
-}
-
-export type Escalations = {
-  /** Named rather than implied: there is no configured backup doctor. */
-  backupDoctorConfigured: false
-  criticalAcknowledgementMinutes: number
-  rows: EscalationRow[]
 }
 
 /**
@@ -1923,7 +1889,7 @@ export async function readResultEscalations(session: SessionView): Promise<Escal
         orderNumber: text(row.order_number),
         patientName: text(row.patient_name),
         itemName: text(row.item_name),
-        flag: text(row.effective_flag),
+        flag: text(row.effective_flag) as ResultFlag,
         receivedAt: text(row.received_local),
         reason: criticalOpen
           ? 'critical_unacknowledged' as const
@@ -1933,91 +1899,6 @@ export async function readResultEscalations(session: SessionView): Promise<Escal
       }
     }),
   }
-}
-
-export type ResultView = {
-  resultId: string
-  receivedAt: string
-  source: string
-  current: boolean
-  correctsResultId: string
-  correctedByResultId: string
-  /** Clinical, withheld from an administrator. */
-  reportText?: string
-  flag?: string
-  sourceFlag?: string
-  sourceFlagOrigin?: string
-  sourceFlagReference?: string
-  doctorFlag?: string
-  doctorFlagReason?: string
-  doctorFlagBy?: string
-  externalValidatedBy: string
-  externalSignatoryReference: string
-  externalValidationIsNotClinicReview: true
-  review: {
-    reviewedBy: string
-    reviewedAt: string
-    basis: string
-    conclusion?: string
-    note?: string
-  } | null
-  criticalAcknowledgedBy: string
-  criticalAcknowledgedAt: string
-  notificationAuthorizedBy: string
-  notificationAuthorizedAt: string
-  notification: {
-    state: string
-    suppressionReason: string
-    deliveryStatus: string
-    providerSaidDelivered: boolean
-  } | null
-  patientContactedBy: string
-  patientContactedAt: string
-  patientContactMethod: string
-  documents: {
-    documentId: string
-    contentType: string
-    byteSize: number
-    checksum: string
-    source: string
-    uploadedBy: string
-    uploadedAt: string
-    status: string
-  }[]
-}
-
-export type InvestigationItemView = {
-  itemId: string
-  itemKind: string
-  itemName: string
-  itemCode: string
-  externalFacility: string
-  state: ItemState
-  cancelledReason: string
-  results: ResultView[]
-}
-
-export type InvestigationOrderView = {
-  orderId: string
-  orderNumber: string
-  patientId: string
-  patientName: string
-  encounterId: string
-  orderedBy: string
-  responsibleDoctor: string
-  delegatedDoctor: string
-  delegationReason: string
-  priority: string
-  clinicalIndication: string
-  instructions: string
-  externalFacility: string
-  expectedBy: string
-  status: string
-  cancelledReason: string
-  createdAt: string
-  overdue: boolean
-  access: 'clinical' | 'operational'
-  items: InvestigationItemView[]
 }
 
 /**
@@ -2068,12 +1949,12 @@ export async function readInvestigationOrder(
     responsibleDoctor: text(order.responsible_doctor_name),
     delegatedDoctor: text(order.delegated_doctor_name),
     delegationReason: text(order.delegation_reason),
-    priority: text(order.priority),
+    priority: text(order.priority) as 'routine' | 'urgent',
     clinicalIndication: access.content ? text(order.clinical_indication) : '',
     instructions: text(order.instructions),
     externalFacility: text(order.external_facility),
     expectedBy: text(order.expected_local),
-    status: text(order.status),
+    status: text(order.status) as 'open' | 'cancelled',
     cancelledReason: text(order.cancelled_reason),
     createdAt: text(order.created_local),
     overdue: order.past_expected === true,
@@ -2085,7 +1966,7 @@ export async function readInvestigationOrder(
     const { views, facts } = await readResultsForItem(text(item.id), access.content)
     view.items.push({
       itemId: text(item.id),
-      itemKind: text(item.item_kind),
+      itemKind: text(item.item_kind) as 'investigation' | 'referral',
       itemName: text(item.item_name),
       itemCode: text(item.item_code),
       externalFacility: text(item.external_facility),
@@ -2204,18 +2085,18 @@ async function readResultsForItem(
     views.push({
       resultId,
       receivedAt: text(row.received_local),
-      source: text(row.source),
+      source: text(row.source) as ResultSource,
       current: row.superseded_at === null,
       correctsResultId: text(row.supersedes_result_id),
       correctedByResultId: text(row.superseded_by_result_id),
       ...(content
         ? {
           reportText: text(row.report_text),
-          flag: text(row.effective_flag),
-          sourceFlag: text(row.source_flag),
-          sourceFlagOrigin: text(row.source_flag_origin),
+          flag: text(row.effective_flag) as ResultFlag,
+          sourceFlag: text(row.source_flag) as ResultFlag,
+          sourceFlagOrigin: text(row.source_flag_origin) as SourceFlagOrigin,
           sourceFlagReference: text(row.source_flag_reference),
-          doctorFlag: text(row.doctor_flag),
+          doctorFlag: text(row.doctor_flag) as ResultFlag,
           doctorFlagReason: text(row.doctor_flag_reason),
           doctorFlagBy: text(row.doctor_flag_by_name),
         }
@@ -2231,9 +2112,9 @@ async function readResultsForItem(
         ? {
           reviewedBy: text(review.reviewed_by_name),
           reviewedAt: text(review.reviewed_local),
-          basis: text(review.basis),
+          basis: text(review.basis) as ResultStanding,
           ...(content
-            ? { conclusion: text(review.conclusion), note: text(review.note) }
+            ? { conclusion: text(review.conclusion) as ReviewConclusion, note: text(review.note) }
             : {}),
         }
         : null,
@@ -2243,24 +2124,24 @@ async function readResultsForItem(
       notificationAuthorizedAt: text(row.auth_local),
       notification: notification
         ? {
-          state: text(notification.status),
-          suppressionReason: text(notification.suppression_reason),
+          state: text(notification.status) as NotificationState,
+          suppressionReason: text(notification.suppression_reason) as NotificationSuppressionReason,
           deliveryStatus: text(notification.delivery_status),
           providerSaidDelivered: text(notification.status) === 'delivered',
         }
         : null,
       patientContactedBy: text(row.patient_contacted_by_name),
       patientContactedAt: text(row.contact_local),
-      patientContactMethod: text(row.patient_contact_method),
+      patientContactMethod: text(row.patient_contact_method) as PatientContactMethod | '',
       documents: documents.map((doc) => ({
         documentId: text(doc.id),
-        contentType: text(doc.content_type),
+        contentType: text(doc.content_type) as ResultDocumentContentType,
         byteSize: Number(doc.byte_size),
         checksum: text(doc.checksum),
-        source: text(doc.source),
+        source: text(doc.source) as ResultDocumentSource,
         uploadedBy: text(doc.uploaded_by_name),
         uploadedAt: text(doc.uploaded_local),
-        status: text(doc.status),
+        status: text(doc.status) as ResultDocumentStatus,
       })),
     })
   }

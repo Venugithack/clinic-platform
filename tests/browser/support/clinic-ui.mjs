@@ -40,6 +40,10 @@ export async function freshPage() {
   // localStorage carries the session token; a journey that starts signed in as
   // the last journey's user is a journey that passes for the wrong reason.
   ab(['storage', 'local', 'clear'], { allowFailure: true })
+  // sessionStorage carries the consultation attempt key and the result
+  // station's follow-up note. A journey that finds one left by the journey
+  // before it can pass without the behaviour it names ever running.
+  ab(['storage', 'session', 'clear'], { allowFailure: true })
   open('/')
   await waitFor(
     `!!document.querySelector('button') && document.body.innerText.includes('Jayamurugan')`,

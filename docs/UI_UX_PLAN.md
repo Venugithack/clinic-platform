@@ -4,6 +4,21 @@ Status: **implemented**, 13 September 2026. Every slice and acceptance gate in t
 
 This document was written as the implementation brief for the redesign and is kept as the record of what was asked for and what the application now does. Where it describes a behaviour, that behaviour exists.
 
+Safety integration update, 19 September 2026: the bounded **Slice 4 doctor
+result-review cutover** is implemented in the existing doctor-only Review
+station. Results that have come back and nobody has read are now its primary
+section; the legacy prescription-line backlog is unchanged beneath them. It
+carries the interaction contract below unchanged — action-specific working
+states, the four-second slow message, timed result overlays over durable
+evidence, a focus-trapping drawer, and words rather than colour alone. What it
+deliberately does not build is ordering, the catalogue, report intake, or
+anything patient-facing. A review takes the result out of the queue, so
+unfinished follow-up is held by an opaque per-tablet note that survives a
+reload and is resolved against the authoritative record — never by repeating
+the write. `reference/SLICE4_FRONTEND_CONTRACT.md` §10 says what that leaves:
+recovery does not cross devices or tabs, and a reviewed result with no
+unresolved note still cannot be reopened from this station.
+
 Safety integration update, 17 September 2026: the bounded Slice 2 consultation
 cutover is implemented in the existing doctor workspace. A held signing attempt
 survives reload and visit changes; the doctor can inspect and record Same

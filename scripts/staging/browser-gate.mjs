@@ -152,6 +152,10 @@ async function main() {
    * loudly rather than quietly running zero tests and reporting success.
    */
   const filters = process.argv.slice(2).filter((arg) => !arg.startsWith('-'))
+  // Anything that looks like a flag is for the runner, not for us:
+  // `-- slice4 --test-name-pattern='lost review'` is how one journey out of
+  // thirty-two gets re-run while it is being fixed.
+  const runnerFlags = process.argv.slice(2).filter((arg) => arg.startsWith('-'))
   let targets = ['tests/browser/*.test.mjs']
   if (filters.length > 0) {
     const available = readdirSync(join(process.cwd(), 'tests', 'browser'))
@@ -172,7 +176,7 @@ async function main() {
     process.execPath,
     // One at a time. They share one browser and one database, so concurrency
     // here is two tests signing in as different people into the same tab.
-    ['--test', '--test-concurrency=1', ...targets],
+    ['--test', '--test-concurrency=1', ...runnerFlags, ...targets],
     { stdio: 'inherit', env: { ...process.env, STAGING_DB_URL: url } },
   )
 

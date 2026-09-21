@@ -10,6 +10,7 @@ import type {
 import { callApi } from '@/lib/api'
 import { useBusy, type ActionRunner } from './clinic-context'
 import { ReasonAction, Stack } from './shared-panels'
+import { ResultReviewSection } from './result-review'
 import {
   Badge,
   Card,
@@ -22,6 +23,7 @@ import {
   Input,
   Notice,
   PageHeader,
+  SectionHeader,
   Select,
   TBody,
   TD,
@@ -710,13 +712,31 @@ export function ReviewQueuePanel({ data, run }: { data: ClinicSnapshot; run: Act
   return (
     <Stack>
       <PageHeader
-        eyebrow="Lines only a doctor can settle"
+        eyebrow="What a doctor has to read"
         title="Review"
         sub={
           loading && reported === null
-            ? 'Reading the list…'
-            : `${lines.length} ${lines.length === 1 ? 'line' : 'lines'} waiting`
+            ? 'Reading the lists…'
+            : `${lines.length} legacy ${lines.length === 1 ? 'line' : 'lines'} waiting`
         }
+      />
+
+      {/*
+       * Results first, because they are the live clinical work: a report that
+       * has come back and nobody has read is a patient waiting on an answer
+       * today. The legacy prescription lines below are a migration backlog —
+       * real, and settled at whatever pace the doctor has time for.
+       *
+       * Two separate stations sharing one destination rather than two entries
+       * on the rail: the plan's rule is three or four daily destinations per
+       * clinical role, and both of these are "the things only a doctor can
+       * settle".
+       */}
+      <ResultReviewSection data={data} run={run} />
+
+      <SectionHeader
+        title="Prescription lines from the old records"
+        sub="A separate backlog, unchanged by the results above"
       />
 
       <Card>

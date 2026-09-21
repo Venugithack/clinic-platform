@@ -31,7 +31,10 @@ Slice 2 frontend safety cutover is also
 implemented locally: the consultation screen holds one attempt across visit
 changes and gives doctors the audited reconciliation workflow. The full
 appointment-calendar UI is not implemented, and **no screen renders any of
-Slice 3 or Slice 4.**
+Slice 3.** Slice 4's bounded doctor-review cutover IS implemented: the Review
+station now opens with the results waiting for a doctor, and the legacy
+prescription-line backlog sits beneath it unchanged. Ordering, the catalogue,
+report intake and everything patient-facing remain unbuilt.
 
 Slice 3A adds five tables, a provider-neutral state machine and the commands
 and on-demand reads around them, against owner items 76–83. Slice 3B adds one
@@ -55,8 +58,9 @@ arrives because a member of staff typed it in or attached the file the
 laboratory emailed — and the one patient-facing message it can authorize is
 one fixed sentence that carries no clinical detail and is, today, suppressed
 into the admin's queue like every other. `SCHEMA_AND_TYPES.md` §17 is the
-contract and `reference/SLICE4_FRONTEND_CONTRACT.md` is what a screen would be
-built against.
+contract and `reference/SLICE4_FRONTEND_CONTRACT.md` is what the doctor's
+Review station is built against — §10 of it says which part of that contract
+has a screen and which part does not.
 
 ### Read by task
 
@@ -186,11 +190,16 @@ to Mumbai and back with the button busy through both.
 ```
 app/                    layout, one page, the web manifest — the whole route tree
 components/             ClinicApp (the chrome and the ten workspaces) and ui/
+  result-review.tsx     the doctor's Slice 4 station, inside Review
 lib/
   api.ts                the ONLY thing that talks to the backend; token handling
   attempt-key.ts        the consultation attempt's browser-storage lifecycle
   consultation-attempt.ts  client handling for attempt refusal and recovery
   consultation-reconciliation.ts  coded recovery and retry policy
+  result-decisions.ts   is follow-up owed, and did a lost act commit — pure,
+                        and unit-tested because both were once wrong
+  result-recovery.ts    the opaque note a tablet leaves itself about
+                        unfinished result follow-up
   types.ts              the frontend door to the backend's shared type contract
 public/
   _headers              the four security headers, applied by Cloudflare —
