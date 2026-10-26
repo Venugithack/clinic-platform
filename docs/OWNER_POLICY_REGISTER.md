@@ -26,8 +26,9 @@ Section K was added on 13 September 2026 for item 64. Section L was added on
 Section M was added on 17 September 2026 for items 76–83, and the references
 moved from M to N to keep the bibliography last. Section N was added on
 19 September 2026 for items 84–88, and the references moved again, from N to O,
-for the same reason. Nothing else was re-lettered; the earlier shift of old
-H→I, I→J, J→K on 12 September still holds.
+for the same reason. Section O was added on 26 October 2026 for item 89, and
+the references moved from O to P. Nothing else was re-lettered; the earlier
+shift of old H→I, I→J, J→K on 12 September still holds.
 
 ---
 
@@ -637,7 +638,30 @@ every other one needs, and needs its own purpose-specific consent on top.
 
 ---
 
-## O. Policy rationale references
+## O. Supplier orders
+
+| # | Decision area | Approved direction | Status |
+| --- | --- | --- | --- |
+| 89 | How does a supplier order leave the clinic? | From the **pharmacist's own WhatsApp** — or by phone or on paper — and never from the clinic's WhatsApp Business number. The application drafts the order and opens the pharmacist's WhatsApp with the message filled in; the clinic sends nothing itself. The order becomes **placed** only when a pharmacy or admin user confirms that it went. A draft counts what is already on order, so a medicine still awaiting delivery is not ordered again, and every quantity is written in packs with the base-unit total beside it. One-tap or unattended sending from a business number is not authorized; it needs a new decision (row 2 or 3 of the ladder in `reference/WHATSAPP.md` §9). | Approved, 26 October 2026 |
+
+A computed shortfall is rounded **up** to whole packs of the smallest
+receivable pack above the base unit — strips rather than loose tablets — so a
+draft never asks for part of a strip and over-orders by at most one strip. A
+quantity somebody types is kept exactly as typed. That rounding is the
+implementation's default rather than an owner instruction: if the clinic
+orders some products only by the box, this is the place to say so.
+
+This decision closes four faults the 26 October audit found in the former
+business-API send: a free-typed message that Meta delivers only inside a
+24-hour window the supplier opens; an order marked placed with no way to learn
+it failed; a send that happened before anything was recorded, so a retry or
+two people at once could order twice; and quantities sent as bare tablet
+counts. It also removes supplier traffic from the number patients rely on,
+which `reference/WHATSAPP.md` §10 rule 7 already required.
+
+---
+
+## P. Policy rationale references
 
 - CDSCO, [Drugs Rules, 1945](https://cdsco.gov.in/opencms/resources/UploadCDSCOWeb/2022/drug_rules/Drugs%20Rules%201945_2024%2009.pdf), Rule 65: scheduled prescription dispensing, repeat directions, substitution restrictions, records, expiry segregation, and registered-pharmacist supervision of supply outside the manufacturer's container.
 - Pharmacy Council of India, [FAQ on registered-pharmacist responsibility](https://pci.gov.in/en/faqs/), including dispensing only the medicine prescribed and not substituting the prescription.

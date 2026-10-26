@@ -463,6 +463,14 @@ Both have safe replacements that give him what he actually wants:
 
 ## 9. The supplier problem, in full
 
+> **Decided 26 October 2026: row 1.** Supplier orders go from the pharmacist's
+> own WhatsApp through a `wa.me` link the application fills in, and the clinic's
+> business number sends nothing to a supplier. `send_order` was removed;
+> `mark_order_sent` records that the person who sent the order says it went.
+> Owner policy register item 89 has the decision and what it closed. The rest
+> of this section is the analysis that led there, kept for the day somebody
+> wants row 2.
+
 The greyest thing in the build, so it gets stated plainly.
 
 **The facts:**

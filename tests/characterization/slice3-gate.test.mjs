@@ -501,12 +501,9 @@ describe('receiving', () => {
     })
     assert.equal(Number(await scalar(`select coalesce(sum(available_quantity),0)::int from jmc.batches`)), 0)
 
-    // Sending the order is a WhatsApp call, which staging has no credentials
-    // for and must not make. The status it would set is what receiving checks,
-    // so it is set here directly; the send path itself is covered by the
-    // supplier-order tests.
-    await rows(`update jmc.purchase_orders set status='placed', placed_at=now()::text where id=$1`,
-      [order.data.orderId])
+    // The order goes from the pharmacist's own WhatsApp; this records that it
+    // went, which is what receiving checks. supplier-orders.test.mjs covers it.
+    await as(pharmacy, 'mark_order_sent', { orderId: order.data.orderId })
     const orderLineId = String(await scalar(
       `select id from jmc.purchase_order_lines where order_id=$1`, [order.data.orderId],
     ))

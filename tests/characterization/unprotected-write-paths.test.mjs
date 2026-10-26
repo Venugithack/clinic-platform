@@ -35,7 +35,6 @@
  */
 import assert from 'node:assert/strict'
 import { after, describe, test } from 'node:test'
-import { db } from '../support/backend.mjs'
 import { as, closeClinic, makeStaff, resetClinic, rows, scalar } from '../support/clinic.mjs'
 
 after(async () => { await closeClinic() })
@@ -121,18 +120,18 @@ describe('stock that arrives without a goods receipt', () => {
 })
 
 describe('receiving a delivery against a purchase order', () => {
-  /** The order, placed. See the test below for why this cannot be done by command. */
+  /** The order, placed — by the same command a pharmacist uses. */
   async function placedOrder(staff, supplierId) {
     const medicineId = await addMedicine(staff)
     await as(staff, 'set_supplier_medicines', { supplierId, medicineIds: [medicineId] })
     await as(staff, 'create_order', { supplierId, lines: [{ medicineId, quantity: 100 }] })
     const orderId = String(await scalar('select id from jmc.purchase_orders limit 1'))
-    await db.db.prepare(`update purchase_orders set status='placed' where id=?`).run(orderId)
+    await as(staff, 'mark_order_sent', { orderId })
     const lineId = String(await scalar('select id from jmc.purchase_order_lines limit 1'))
     return { orderId, lineId, medicineId }
   }
 
-  test('an order cannot be placed at all unless WhatsApp is connected', async () => {
+  test('an order telephoned or handed over can be placed without WhatsApp connected', async () => {
     const { staff, supplierId } = await counter()
     const medicineId = await addMedicine(staff)
     await as(staff, 'set_supplier_medicines', { supplierId, medicineIds: [medicineId] })
@@ -140,42 +139,35 @@ describe('receiving a delivery against a purchase order', () => {
     const orderId = String(await scalar('select id from jmc.purchase_orders limit 1'))
 
     /*
-     * `send_order` is the only transition from `pending` to `placed`
-     * (commands.ts:2369-2392), and it refuses without the four WHATSAPP_*
-     * variables. So an order telephoned to the supplier, or printed and
-     * handed over, has no way to become an order the clinic can receive
-     * against — and `receive_order` only accepts `placed` or
-     * `partially_delivered` (commands.ts:2414). A clinic that has not
-     * connected WhatsApp cannot use purchase orders end to end.
+     * This used to be impossible: `send_order` was the only transition from
+     * `pending` to `placed` and refused without the four WHATSAPP_* variables,
+     * so an order phoned in or printed could never be received against.
+     * Since 26 October 2026 the order goes from the pharmacist's own WhatsApp
+     * (or the phone, or paper) and `mark_order_sent` records that it went.
      */
-    await assert.rejects(
-      () => as(staff, 'send_order', { orderId }),
-      /WhatsApp is not connected/,
-    )
-    assert.equal(await scalar('select status from jmc.purchase_orders where id=$1', [orderId]), 'pending')
+    await as(staff, 'mark_order_sent', { orderId })
+    assert.equal(await scalar('select status from jmc.purchase_orders where id=$1', [orderId]), 'placed')
   })
 
-  test('the order records a base-unit number and none of the package fields beside it', async () => {
+  test('a typed quantity is recorded as typed, with the unit it counts beside it', async () => {
     const { staff, supplierId } = await counter()
     await placedOrder(staff, supplierId)
 
     /*
      * Slice 3 added `order_level_name`, `order_level_count` and
      * `package_version_id` to this table
-     * (supabase/migrations/20260912000000_slice3_identity_packages_stock.sql:717-719).
-     * Nothing writes them and nothing reads them: those three names appear in
-     * that migration and nowhere else in the repository. What the supplier is
-     * actually sent is `purchase_orders.message_draft`, free text built from
-     * the same base-unit number — so "100" leaves the clinic meaning tablets
-     * while everyone reading it thinks in boxes, and the editable message is
-     * not the record.
+     * (supabase/migrations/20260912000000_slice3_identity_packages_stock.sql:717-719),
+     * and until 26 October 2026 nothing wrote them, so "100" left the clinic
+     * meaning tablets while everyone reading it thought in boxes. `create_order`
+     * now fills them. This medicine has no verified package, so the order is
+     * counted in its base unit, and says so.
      */
     const [line] = await rows(
       `select ordered_quantity, order_level_name, order_level_count, package_version_id
          from jmc.purchase_order_lines limit 1`)
     assert.equal(line.ordered_quantity, 100)
-    assert.equal(line.order_level_name, '')
-    assert.equal(line.order_level_count, null)
+    assert.equal(line.order_level_name, 'tablet')
+    assert.equal(line.order_level_count, 100)
     assert.equal(line.package_version_id, null)
   })
 

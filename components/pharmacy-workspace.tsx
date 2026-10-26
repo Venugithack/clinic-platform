@@ -10,6 +10,7 @@ import type {
   PurchaseOrderView,
   SupplierView,
 } from '@/lib/types'
+import { reorderRows, whatsAppLink } from '@/lib/supplier-orders'
 import { useBusy, type ActionRunner } from './clinic-context'
 import { BatchActions, mrpWithBasis, plural } from './formulary-workspace'
 import { Stack } from './shared-panels'
@@ -17,6 +18,7 @@ import {
   ActionButton,
   Badge,
   Button,
+  ButtonLink,
   Card,
   CardBody,
   CardHeader,
@@ -811,9 +813,8 @@ function SupplierLinks({
 
 export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const busy = useBusy()
-  const low = data.medicines.filter(
-    (medicine) => medicine.totalAvailable <= medicine.reorderLevel && medicine.active,
-  )
+  const low = reorderRows(data.medicines, data.orders)
+  const needing = low.filter((row) => row.needsOrder)
   const [supplierId, setSupplierId] = useState(data.suppliers[0]?.id ?? '')
   const [receiving, setReceiving] = useState<PurchaseOrderView | null>(null)
 
@@ -822,12 +823,15 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
       <PageHeader
         eyebrow="Purchase orders"
         title="Supplier orders"
-        sub={`${low.length} medicines need reordering · ${data.orders.length} orders on file`}
+        sub={`${needing.length} ${needing.length === 1 ? 'medicine needs' : 'medicines need'} an order · ${data.orders.length} orders on file`}
       />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-print="hide">
         <Card>
-          <CardHeader title="Needs reordering" sub={`${low.length} medicines`} />
+          <CardHeader
+            title="Needs reordering"
+            sub={`${low.length} at or below reorder level · ${low.length - needing.length} already on order`}
+          />
           {low.length === 0 ? (
             <CardBody>
               <EmptyState
@@ -841,19 +845,27 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
                 <TR>
                   <TH>Medicine</TH>
                   <TH num>On shelf</TH>
+                  <TH num>On order</TH>
                   <TH num>Target</TH>
                   <TH>Preferred supplier</TH>
                 </TR>
               </THead>
               <TBody>
-                {low.map((medicine) => (
+                {low.map(({ medicine, onOrder, needsOrder }) => (
                   <TR key={medicine.id}>
-                    <TD className="font-semibold">
-                      {medicine.name} {medicine.strength}
+                    <TD>
+                      <span className="block font-semibold">
+                        {medicine.name} {medicine.strength}
+                      </span>
+                      <Badge tone={needsOrder ? 'attn' : 'plain'}>
+                        {needsOrder ? 'Needs an order' : 'Covered by an order'}
+                      </Badge>
                     </TD>
                     <TD num>
-                      <span className="font-semibold text-stop">{medicine.totalAvailable}</span>
+                      <span className="font-semibold text-stop">{medicine.totalAvailable}</span>{' '}
+                      <span className="text-ink-2">{plural(medicine.baseUnit, medicine.totalAvailable)}</span>
                     </TD>
+                    <TD num>{onOrder > 0 ? onOrder : '—'}</TD>
                     <TD num>{medicine.targetStock}</TD>
                     <TD>
                       {medicine.preferredSupplierName ?? (
@@ -871,9 +883,9 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
           <CardHeader title="Draft an order" />
           <CardBody className="space-y-4">
             <p className="text-[13px] leading-relaxed text-ink-2">
-              The clinic groups every linked low-stock medicine for one supplier and works out how
-              many packs bring each back up to its target. The draft is yours to edit before it goes
-              anywhere.
+              The clinic groups every low medicine linked to one supplier, leaves out what is
+              already on order, and rounds each up to whole packs that bring it back to its target.
+              The message is yours to edit, and it goes from your own WhatsApp.
             </p>
             <Field label="Supplier" required>
               <Select value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
@@ -916,8 +928,6 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
             <OrderCard
               key={order.id}
               order={order}
-              connected={data.whatsapp.configured}
-              connectionNote={data.whatsapp.note}
               run={run}
               onReceive={() => setReceiving(order)}
             />
@@ -935,28 +945,30 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
   )
 }
 
+/**
+ * One supplier order, from draft to delivery.
+ *
+ * The order goes from the pharmacist's own WhatsApp: "Open in WhatsApp" hands
+ * the message over, and the clinic sends nothing. So the app cannot know the
+ * message went — the person who sent it says so with "Mark as sent", and only
+ * that makes the order placed. Opening WhatsApp is never treated as sending.
+ */
 function OrderCard({
   order,
-  connected,
-  connectionNote,
   run,
   onReceive,
 }: {
   order: PurchaseOrderView
-  connected: boolean
-  connectionNote: string
   run: ActionRunner
   onReceive: () => void
 }) {
   const busy = useBusy()
   const [draft, setDraft] = useState(order.messageDraft)
+  const [opened, setOpened] = useState(false)
   const editable = order.status === 'pending'
   const receivable = order.status === 'placed' || order.status === 'partially_delivered'
-  const blocked = !connected
-    ? connectionNote || 'WhatsApp is not connected, so no order can be sent.'
-    : draft.trim() === ''
-      ? 'The message is empty.'
-      : undefined
+  const empty = draft.trim() === ''
+  const link = order.supplierWhatsApp && !empty ? whatsAppLink(order.supplierWhatsApp, draft) : undefined
 
   return (
     <Card variant="record" data-print="sheet">
@@ -977,7 +989,7 @@ function OrderCard({
       <CardBody className="space-y-4">
         <p className="font-mono text-[12px] text-ink-2">
           Created {formatDate(order.createdAt)}
-          {order.placedAt ? ` · placed ${formatDate(order.placedAt)}` : ''}
+          {order.placedAt ? ` · sent ${formatDate(order.placedAt)}` : ''}
         </p>
 
         <Table>
@@ -995,12 +1007,16 @@ function OrderCard({
               return (
                 <TR key={line.id}>
                   <TD className="font-semibold">{line.medicineName}</TD>
-                  <TD num>{line.orderedQuantity}</TD>
-                  <TD num>{line.receivedQuantity}</TD>
+                  <TD num>{line.orderedDescription}</TD>
+                  <TD num>
+                    {line.receivedQuantity}{' '}
+                    <span className="text-ink-2">{plural(line.baseUnit, line.receivedQuantity)}</span>
+                  </TD>
                   <TD num>
                     <span className={outstanding > 0 ? 'text-attn' : 'text-free'}>
                       {outstanding}
-                    </span>
+                    </span>{' '}
+                    <span className="text-ink-2">{plural(line.baseUnit, outstanding)}</span>
                   </TD>
                 </TR>
               )
@@ -1013,8 +1029,8 @@ function OrderCard({
             label="WhatsApp message to the supplier"
             hint={
               editable
-                ? 'Edit freely before it is sent. Nothing goes out until you place the order.'
-                : 'This order has been placed — the message is kept as it was sent.'
+                ? 'Edit freely. It goes from your own WhatsApp — the clinic sends nothing itself.'
+                : 'This order has been sent — the message is kept as it was sent.'
             }
           >
             <Textarea
@@ -1038,24 +1054,64 @@ function OrderCard({
               >
                 Save draft
               </ActionButton>
+              {link ? (
+                <ButtonLink
+                  variant={opened ? 'secondary' : 'primary'}
+                  href={link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  icon="arrow-right"
+                  data-testid="open-order-in-whatsapp"
+                  onClick={() => setOpened(true)}
+                >
+                  Open in WhatsApp
+                </ButtonLink>
+              ) : (
+                <ActionButton
+                  disabled
+                  disabledReason={
+                    empty ? 'The message is empty.' : order.supplierWhatsAppProblem
+                  }
+                >
+                  Open in WhatsApp
+                </ActionButton>
+              )}
               <ConfirmButton
-                variant="primary"
+                variant={opened || !link ? 'primary' : 'secondary'}
                 busy={busy}
-                busyLabel="Sending…"
-                disabled={Boolean(blocked)}
-                disabledReason={blocked}
-                title="Place this order"
+                busyLabel="Marking sent…"
+                disabled={empty}
+                disabledReason="The message is empty."
+                title="Mark this order sent"
                 question={
                   <>
-                    Send this message to{' '}
-                    <span className="font-semibold">{order.supplierName}</span> on WhatsApp and mark
-                    the order placed? A sent message cannot be recalled.
+                    Has this order gone to{' '}
+                    <span className="font-semibold">{order.supplierName}</span> — from your
+                    WhatsApp, by phone or on paper? This records it as placed and waiting for
+                    delivery.
                   </>
                 }
-                confirmLabel="Send & place"
-                onConfirm={() => run('send_order', { orderId: order.id, messageDraft: draft })}
+                confirmLabel="Yes, it has gone"
+                onConfirm={() => run('mark_order_sent', { orderId: order.id, messageDraft: draft })}
               >
-                {connected ? 'Send & place order' : 'Connect WhatsApp to send'}
+                Mark as sent
+              </ConfirmButton>
+              <ConfirmButton
+                variant="ghost"
+                busy={busy}
+                busyLabel="Discarding…"
+                title="Discard this draft"
+                question={
+                  <>
+                    Discard <span className="font-semibold">{order.orderNumber}</span>? Nothing has
+                    been sent, and its medicines go back on the reordering list.
+                  </>
+                }
+                confirmLabel="Discard draft"
+                confirmVariant="danger"
+                onConfirm={() => run('cancel_order', { orderId: order.id })}
+              >
+                Discard draft
               </ConfirmButton>
             </>
           ) : null}
@@ -1069,10 +1125,16 @@ function OrderCard({
           <Button onClick={() => window.print()}>Print order</Button>
         </div>
 
-        {!connected && editable ? (
-          <Notice tone="bad">
-            {connectionNote ||
-              'WhatsApp is not connected. Orders can be drafted and printed, but nothing is sent until real Meta credentials exist.'}
+        {editable && opened ? (
+          <Notice tone="pending">
+            WhatsApp was opened with this order. Once the message has gone, mark the order sent —
+            until then it is still a draft.
+          </Notice>
+        ) : null}
+        {editable && order.supplierWhatsAppProblem ? (
+          <Notice tone="pending">
+            {order.supplierWhatsAppProblem} Save one WhatsApp can dial under Suppliers, or phone
+            the order in or print it, then mark it sent.
           </Notice>
         ) : null}
       </CardBody>

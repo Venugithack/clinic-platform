@@ -6,7 +6,9 @@
  * built a whole messaging model beside them without touching either. This file
  * was written BEFORE that model existed and is the record of what they
  * answered then, so that "nothing changed" is a measurement rather than a
- * claim.
+ * claim. One thing has changed since, deliberately: on 26 October 2026 the
+ * owner moved supplier orders to the pharmacist's own WhatsApp, and
+ * `send_order` was removed. Its section below says what replaced it.
  *
  * It also states the boundary between the two worlds plainly, because the
  * boundary is the thing most likely to be misread later:
@@ -72,22 +74,24 @@ before(async () => {
   silentPatientId = String(await scalar(`select id from jmc.patients where name='Silent Patient'`))
 })
 
-describe('the supplier order, unchanged', () => {
-  test('an unconnected clinic refuses to send and leaves the order pending', async () => {
+describe('the supplier order, which no longer uses the business number', () => {
+  /*
+   * Changed 26 October 2026 by owner decision: supplier orders go from the
+   * pharmacist's own WhatsApp (docs/reference/WHATSAPP.md §9, row 1), so
+   * `send_order` is gone and `mark_order_sent` records what the person says
+   * they sent. tests/characterization/supplier-orders.test.mjs holds the rest.
+   */
+  test('the send command is gone, and marking an order sent logs no WhatsApp message', async () => {
     const draft = await as(admin, 'create_order', {
       supplierId, lines: [{ medicineId, quantity: 10 }],
     })
     const orderId = draft.data.orderId
 
-    await assert.rejects(
-      () => as(admin, 'send_order', { orderId }),
-      /WhatsApp is not connected yet\./,
-    )
-
-    // The order did not move, and nothing was logged as sent. Both halves
-    // matter: a status that advanced would tell a pharmacist the supplier had
-    // been told.
+    await assert.rejects(() => as(admin, 'send_order', { orderId }))
     assert.equal(await scalar('select status from jmc.purchase_orders where id=$1', [orderId]), 'pending')
+
+    await as(pharmacist, 'mark_order_sent', { orderId })
+    assert.equal(await scalar('select status from jmc.purchase_orders where id=$1', [orderId]), 'placed')
     assert.equal(Number(await scalar('select count(*) from jmc.whatsapp_messages')), 0)
   })
 

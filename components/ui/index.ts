@@ -6,7 +6,7 @@
  * language, never a runtime, an import or a package.
  */
 export { Badge, type Tone } from './Badge'
-export { ActionButton, Button } from './Button'
+export { ActionButton, Button, ButtonLink } from './Button'
 export { Card, CardBody, CardHeader } from './Card'
 export { ConfirmButton } from './ConfirmButton'
 export { Disclosure } from './Disclosure'

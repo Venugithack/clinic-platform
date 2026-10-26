@@ -10,8 +10,9 @@
  *
  * It is **not** the only file in the repository that can call Meta.
  * `whatsapp.ts`'s `sendWhatsAppText` — the staff message composer behind
- * `send_patient_whatsapp` and `send_order` — has its own direct call and
- * predates all of this. The two do not share a path, a consent rule or a
+ * `send_patient_whatsapp` — has its own direct call and predates all of this.
+ * (`send_order` used it too until 26 October 2026, when supplier orders moved
+ * to the pharmacist's own WhatsApp and the clinic stopped sending them.) The two do not share a path, a consent rule or a
  * record: that one is a member of staff typing a sentence and pressing send,
  * and it writes to `whatsapp_messages`. Moving it onto per-purpose consent is
  * deferred work, named in `docs/SCHEMA_AND_TYPES.md` §16.8, and until it

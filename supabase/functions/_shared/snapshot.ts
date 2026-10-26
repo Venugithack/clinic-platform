@@ -43,7 +43,8 @@ import type {
 import { db } from './db.ts'
 import { decompose, describeEntry, describeLadder, ladderFromRows } from './packages.ts'
 import { doctorLoggedIn, hasRole, legacyPinCount } from './auth.ts'
-import { whatsappStatus } from './whatsapp.ts'
+import { dialable, whatsappStatus } from './whatsapp.ts'
+import { describeOrdered } from './supplier-order.ts'
 
 type Row = Record<string, unknown>
 
@@ -1151,16 +1152,26 @@ export async function readSnapshot(
 
   const allOrderLines = supplyNetwork
     ? await all(
-        `select pol.*, m.name medicine_name from purchase_order_lines pol
+        `select pol.*, m.name medicine_name, coalesce(nullif(m.base_unit,''),m.unit) base_unit
+           from purchase_order_lines pol
            join medicines m on m.id=pol.medicine_id order by m.name`,
       )
     : []
+  // Described in the package the line was ordered in, which `create_order`
+  // froze on the line — not whatever package is current by the time it arrives.
+  const packageById = new Map(packages.map((version) => [version.id, version]))
   const linesByOrder = new Map<string, PurchaseOrderView['lines']>()
   for (const line of allOrderLines) {
     const key = text(line.order_id)
+    const pack = packageById.get(text(line.package_version_id))
+    const ladder = pack?.levels.length
+      ? ladderFromRows(pack.baseUnit, pack.levels.map(toLadderLevel))
+      : null
     const view = {
       id: text(line.id), medicineId: text(line.medicine_id), medicineName: text(line.medicine_name),
       orderedQuantity: num(line.ordered_quantity), receivedQuantity: num(line.received_quantity),
+      baseUnit: pack?.baseUnit || text(line.base_unit),
+      orderedDescription: describeOrdered(ladder, text(line.base_unit), num(line.ordered_quantity)),
     }
     const list = linesByOrder.get(key)
     if (list) list.push(view)
@@ -1168,13 +1179,23 @@ export async function readSnapshot(
   }
 
   const orders: PurchaseOrderView[] = supplyNetwork
-    ? (await all(`select po.*,s.name supplier_name from purchase_orders po
-        join suppliers s on s.id=po.supplier_id order by po.created_at desc`)).map((r) => ({
-        id: text(r.id), orderNumber: text(r.order_number), supplierId: text(r.supplier_id), supplierName: text(r.supplier_name),
-        status: text(r.status) as PurchaseOrderView['status'], requestedDate: text(r.requested_date), messageDraft: text(r.message_draft),
-        messageStatus: optional(r.message_status) as PurchaseOrderView['messageStatus'], createdAt: text(r.created_at), placedAt: optional(r.placed_at),
-        lines: linesByOrder.get(text(r.id)) ?? [],
-      }))
+    ? (await all(`select po.*,s.name supplier_name,s.whatsapp supplier_whatsapp from purchase_orders po
+        join suppliers s on s.id=po.supplier_id order by po.created_at desc`)).map((r) => {
+        const number = dialable(text(r.supplier_whatsapp))
+        return {
+          id: text(r.id), orderNumber: text(r.order_number), supplierId: text(r.supplier_id), supplierName: text(r.supplier_name),
+          status: text(r.status) as PurchaseOrderView['status'], requestedDate: text(r.requested_date), messageDraft: text(r.message_draft),
+          messageStatus: optional(r.message_status) as PurchaseOrderView['messageStatus'],
+          supplierWhatsApp: number.ok ? number.to : undefined,
+          supplierWhatsAppProblem: number.ok
+            ? undefined
+            : number.reason === 'missing'
+              ? 'No WhatsApp number is saved for this supplier.'
+              : `The WhatsApp number saved for this supplier — ${text(r.supplier_whatsapp).trim()} — cannot be dialled.`,
+          createdAt: text(r.created_at), placedAt: optional(r.placed_at),
+          lines: linesByOrder.get(text(r.id)) ?? [],
+        }
+      })
     : []
 
   // Counter receipts. The Counter raises them and the Day book reconciles them,

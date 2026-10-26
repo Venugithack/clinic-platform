@@ -270,8 +270,8 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives a hundred and seventeen journeys
-through Chrome. A hundred and eight of those are written out; the other nine
+starts the functions and the page, and drives a hundred and nineteen journeys
+through Chrome. A hundred and ten of those are written out; the other nine
 come from loops — three in `clinic-gate.test.mjs` that run one journey at two
 shapes or once per role, and one in `appointment-book.test.mjs` that runs one
 journey at each of the plan's five shapes — which is why counting `test(` in
@@ -410,6 +410,17 @@ the note holds no name, reason or time. The rest: a slow read saying so, an
 unreachable read saying so and recovering, the stale-read notice, the keyboard
 reaching a booking's history with Escape returning focus, and all five of the
 plan's shapes with no sideways scroll and no control under 44px.
+
+Supplier orders add `supplier-orders.test.mjs`: two journeys, after owner
+policy register item 89 moved orders to the pharmacist's own WhatsApp. The
+first works on the fixtures' draft PO-0001 and puts it back afterwards. It
+reads the order card's **Open in WhatsApp** link without pressing it, which
+would leave for wa.me, and checks that it dials the supplier with the order in
+it. It confirms no control offers to send from the clinic. It discards the
+draft, then watches the Counter say that a medicine now needs ordering. It
+drafts again and reads "8 trays (40 vials)". It marks the order sent and finds
+it placed, with nothing recorded as sent by the clinic. The second checks the
+Orders station on a phone for sideways scroll.
 
 The blind-count journey is the one worth singling out. Its first version
 passed without proving anything — the start screen and the counting screen

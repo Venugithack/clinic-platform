@@ -802,8 +802,13 @@ export interface OrderLineView {
   id: string
   medicineId: string
   medicineName: string
+  /** Base units, which is what receiving and the ledger count. */
   orderedQuantity: number
   receivedQuantity: number
+  /** The unit `orderedQuantity` and `receivedQuantity` count. */
+  baseUnit: string
+  /** "1 box and 4 strips (140 tablets)" — what the supplier was asked for. */
+  orderedDescription: string
 }
 
 export interface PurchaseOrderView {
@@ -814,7 +819,15 @@ export interface PurchaseOrderView {
   status: 'pending' | 'placed' | 'partially_delivered' | 'delivered' | 'cancelled'
   requestedDate: string
   messageDraft: string
+  /** Only on orders sent through the business API before 26 October 2026. */
   messageStatus?: 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
+  /**
+   * The supplier's number as WhatsApp dials it — country code, digits only —
+   * for the link that opens the pharmacist's own WhatsApp. Absent when the
+   * saved number is missing or unusable; `supplierWhatsAppProblem` says which.
+   */
+  supplierWhatsApp?: string
+  supplierWhatsAppProblem?: string
   createdAt: string
   placedAt?: string
   lines: OrderLineView[]

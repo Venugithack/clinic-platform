@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, type ButtonHTMLAttributes, type ReactNode, type Ref } from 'react'
+import { useId, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ReactNode, type Ref } from 'react'
 import { Icon, type IconName } from './Icon'
 
 /**
@@ -36,6 +36,35 @@ const SIZES = {
   md: 'min-h-[48px] px-4 py-2 text-[14px]',
 } as const
 
+const SHAPE =
+  'inline-flex items-center justify-center gap-2 rounded-box border font-semibold transition-colors duration-150'
+
+/**
+ * A link that looks like a button, for handing work to another app — opening
+ * the pharmacist's WhatsApp with an order filled in. Never for a write: a link
+ * cannot be busy, cannot be refused, and cannot be pressed only once.
+ */
+export function ButtonLink({
+  variant = 'secondary',
+  size = 'md',
+  icon,
+  children,
+  className = '',
+  ...rest
+}: {
+  variant?: Variant
+  size?: keyof typeof SIZES
+  icon?: IconName
+  children: ReactNode
+} & AnchorHTMLAttributes<HTMLAnchorElement>) {
+  return (
+    <a className={`${SHAPE} ${VARIANTS[variant]} ${SIZES[size]} ${className}`} {...rest}>
+      {icon ? <Icon name={icon} size={size === 'sm' ? 17 : 19} /> : null}
+      {children}
+    </a>
+  )
+}
+
 export function Button({
   variant = 'secondary',
   size = 'md',
@@ -56,7 +85,7 @@ export function Button({
     <button
       ref={ref}
       type="button"
-      className={`inline-flex items-center justify-center gap-2 rounded-box border font-semibold transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
+      className={`${SHAPE} disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...rest}
     >
       {icon ? <Icon name={icon} size={size === 'sm' ? 17 : 19} /> : null}

@@ -17,6 +17,9 @@ import {
   isUniqueViolation, requestFingerprint,
 } from './idempotency.ts'
 import { money, parseMoney, rupees } from './money.ts'
+import type { Ladder } from './packages.ts'
+import { ladderRows } from './inventory.ts'
+import { describeOrdered, orderLevelFor, packsToCover, supplierOrderMessage } from './supplier-order.ts'
 
 /**
  * Today, in the clinic rather than in Greenwich.
@@ -1626,9 +1629,24 @@ async function allocateStock(
   return allocations
 }
 
-function buildOrderDraft(supplierName: string, orderNumber: string, lines: Array<{ name: string; quantity: number }>) {
-  const items = lines.map((line, index) => `${index + 1}. ${line.name} — ${line.quantity}`).join('\n')
-  return `Hello ${supplierName},\n\nPlease place this order for Jayamurugan Clinic (${orderNumber}):\n${items}\n\nPlease confirm availability and expected delivery. Thank you.`
+/**
+ * One order draft at a time, clinic-wide. A draft subtracts what is already on
+ * order before it decides what is short, so two drafts worked out at the same
+ * moment would each see the same shortfall and order it twice.
+ */
+const ORDER_DRAFT_LOCK = 517_301
+
+/** Order statuses whose outstanding quantity is still on its way to the shelf. */
+const OPEN_ORDER_STATUSES = `('pending','placed','partially_delivered')`
+
+/** The newest verified package, which is what a new order is counted in. */
+async function orderPackage(medicineId: string): Promise<{ id: string; ladder: Ladder } | null> {
+  const row = (await db.prepare(
+    `select id, base_unit from package_versions
+      where medicine_id=? and status='verified' order by version desc limit 1`,
+  ).get(medicineId)) as { id: string; base_unit: string } | undefined
+  if (!row) return null
+  return { id: row.id, ladder: await ladderRows(row.base_unit, row.id) }
 }
 
 export async function runCommand(session: SessionView, action: string, payload: Payload) {
@@ -3848,59 +3866,144 @@ export async function runCommand(session: SessionView, action: string, payload: 
       const orderId = randomUUID()
       let orderNumber = ''
       await transaction(async () => {
+        await db.prepare(`select pg_advisory_xact_lock(${ORDER_DRAFT_LOCK})`).get()
         const supplier = await db.prepare('select name from suppliers where id=? and active=1').get(supplierId) as { name: string } | undefined
         if (!supplier) throw new Error('Choose an active supplier.')
-        const lines = suppliedLines.length > 0 ? suppliedLines : (await db.prepare(`select m.id medicineId,m.name,
-          greatest(m.target_stock-coalesce((select sum(b.available_quantity) from batch_availability b where b.medicine_id=m.id and b.pickable),0),1) quantity
-          from medicines m join supplier_medicines sm on sm.medicine_id=m.id and sm.supplier_id=? and sm.active=1
-          where m.active=1 and coalesce((select sum(b.available_quantity) from batch_availability b where b.medicine_id=m.id and b.pickable),0)<=m.reorder_level
-          group by m.id`).all(supplierId) as Array<{ medicineId: string; quantity: number }>)
-        if (lines.length === 0) throw new Error('No low-stock medicines are linked to this supplier.')
-        const namedLines: Array<{ medicineId: string; quantity: number; name: string }> = []
+
+        // What is low counts what is already on its way: a medicine ordered
+        // yesterday is still short on the shelf today, and ordering it again
+        // because the delivery has not arrived is how a clinic gets two.
+        let lines: Line[] = suppliedLines
+        if (suppliedLines.length === 0) {
+          const positions = (await db.prepare(`select m.id medicine_id, m.reorder_level, m.target_stock,
+              coalesce((select sum(b.available_quantity) from batch_availability b
+                where b.medicine_id=m.id and b.pickable),0) on_shelf,
+              coalesce((select sum(greatest(l.ordered_quantity-l.received_quantity,0))
+                from purchase_order_lines l join purchase_orders o on o.id=l.order_id
+                where l.medicine_id=m.id and o.status in ${OPEN_ORDER_STATUSES}),0) on_order
+            from medicines m join supplier_medicines sm on sm.medicine_id=m.id and sm.supplier_id=? and sm.active=1
+            where m.active=1
+            group by m.id
+            order by m.name`).all(supplierId)) as Row[]
+          lines = positions
+            .map((row) => ({
+              medicineId: String(row.medicine_id),
+              position: Number(row.on_shelf) + Number(row.on_order),
+              reorderLevel: Number(row.reorder_level),
+              targetStock: Number(row.target_stock),
+            }))
+            .filter((row) => row.position <= row.reorderLevel)
+            .map((row) => ({ medicineId: row.medicineId, quantity: Math.max(row.targetStock - row.position, 1) }))
+        }
+        if (lines.length === 0) {
+          throw new Error('Nothing linked to this supplier is low and not already on an order.')
+        }
+
+        const ordered: Array<{
+          medicineId: string; name: string; quantity: number; description: string
+          levelName: string; levelCount: number; packageVersionId: string | null
+        }> = []
         for (const line of lines) {
           const medicine = (await db
-            .prepare('select name,strength from medicines where id=?')
-            .get(line.medicineId)) as { name: string; strength: string } | undefined
+            .prepare(`select name,strength,coalesce(nullif(base_unit,''),unit) base_unit from medicines where id=?`)
+            .get(line.medicineId)) as { name: string; strength: string; base_unit: string } | undefined
           if (!medicine) throw new Error('An order medicine was not found.')
-          namedLines.push({ ...line, name: `${medicine.name} ${medicine.strength}`.trim() })
+          const pack = await orderPackage(line.medicineId)
+
+          // A computed shortfall is rounded up to whole packs. A quantity
+          // somebody typed is recorded exactly as typed.
+          let quantity = line.quantity
+          let level = { levelName: medicine.base_unit, count: quantity }
+          if (pack && suppliedLines.length === 0) {
+            const packs = packsToCover(pack.ladder, quantity)
+            quantity = packs.baseQuantity
+            level = { levelName: packs.levelName, count: packs.count }
+          } else if (pack) {
+            level = orderLevelFor(pack.ladder, quantity)
+          }
+
+          ordered.push({
+            medicineId: line.medicineId,
+            name: `${medicine.name} ${medicine.strength}`.trim(),
+            quantity,
+            description: describeOrdered(pack?.ladder ?? null, medicine.base_unit, quantity),
+            levelName: level.levelName,
+            levelCount: level.count,
+            packageVersionId: pack?.id ?? null,
+          })
         }
+
         orderNumber = await sequence('PO')
-        const draft = buildOrderDraft(supplier.name, orderNumber, namedLines)
+        const draft = supplierOrderMessage(
+          supplier.name, orderNumber, ordered.map((line) => ({ name: line.name, quantity: line.description })),
+        )
         await db.prepare(`insert into purchase_orders
           (id,order_number,supplier_id,status,requested_date,message_draft,created_by,created_at)
           values (?,?,?,'pending',?,?,?,?)`).run(
             orderId, orderNumber, supplierId, isoNow().slice(0, 10), draft, session.staffId, isoNow(),
           )
         const insert = await db.prepare(`insert into purchase_order_lines
-          (id,order_id,medicine_id,ordered_quantity,received_quantity) values (?,?,?,?,0)`)
-        for (const line of namedLines) await insert.run(randomUUID(), orderId, line.medicineId, line.quantity)
+          (id,order_id,medicine_id,ordered_quantity,received_quantity,order_level_name,order_level_count,package_version_id)
+          values (?,?,?,?,0,?,?,?)`)
+        for (const line of ordered) {
+          await insert.run(
+            randomUUID(), orderId, line.medicineId, line.quantity, line.levelName, line.levelCount, line.packageVersionId,
+          )
+        }
         await audit(session.staffId, 'order.created', 'purchase_order', orderId, `Drafted ${orderNumber} for ${supplier.name}`)
       })
       return { message: 'Reorder draft created.', data: { orderId, orderNumber } }
     }
 
-    case 'send_order': {
+    /*
+     * The order goes from the pharmacist's own WhatsApp, not from the clinic's
+     * business number — owner decision, 26 October 2026, row 1 of the ladder in
+     * docs/reference/WHATSAPP.md §9. The page opens WhatsApp with the message
+     * filled in; this records that the person who sent it says it went.
+     *
+     * So the server sends nothing, and this is the only way an order becomes
+     * placed — which also covers an order phoned in or handed over on paper.
+     * The row is locked and the status checked under it, so a double tap, or
+     * two people pressing at once, places the order once and tells the second
+     * person who already did.
+     */
+    case 'mark_order_sent': {
       requireRole(session, 'admin', 'pharmacy')
       const orderId = value(payload, 'orderId')
-      const order = await db.prepare(`select po.message_draft,s.whatsapp from purchase_orders po
-        join suppliers s on s.id=po.supplier_id where po.id=? and po.status='pending'`).get(orderId) as
-        | { message_draft: string; whatsapp: string }
-        | undefined
-      if (!order) throw new Error('Only a pending order can be sent.')
-      const messageDraft = optional(payload, 'messageDraft') || order.message_draft
-      const result = await sendWhatsAppText(order.whatsapp, messageDraft, 'this supplier')
-      if (!result.ok) throw new Error(result.error)
+      const messageDraft = optional(payload, 'messageDraft')
       await transaction(async () => {
-        await db.prepare(`update purchase_orders set status='placed',message_draft=?,external_message_id=?,message_status='sent',placed_at=? where id=?`)
-          .run(messageDraft, result.messageId, isoNow(), orderId)
-        await db.prepare(`insert into whatsapp_messages
-          (id,direction,audience,phone,body,external_message_id,status,related_type,related_id,created_at)
-          values (?,'outbound','supplier',?,?,?,'sent','purchase_order',?,?)`).run(
-            randomUUID(), order.whatsapp, messageDraft, result.messageId, orderId, isoNow(),
+        const order = (await db.prepare(
+          'select status,message_draft from purchase_orders where id=? for update',
+        ).get(orderId)) as { status: string; message_draft: string } | undefined
+        if (!order) throw new Error('That order was not found.')
+        if (order.status === 'cancelled') throw new Error('This draft was discarded, so it cannot be marked sent.')
+        if (order.status !== 'pending') {
+          const by = (await db.prepare(`select s.name from audit_events a join staff s on s.id=a.actor_id
+              where a.entity_type='purchase_order' and a.entity_id=? and a.action in ('order.sent','order.marked_sent')
+              order by a.created_at desc limit 1`).get(orderId)) as { name: string } | undefined
+          throw new Error(
+            `${by?.name ?? 'Someone'} already marked this order sent. If the supplier received it twice, ask them to supply it once.`,
           )
-        await audit(session.staffId, 'order.sent', 'purchase_order', orderId, 'Supplier order sent on WhatsApp')
+        }
+        await db.prepare(`update purchase_orders set status='placed',message_draft=?,placed_at=? where id=?`)
+          .run(messageDraft || order.message_draft, isoNow(), orderId)
+        await audit(session.staffId, 'order.marked_sent', 'purchase_order', orderId,
+          'Supplier order sent from staff WhatsApp, phone or paper, and marked placed')
       })
-      return { message: 'Order sent and marked placed.' }
+      return { message: 'Order marked sent. It is now waiting for delivery.' }
+    }
+
+    /** A draft that is wrong is discarded, so what it holds is no longer counted as on order. */
+    case 'cancel_order': {
+      requireRole(session, 'admin', 'pharmacy')
+      const orderId = value(payload, 'orderId')
+      await transaction(async () => {
+        const result = await db.prepare(`update purchase_orders set status='cancelled' where id=? and status='pending'`)
+          .run(orderId)
+        if (Number(result.changes) !== 1) throw new Error('Only a draft that has not been sent can be discarded.')
+        await audit(session.staffId, 'order.discarded', 'purchase_order', orderId, 'Discarded an unsent order draft')
+      })
+      return { message: 'Draft discarded.' }
     }
 
     case 'update_order_draft': {

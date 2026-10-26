@@ -11,7 +11,8 @@ import type {
   PrescriptionView,
   Role,
 } from '@/lib/types'
-import { useBusy, type ActionRunner } from './clinic-context'
+import { reorderRows } from '@/lib/supplier-orders'
+import { useBusy, useSelectedPatient, type ActionRunner } from './clinic-context'
 import { plural } from './formulary-workspace'
 import {
   LOOSE,
@@ -223,6 +224,13 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
    */
   const mayDispense = may(roles, ['pharmacy'])
   const maySell = may(roles, ['pharmacy'])
+
+  // Reorders, shown where the pharmacist starts the day: only what no open
+  // order already covers, by the same rule the draft itself uses.
+  const { goTo } = useSelectedPatient()
+  const toOrder = may(roles, ['pharmacy', 'admin'])
+    ? reorderRows(data.medicines, data.orders).filter((row) => row.needsOrder).length
+    : 0
 
   // ── the counter's mode ──────────────────────────────────────────────────
   const [openRxId, setOpenRxId] = useState('')
@@ -965,6 +973,22 @@ export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionR
         onPrint={setPrinting}
         onDismissLater={() => setLater(null)}
       />
+
+      {toOrder > 0 ? (
+        <div data-print="hide" data-testid="reorder-reminder">
+          <Notice tone="pending" icon="bag">
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span>
+                {toOrder} {toOrder === 1 ? 'medicine is' : 'medicines are'} at or below the reorder
+                level and not on any order yet.
+              </span>
+              <Button size="sm" onClick={() => goTo('orders')}>
+                Supplier orders
+              </Button>
+            </span>
+          </Notice>
+        </div>
+      ) : null}
 
       <div className="space-y-4" data-testid="counter-surface" data-print="hide">
         {supply.failure || sale.failure || payment.failure ? (

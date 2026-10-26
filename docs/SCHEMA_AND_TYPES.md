@@ -896,9 +896,10 @@ admin/pharmacy.
 | `id` `orderNumber` `supplierId` `requestedDate` `messageDraft` `createdAt` | `purchase_orders.*` | `text` |
 | `supplierName` | join | `text` |
 | `status` | `text` + `as` (db-checked) |
-| `messageStatus` | `purchase_orders.message_status` | `optional` + `as`; **no db check backs the union** |
+| `messageStatus` | `purchase_orders.message_status` | `optional` + `as`; **no db check backs the union**. Set only on orders sent through the business API before 26 October 2026 (§18) |
+| `supplierWhatsApp` / `supplierWhatsAppProblem` | `suppliers.whatsapp` through `dialable()` | the dialable digits, or why there are none (§18) |
 | `placedAt` | nullable | `optional` |
-| `lines[]` | `purchase_order_lines` joined to `medicines`, folded in JS into a `Map<order_id, lines[]>` | `id`/`medicineId`/`medicineName` `text`; `orderedQuantity`/`receivedQuantity` `num` |
+| `lines[]` | `purchase_order_lines` joined to `medicines`, folded in JS into a `Map<order_id, lines[]>` | `id`/`medicineId`/`medicineName` `text`; `orderedQuantity`/`receivedQuantity` `num`; `baseUnit` and `orderedDescription` from the line's frozen `package_version_id` (§18) |
 
 `purchase_orders.external_message_id` is not mapped into any view.
 
@@ -4079,3 +4080,36 @@ None of these is unfinished Slice 4 work. Each is named rather than implied.
 - **Backfill.** Nothing historical was converted. There is no investigation in
   this clinic's past to migrate, and turning clinical images into results
   would invent evidence.
+
+## 18. Supplier orders from the pharmacist's own WhatsApp
+
+Owner policy register item 89, 26 October 2026. No migration: every column used
+here already existed.
+
+### 18.1 Commands
+
+| Command | Roles | What it does |
+|---|---|---|
+| `create_order` | admin, pharmacy | Takes `pg_advisory_xact_lock(517301)` so two drafts cannot see the same shortfall. A medicine is drafted when shelf (`batch_availability`, pickable) **plus on order** (outstanding on `pending`, `placed` and `partially_delivered` orders) is at or below `reorder_level`; the quantity tops it up to `target_stock`. A computed quantity is rounded **up** to whole packs of the newest verified package's smallest receivable level above the base unit. Typed `lines` are kept exactly. Now writes `order_level_name`, `order_level_count` and `package_version_id`, which Slice 3 added and nothing had filled. |
+| `mark_order_sent` | admin, pharmacy | `pending` → `placed`, under `select … for update`. Saves the message as sent. A second call is refused and names who marked it. Never contacts Meta: `external_message_id` and `message_status` stay null and nothing is written to `whatsapp_messages`. Audit action `order.marked_sent`. |
+| `cancel_order` | admin, pharmacy | `pending` → `cancelled`, so a wrong draft stops counting as on order. Audit action `order.discarded`. |
+| `send_order` | — | **Removed.** It sent a free-form message through the business API, which Meta delivers only inside a customer-opened 24-hour window. It placed the order before any delivery evidence existed, and it called Meta before writing any row. |
+
+### 18.2 Read model
+
+`OrderLineView` gains `baseUnit` and `orderedDescription` ("1 box and 4 strips
+(140 tablets)"). Both come from the package frozen on the line, not from
+whichever package is current. `PurchaseOrderView` gains `supplierWhatsApp`, the
+digits `wa.me` dials, and `supplierWhatsAppProblem`. The page builds the link
+in `lib/supplier-orders.ts`, which also holds the screen's copy of the
+needs-an-order rule for the Orders list and the Counter's reminder. The pack
+arithmetic is in `_shared/supplier-order.ts`, shared by the command and the
+snapshot.
+
+### 18.3 Tests
+
+`tests/supplier-orders.test.ts` (13, no database),
+`tests/characterization/supplier-orders.test.mjs` (13, including two races)
+and `tests/browser/supplier-orders.test.mjs` (2 journeys).
+`unprotected-write-paths`, `slice3-gate` and `slice3a-whatsapp-compatibility`
+were updated where they pinned the old behaviour.
