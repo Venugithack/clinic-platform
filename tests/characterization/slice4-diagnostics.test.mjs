@@ -27,6 +27,9 @@
  * `received_at` backwards through the append-only trigger rather than waiting,
  * and the one that checks the ceiling computes the expected answer in Postgres
  * in the clinic's own timezone instead of asserting a fixed hour.
+ * Result notices are authorized by the real command, which schedules their
+ * due time at the next permitted dispatch opening. Their worker tests use that
+ * recorded instant, so an evening run exercises the next morning's dispatch.
  */
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -56,6 +59,20 @@ after(async () => {
 })
 
 const key = () => randomUUID()
+
+/** Run the worker when this authorization actually becomes dispatchable. */
+async function noticeDueAt(resultId) {
+  const dueAt = await scalar(
+    `select to_char(o.due_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+       from jmc.message_outbox o
+       join jmc.communication_schedules s on s.id = o.schedule_id
+      where s.source_type = 'investigation_result' and s.source_id = $1
+        and s.schedule_kind = 'result_ready'`,
+    [resultId],
+  )
+  assert.ok(dueAt, 'authorization must create a result-ready outbox row')
+  return String(dueAt)
+}
 
 /* ───────────────────────────────────────────────────────────── the clinic ── */
 
@@ -1109,15 +1126,17 @@ describe('the patient is told a result is ready, and nothing else', () => {
 
     const authorized = await as(doctor, 'authorize_result_notification', { resultId })
     assert.equal(authorized.data.consent, 'opt_in')
+    const now = await noticeDueAt(resultId)
 
     // Authorized. Nothing has been told to anybody.
     let state = await itemStateOf(doctor, resultId)
     assert.equal(state, 'notification_pending')
 
     const sent = []
-    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
+    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()), now })
     await messaging.dispatchQueuedMessages({
       channel: channel((request) => { sent.push(request); return ACCEPTS() }),
+      now,
     })
     assert.equal(sent.length, 1)
 
@@ -1141,15 +1160,16 @@ describe('the patient is told a result is ready, and nothing else', () => {
       source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
-    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
-    await messaging.dispatchQueuedMessages({ channel: channel(() => ACCEPTS()) })
+    const now = await noticeDueAt(resultId)
+    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()), now })
+    await messaging.dispatchQueuedMessages({ channel: channel(() => ACCEPTS()), now })
 
     const reference = String(await scalar(
       `select o.provider_reference from jmc.message_outbox o
          join jmc.communication_schedules s on s.id=o.schedule_id where s.source_id=$1`,
       [resultId]))
     await messaging.applyProviderStatusEvent({
-      providerReference: reference, status: 'delivered', occurredAt: new Date().toISOString(),
+      providerReference: reference, status: 'delivered', occurredAt: now,
     })
 
     assert.equal(await itemStateOf(doctor, resultId), 'notified')
@@ -1163,11 +1183,13 @@ describe('the patient is told a result is ready, and nothing else', () => {
       source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
-    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
+    const now = await noticeDueAt(resultId)
+    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()), now })
 
     // The call goes out and the answer never comes back.
     await messaging.dispatchQueuedMessages({
       channel: channel(() => { throw new Error('socket closed') }),
+      now,
     }).catch(() => {})
 
     const before = (await rows(
@@ -1177,7 +1199,7 @@ describe('the patient is told a result is ready, and nothing else', () => {
 
     // Running the worker again changes nothing: outcome_unknown is not
     // dispatchable and no elapsed time moves it.
-    await messaging.dispatchQueuedMessages({ channel: channel(() => ACCEPTS()) })
+    await messaging.dispatchQueuedMessages({ channel: channel(() => ACCEPTS()), now })
     const after = (await rows(
       `select o.status, o.attempt_count from jmc.message_outbox o
          join jmc.communication_schedules s on s.id=o.schedule_id where s.source_id=$1`,
@@ -1199,7 +1221,9 @@ describe('the patient is told a result is ready, and nothing else', () => {
       patientId, scope: 'all_purposes', wording: 'STOP', source: 'patient_chat',
     })
 
-    const summary = await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
+    const summary = await messaging.prepareDueMessages({
+      channel: channel(() => ACCEPTS()), now: await noticeDueAt(resultId),
+    })
     assert.equal(summary.queued, 0)
     // Suppressed with a reason, not silently dropped: owner item 76 sends the
     // work to the admin's queue and a suppressed row IS that queue entry.
@@ -1219,7 +1243,8 @@ describe('the patient is told a result is ready, and nothing else', () => {
       source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
-    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
+    const now = await noticeDueAt(resultId)
+    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()), now })
 
     // Queued, not sent. Then the laboratory re-issues.
     assert.equal(
@@ -1236,6 +1261,7 @@ describe('the patient is told a result is ready, and nothing else', () => {
     const sent = []
     await messaging.dispatchQueuedMessages({
       channel: channel((request) => { sent.push(request); return ACCEPTS() }),
+      now,
     })
     assert.equal(sent.length, 0, 'nothing left the building')
     assert.equal(
@@ -1254,7 +1280,8 @@ describe('the patient is told a result is ready, and nothing else', () => {
       source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
-    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
+    const now = await noticeDueAt(resultId)
+    await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()), now })
 
     /*
      * There is no command that un-authorizes a notice — an authorization is
@@ -1287,6 +1314,7 @@ describe('the patient is told a result is ready, and nothing else', () => {
     const sent = []
     await messaging.dispatchQueuedMessages({
       channel: channel((request) => { sent.push(request); return ACCEPTS() }),
+      now,
     })
     assert.equal(sent.length, 0)
     const outbox = (await rows(
@@ -1333,7 +1361,7 @@ describe('the patient is told a result is ready, and nothing else', () => {
 
     // The default channel is the real one, and it is disabled without the four
     // WHATSAPP_* variables — which is this clinic's actual state.
-    const summary = await messaging.prepareDueMessages()
+    const summary = await messaging.prepareDueMessages({ now: await noticeDueAt(resultId) })
     assert.equal(summary.queued, 0)
     assert.equal(summary.reasons.channel_not_configured, 1)
   })
@@ -1344,7 +1372,9 @@ describe('the patient is told a result is ready, and nothing else', () => {
     const authorized = await as(doctor, 'authorize_result_notification', { resultId })
     assert.equal(authorized.data.consent, 'none')
 
-    const summary = await messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) })
+    const summary = await messaging.prepareDueMessages({
+      channel: channel(() => ACCEPTS()), now: await noticeDueAt(resultId),
+    })
     assert.equal(summary.queued, 0)
     assert.equal(summary.reasons.no_consent, 1)
   })
@@ -1873,16 +1903,18 @@ describe('two of everything, at once', () => {
       patientId, purpose: 'result_ready', wording: 'Results, please.', source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
+    const now = await noticeDueAt(resultId)
 
     const sent = []
     await Promise.allSettled([
-      messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()) }),
+      messaging.prepareDueMessages({ channel: channel(() => ACCEPTS()), now }),
       as(nurse, 'withdraw_communication_consent', {
         patientId, scope: 'all_purposes', wording: 'STOP', source: 'patient_chat',
       }),
     ])
     await messaging.dispatchQueuedMessages({
       channel: channel((request) => { sent.push(request); return ACCEPTS() }),
+      now,
     })
     assert.equal(sent.length, 0)
   })
@@ -1894,11 +1926,12 @@ describe('two of everything, at once', () => {
       patientId, purpose: 'result_ready', wording: 'Results, please.', source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
+    const now = await noticeDueAt(resultId)
 
     const sent = []
     await Promise.allSettled([
-      messaging.runDispatchCycle({ channel: channel((r) => { sent.push(r); return ACCEPTS() }) }),
-      messaging.runDispatchCycle({ channel: channel((r) => { sent.push(r); return ACCEPTS() }) }),
+      messaging.runDispatchCycle({ channel: channel((r) => { sent.push(r); return ACCEPTS() }), now }),
+      messaging.runDispatchCycle({ channel: channel((r) => { sent.push(r); return ACCEPTS() }), now }),
     ])
     assert.equal(sent.length, 1)
     assert.equal(Number(await scalar('select count(*) from jmc.message_attempts')), 1)
@@ -1911,13 +1944,14 @@ describe('two of everything, at once', () => {
       patientId, purpose: 'result_ready', wording: 'Results, please.', source: 'staff_recorded',
     })
     await as(doctor, 'authorize_result_notification', { resultId })
-    await messaging.runDispatchCycle({ channel: channel(() => ACCEPTS()) })
+    const now = await noticeDueAt(resultId)
+    await messaging.runDispatchCycle({ channel: channel(() => ACCEPTS()), now })
 
     const reference = String(await scalar(
       `select o.provider_reference from jmc.message_outbox o
          join jmc.communication_schedules s on s.id=o.schedule_id where s.source_id=$1`, [resultId]))
 
-    const at = new Date().toISOString()
+    const at = now
     await messaging.applyProviderStatusEvent({ providerReference: reference, status: 'delivered', occurredAt: at })
     await messaging.applyProviderStatusEvent({ providerReference: reference, status: 'delivered', occurredAt: at })
     // And one that arrived late, claiming less.
