@@ -124,6 +124,23 @@ export const CAPABILITIES = {
     purpose: 'What one consultation attempt committed, which visits are open, and which resolutions are available.',
     mirrors: 'resolve_consultation_attempt is doctor-only (owner items 72-74), and this read carries the signed consultation it names.',
   },
+  /*
+   * The appointment station's way back from a lost reply.
+   *
+   * The role list is the widest of the appointment commands' own gates —
+   * book, reschedule, cancel, no-show and check-in are admin/doctor/nurse —
+   * and the read is then narrower than any role list can say: it answers only
+   * the staff member whose receipt it is, because the reference's fingerprint
+   * names its actor and nobody else can ever retry under it. Pharmacy is
+   * absent because it holds none of those commands. It deliberately does NOT
+   * reuse `view.outcome`, for the reason `view.communication_outcome` gives: a
+   * different mechanism with a different audience.
+   */
+  'view.appointment_outcome': {
+    roles: ['admin', 'doctor', 'nurse'],
+    purpose: 'What one appointment reference did, for the member of staff who sent it.',
+    mirrors: "the appointment commands' gates — book_appointment and its siblings require admin, doctor or nurse — narrowed further to the receipt's own actor.",
+  },
 
   /*
    * Slice 3A. Four reads about patient messaging, and every one of their role

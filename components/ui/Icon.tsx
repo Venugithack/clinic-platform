@@ -60,6 +60,7 @@ export type IconName =
   // People and admin
   | 'user'
   | 'users'
+  | 'calendar'
   | 'overview'
   | 'settings'
   | 'shield'
@@ -273,6 +274,14 @@ const GLYPHS: Record<IconName, ReactNode> = {
       <path d="M3.2 20a6 6 0 0 1 12 0" />
       <path d="M16 5.1a3.3 3.3 0 0 1 0 5.8" />
       <path d="M17.4 14.4A6 6 0 0 1 20.8 20" />
+    </>
+  ),
+  calendar: (
+    <>
+      <path d="M4.5 6h15v14h-15Z" />
+      <path d="M4.5 10h15" />
+      <path d="M8.5 3.5v4.2M15.5 3.5v4.2" />
+      <path d="M8.3 13.8h.01M12 13.8h.01M15.7 13.8h.01M8.3 17h.01M12 17h.01" />
     </>
   ),
   overview: (

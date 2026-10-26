@@ -12,6 +12,7 @@ import {
   stationsOf,
 } from './vitals-view'
 import { ClinicLetterhead, Stack } from './shared-panels'
+import { ExpectedTodayPointer } from './appointment-book'
 import {
   ActionButton,
   Badge,
@@ -320,6 +321,11 @@ export function QueuePanel({ data, run }: { data: ClinicSnapshot; run: ActionRun
         title="Patient queue"
         sub={`${queue.filter((item) => item.status === 'waiting').length} waiting · ${queue.length} today`}
       />
+
+      {/* Booked patients are not in this list until they are checked in —
+          owner item 70 — so the queue says how many are expected and where
+          they are checked in, rather than leaving them invisible here. */}
+      <ExpectedTodayPointer data={data} />
 
       <Card variant="record" data-print="hide">
         <Disclosure label="Patient arrived" hint="Find them, record the reason, issue the token, then take vitals">

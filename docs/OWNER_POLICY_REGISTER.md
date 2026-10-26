@@ -409,6 +409,15 @@ backend-confirmed or durably audited outcomes permitted above. This records
 implementation status only; it changes no policy and does not mark the wider
 appointment UI or frontend programme complete.
 
+Implementation status, 24 September 2026: items 65–71 now have a staff
+screen — the bounded Appointments station for admin, doctor and nurse
+(`reference/SLICE2_FRONTEND_CONTRACT.md` §11). It books at item 65's default
+of fifteen minutes because no read lists appointment types; asks a doctor or
+an administrator for item 67's reason only when the server asks for it; never
+offers a nurse an override; offers item 69's no-show only after thirty
+minutes and only as a person's act; and checks a patient in only by the one
+command item 70 describes. It changes no policy.
+
 **Implemented 15 September 2026 and corrected 16 September 2026 after an
 acceptance review reproduced six faults**, including a nurse booking at three in
 the morning where item 71 says "within published availability", and a signing

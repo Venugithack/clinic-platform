@@ -270,10 +270,12 @@ One command, which does all of it and cleans up after itself: rebuilds the
 staging database with fixtures, seeds a doctor-ONLY account (the fixtures'
 doctor also holds admin, and the union of both roles hides exactly the gaps
 Slice 1 was fixing), builds the static export against the local functions,
-starts the functions and the page, and drives ninety-eight journeys through
-Chrome. Ninety-three of those are written out; the other five come from the
-three loops in `clinic-gate.test.mjs` that run one journey at two shapes or
-once per role, which is why counting `test(` in the source comes up short.
+starts the functions and the page, and drives a hundred and seventeen journeys
+through Chrome. A hundred and eight of those are written out; the other nine
+come from loops — three in `clinic-gate.test.mjs` that run one journey at two
+shapes or once per role, and one in `appointment-book.test.mjs` that runs one
+journey at each of the plan's five shapes — which is why counting `test(` in
+the source comes up short.
 
 It runs the built export rather than `next dev`, because the export is what
 Cloudflare serves and `NEXT_PUBLIC_FUNCTIONS_URL` is baked into it at build
@@ -377,6 +379,37 @@ only after the backend offers it. **New attendance** releases only after the
 audited decision, and a double press records one decision before the genuine
 return is signed. Finally, a transaction-held signing proves that both recovery
 and signing stay disabled while the earlier outcome is still in flight.
+
+The appointment station adds `appointment-book.test.mjs`, and like the
+consultation-attempt file it brings its own patients, publishes its own hours
+through the real command, and removes all of it afterwards — the bookings,
+their append-only history and receipts, the queue rows and the reminder
+schedules the commands wrote. Most of its journeys end by counting rows:
+a nurse's booking is one booking and **no** queue row until check-in, which
+then makes exactly one; a late booking checked in joins the queue behind the
+people who arrived before it; a no-show is still `booked` fifty minutes on
+until a person records it, and is refused earlier. A nurse outside published
+hours is refused and offered no override — also at the server, with a reason
+sent anyway — while a doctor outside her own hours and an administrator
+overbooking a taken slot are each asked why, and the recorded booking went
+under the **same reference** as the refused first attempt. Pharmacy is shown
+no station and refused by every read and command.
+
+Four of its journeys are about the reply that never comes back, and they read
+the reference itself: every command's `idempotencyKey` is recorded in the page
+as it leaves, so "the retry went under the same reference" is a comparison
+rather than a belief. A booking whose reply is lost, then sent again: one
+booking, one receipt. The same across a reload, where the tablet asks
+`view=appointment_outcome` instead and shows what was recorded. A check-in
+whose reply is lost and which a doctor then undoes by moving the appointment:
+the retry shows the original token **and** that the patient is not in the
+queue under it, and there is still exactly one arrival. And a check-in that
+never left the tablet, checked while the clinic is still unreachable, then
+found `not_committed` and sent once. They also read `sessionStorage` to prove
+the note holds no name, reason or time. The rest: a slow read saying so, an
+unreachable read saying so and recovering, the stale-read notice, the keyboard
+reaching a booking's history with Escape returning focus, and all five of the
+plan's shapes with no sideways scroll and no control under 44px.
 
 The blind-count journey is the one worth singling out. Its first version
 passed without proving anything — the start screen and the counting screen

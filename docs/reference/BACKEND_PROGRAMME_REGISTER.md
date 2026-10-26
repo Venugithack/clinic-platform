@@ -2046,6 +2046,25 @@ and that a second WAITING patient cannot be given a token somebody is holding.
   construction, but `workspace-performance.test.mjs` seeds no bookings, so
   nothing proves it stays small.
 
+### The appointment station, 24 September 2026
+
+The first screen on the appointment book (`SLICE2_FRONTEND_CONTRACT.md` §11)
+found two things in this slice's read path and changed nothing else:
+
+- **A lost reply could not be recovered across a reload without keeping the
+  request in the browser.** The commands replay only an exact retry, and
+  `view=outcome` never read `appointment_command_receipts` — it told a doctor
+  that nothing carried a reference that had made a booking. Closed by
+  `view=appointment_outcome` (contract §4.0a): actor-scoped, answering from the
+  receipt, the receipt lock and the same `standing` table the replay now reads,
+  and by `view=outcome` reporting such a reference as `committed: true` with
+  `operation: "unknown"` and no details, pointing at the new read, instead of
+  saying nothing carries it.
+- **The calendar and history reads sent `String(Date)` where §5 promised UTC
+  ISO-8601 with milliseconds.** Corrected at the mapper, and asserted.
+
+`tests/characterization/appointment-outcome.test.mjs` holds both.
+
 ## 12.1 Slice 2 was returned unaccepted, and what the correction changed
 
 The handoff above reported a green gate. It was green and it was not enough:

@@ -1,4 +1,5 @@
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
+import { AppointmentBookPanel } from './appointment-book'
 import { QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
 import { DueNowPanel } from './due-now'
 import { ConsultationPanel } from './consultation-workspace'
@@ -57,6 +58,14 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
       )
     case 'queue':
       return <QueuePanel data={data} run={run} />
+    /*
+     * The appointment book. Its commands and reads refuse pharmacy at the
+     * server; the panel also declines to draw for a session holding none of
+     * the three roles, so a station reached by some other route is a sentence
+     * rather than a screen of controls that can only fail.
+     */
+    case 'appointments':
+      return <AppointmentBookPanel data={data} run={run} />
     /*
      * The nurse's landing screen: the queue, the missing readings and the bed
      * board joined back together under the patient each of them is about.

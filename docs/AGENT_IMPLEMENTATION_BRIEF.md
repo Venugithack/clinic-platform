@@ -184,6 +184,12 @@ Current status, 17 September 2026: the bounded consultation-attempt safety
 cutover is implemented in the existing doctor workspace. It is not the full
 appointment-calendar UI, and Slice 3 messaging has not started.
 
+Update, 24 September 2026: the bounded appointment-book station is
+implemented as well — one clinic-local day, booking through check-in, for
+admin, doctor and nurse (`reference/SLICE2_FRONTEND_CONTRACT.md` §11). It
+added one read, `view=appointment_outcome`, and no schema. Appointment types,
+availability editing and a multi-day calendar are still unbuilt.
+
 - Use English only for the first release: interface copy, autocomplete,
   templates, clinical phrases, and printed prescriptions. Do not build Tamil,
   bilingual selection, or print-time machine translation in this slice.

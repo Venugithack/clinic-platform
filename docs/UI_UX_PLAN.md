@@ -19,6 +19,22 @@ the write. `reference/SLICE4_FRONTEND_CONTRACT.md` §10 says what that leaves:
 recovery does not cross devices or tabs, and a reviewed result with no
 unresolved note still cannot be reopened from this station.
 
+Appointment-book update, 24 September 2026: the bounded **Slice 2
+appointment station** is implemented. **Appointments** sits on the admin rail
+and under More for the doctor and the nurse — the daily bars stay three
+stations — and is absent for pharmacy, whose reads and commands the server
+refuses. It carries the interaction contract below unchanged: the pressed
+control names its operation, a read slower than four seconds says so, a
+confirmed booking, move, cancellation, no-show or check-in gets the timed
+result overlay (check-in for three seconds, because the token has to be read)
+over durable evidence on the day's row, and a lost reply is **Outcome not
+confirmed** — never green, never dismissed by time, with the act's own
+buttons held until the clinic has been asked. A booking reads **Booked · not
+in the queue** until it is checked in, and Today and Due now say how many
+booked patients are expected. What it does not build — appointment types,
+editing published hours, a multi-day calendar — is listed in
+`reference/SLICE2_FRONTEND_CONTRACT.md` §11.4.
+
 Safety integration update, 17 September 2026: the bounded Slice 2 consultation
 cutover is implemented in the existing doctor workspace. A held signing attempt
 survives reload and visit changes; the doctor can inspect and record Same

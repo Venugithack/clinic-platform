@@ -18,6 +18,7 @@
  *   ?view=calendar&from=…&to=…        who is expected, and the published hours
  *   ?view=appointments&patientId=…     one patient’s appointments and their history
  *   ?view=reconciliation&key=…         what one consultation attempt committed
+ *   ?view=appointment_outcome&key=…    what one appointment reference did, for its sender
  *   ?view=communication_due            reminders and recalls due now or shortly
  *   ?view=communication_failures       the delivery-failure queue, owner item 79
  *   ?view=communication_consent&patientId=…  what this patient agreed to receive
@@ -57,6 +58,7 @@ import {
   readInvestigationOrder, readPatientInvestigations, readResultEscalations,
   readResultReviewQueue,
 } from '../_shared/diagnostics.ts'
+import { readAppointmentCommandOutcome } from '../_shared/appointments.ts'
 
 /** Which capability each view spends. The routing table IS the gate. */
 const VIEWS: Record<string, CapabilityId> = {
@@ -72,6 +74,7 @@ const VIEWS: Record<string, CapabilityId> = {
   calendar: 'view.appointment_calendar',
   appointments: 'view.patient_appointments',
   reconciliation: 'view.consultation_reconciliation',
+  appointment_outcome: 'view.appointment_outcome',
   // Slice 3A.
   communication_due: 'view.communication_due',
   communication_failures: 'view.communication_failures',
@@ -214,6 +217,12 @@ Deno.serve(async (request) => {
           session, key, patientId, param('openedVisitId'))
         if (!reconciliation) return json({ ok: false, message: 'That patient was not found.' }, 404)
         return json({ ok: true, reconciliation })
+      }
+
+      case 'appointment_outcome': {
+        const key = param('key')
+        if (!key) return json({ ok: false, message: 'No reference asked about.' }, 400)
+        return json({ ok: true, outcome: await readAppointmentCommandOutcome(session, key) })
       }
 
       case 'communication_due': {

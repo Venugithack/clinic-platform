@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { AppointmentView, BedView, ClinicSnapshot, VitalView } from '@/lib/types'
 import { useConnection, useSelectedPatient, type ActionRunner } from './clinic-context'
 import { Stack } from './shared-panels'
+import { ExpectedTodayPointer } from './appointment-book'
 import {
   VitalStrip,
   VitalsEntry,
@@ -459,6 +460,11 @@ export function DueNowPanel({ data, run }: { data: ClinicSnapshot; run?: ActionR
                 }`
           }
         />
+
+        {/* Who is booked and not yet here. Real bookings from the calendar's
+            own work list, not a guess — and nothing on it is a task until the
+            patient arrives and is checked in. */}
+        <ExpectedTodayPointer data={data} />
 
         {/*
          * Every timing on this screen is arithmetic on the last answer the

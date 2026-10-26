@@ -4,12 +4,17 @@
 > corrections. Their evidence is retained in
 > [`BACKEND_PROGRAMME_REGISTER.md`](BACKEND_PROGRAMME_REGISTER.md) §12.1–§12.7.
 > The bounded consultation-attempt frontend safety cutover was implemented
-> locally on 17 September 2026. It has not been deployed. The appointment-book
-> and full calendar screens described here remain unbuilt.
+> locally on 17 September 2026. **The bounded appointment-book cutover was
+> implemented locally on 24 September 2026** — a staff station for one
+> clinic-local day, booking through check-in; [§11](#11-the-appointment-station-what-is-built-and-what-is-not)
+> says exactly what it covers. Neither has been deployed. Appointment-type and
+> availability editing, a multi-day calendar and anything patient-facing
+> remain unbuilt.
 
 This remains the settled backend contract. Its reconciliation read and command
-are now used by the existing doctor consultation screen; the appointment and
-calendar material remains the contract for later frontend work.
+are used by the existing doctor consultation screen, and its appointment
+commands and reads by the appointment station. The cutover added one read,
+§4.0a, and corrected one field's spelling, §5; nothing else here changed.
 
 Companion to [`SLICE1_FRONTEND_CONTRACT.md`](SLICE1_FRONTEND_CONTRACT.md),
 which this extends rather than replaces. Where the two disagree about
@@ -30,6 +35,7 @@ Owner policy items 65–74, `docs/OWNER_POLICY_REGISTER.md` §L.
 8. [The role matrix, in one place](#8-the-role-matrix-in-one-place)
 9. [Every refusal code this slice adds](#9-every-refusal-code-this-slice-adds)
 10. [What this contract does not answer](#10-what-this-contract-does-not-answer)
+11. [The appointment station: what is built, and what is not](#11-the-appointment-station-what-is-built-and-what-is-not)
 
 ---
 
@@ -527,6 +533,63 @@ The check-in above replays JMC-0001 *and* says
 time it asked for *and* says `superseded: true` with the time the booking is
 actually at.
 
+### 4.0a Asking what a reference did — `view=appointment_outcome`
+
+Added 24 September 2026 by the appointment-station cutover, and the only
+contract it added.
+
+```text
+GET workspace?view=appointment_outcome&key=<idempotencyKey>
+```
+
+**The gap it closes.** A lost reply is recovered by resending the *exact*
+request under the same reference (§4.0). A tablet reloaded after the reply
+was lost no longer has the exact request, and the station must not keep the
+patient, the time or the clinical reason in browser storage merely to rebuild
+it. Before this read there was no other way back: `view=outcome` (Slice 1 §8)
+has never read `appointment_command_receipts`, so it told a nurse "your role
+cannot resolve a reference of this kind" and told a doctor or an administrator
+"nothing in the clinic carries this reference" about a booking that had
+committed. The station now keeps the reference and nothing else, and asks this.
+
+**Roles** — admin, doctor, nurse (`view.appointment_outcome`); pharmacy is
+refused with 403. **And then actor-scoped:** a reference's fingerprint names
+its actor, so nobody but its sender can ever retry under it, and the read
+answers only that person.
+
+```json
+{ "ok": true, "outcome": {
+  "key": "…", "state": "committed", "command": "check_in_appointment",
+  "at": "2026-09-24T11:20:04.118Z",
+  "message": "Checked in. Queue token JMC-0012.",
+  "data": { "arrivalId": "…", "token": "JMC-0012", "bookingId": "…",
+            "currentArrivalStatus": "cancelled", "currentBookingStatus": "booked",
+            "superseded": true },
+  "bookingId": "…", "arrivalId": "…", "patientId": "…",
+  "detail": "Checked in. Queue token JMC-0012."
+} }
+```
+
+| `state` | Means | Licenses |
+|---|---|---|
+| `committed` | A receipt carries the reference and it is yours. `data` is the original result with `superseded` and the `current…` fields merged over it — the same merge a replay makes, from the same per-command `standing` table, minus `duplicate`. | Nothing further: the act is done. Show both facts; release the reference. |
+| `in_flight` | A request under the reference holds its lock now (observed in `pg_locks`, never taken). | Only looking again. |
+| `not_committed` | No receipt, and nothing held the lock **at the instant it was asked**. A request that has not yet reached the lock is invisible to everybody. | Sending again **under the same reference** — an identical request is carried out once, a different one is refused `APPOINTMENT_REFERENCE_REUSED`. Never a fresh reference for the same act. |
+| `not_yours` | Somebody else's receipt carries it. No `data`, `message`, `bookingId` or `patientId` is returned. | Nothing; nothing sent under it by you can succeed. |
+
+The receipt is read either side of the lock check, so a request that commits
+between the first read and the check is still reported as `committed`.
+`tests/characterization/appointment-outcome.test.mjs` pins every row of the
+table, the actor scope, the in-flight lock (and that another database holding
+the same lock says nothing), and that a refusal — including the override
+question — leaves the reference `not_committed`.
+
+**`view=outcome` was corrected, not extended into appointment recovery.** It
+detects that an appointment receipt exists and returns `committed: true`, but
+`operation: "unknown"` and no appointment details. Its sentence sends the
+caller to `view=appointment_outcome` for the actor-scoped answer. It must never
+return `committed: false` about a receipt it has found.
+
 **Material identity is what the caller sent.** Everything that reaches a
 durable record is in the fingerprint — including `overrideReason`, which Slice 2
 left out, so two requests differing only in why an override was allowed were
@@ -749,6 +812,16 @@ as YYYY-MM-DD."*
 is present once the patient has checked in and is how a calendar row and a
 queue row are shown to be the same person.
 
+**Instants are UTC ISO-8601 with milliseconds** — `scheduledAt`, `checkedInAt`,
+`lastEvent.at`, and each history event's `at`. Until 24 September 2026 the
+read sent the driver's `Date` through `String()`, which produced
+`Fri Sep 25 2026 10:30:00 GMT+0530 (India Standard Time)` in whatever zone the
+function ran in, with the milliseconds gone; the example above was the
+contract and the implementation did not meet it. The appointment station was
+the first reader and found it. The shapes now live in
+`supabase/functions/_shared/appointment-types.ts`, a leaf with no imports that
+`lib/types.ts` re-exports, and `status` is typed as its four values.
+
 **The availability list is not expanded per day.** A weekly window is three
 lines of data, and turning it into ninety rows of the same three lines is
 sending a calendar the long way round. Expand it on the client against the days
@@ -821,6 +894,7 @@ than in its heading.
 | `set_queue_priority` | | ✓ | | |
 | `resolve_consultation_attempt` | | ✓ | | |
 | `view.appointment_calendar`, `view.patient_appointments` | ✓ | ✓ | ✓ | |
+| `view.appointment_outcome` — and only for the reference's own sender (§4.0a) | ✓ | ✓ | ✓ | |
 | `view.consultation_reconciliation` | | ✓ | | |
 | `list.appointments_today`, `list.no_show_review` | ✓ | ✓ | ✓ | |
 
@@ -905,3 +979,89 @@ Codes arrive as `{ ok: false, message, code }`. Never branch on message text.
   65 decided the fifteen-minute default and the per-type override and said
   nothing about a maximum. Eight hours is an implementation bound against a
   mistyped number. Do not present it to anybody as a clinic rule.
+
+## 11. The appointment station: what is built, and what is not
+
+Implemented locally on 24 September 2026 in `components/appointment-book.tsx`,
+with its reference lifecycle in `lib/appointment-attempt.ts` and its clinic-time
+and replay arithmetic in `lib/appointment-book.ts`. Not deployed.
+
+### 11.1 Where it is, and who reaches it
+
+**Appointments** is a station on the admin rail (Clinic operations) and under
+**More** for the doctor and the nurse, whose daily bars stay three stations.
+The pharmacy rail does not carry it, the panel draws a sentence rather than
+controls for a session holding none of admin, doctor or nurse, and — the part
+that is the boundary — the calendar, history, work-list and outcome reads all
+answer pharmacy 403 and every appointment command refuses it.
+
+Today's queue and Due now each carry a one-line pointer — "N booked patients
+are expected today … not in this queue until they are checked in" — read from
+`list.appointments_today`, with a button to the station. It is silent when
+nobody is expected.
+
+### 11.2 What staff can do there
+
+| | How |
+|---|---|
+| See one clinic-local day | `view=calendar&from=<day>`; previous, next, today, or a date. The published and blocked windows that apply to that day are expanded on the client exactly as §5 says and shown per doctor, with notes. A day with none says so — "a nurse cannot book it" — and no hours are ever assumed. |
+| See who is expected, and who did not come | `list.appointments_today` and `list.no_show_review`, each row with **Check in**, the review rows also with **Did not attend**. |
+| Book a known patient | The station's finder over the register the snapshot already carries, which sets the clinic's shared selected patient. Date and time is a `datetime-local` input whose string is sent untouched as `scheduledAt`. A doctor is named only when the roster has more than one — read from the public lock-screen roster, because the snapshot gives a staff list to administrators alone. |
+| Move, cancel, record a no-show | Each in a focused modal with its required reason; a no-show only once thirty minutes have passed, with "Nothing records a no-show by itself" on the dialog. |
+| Check in | One press; the result names the token, and the day's row then shows the token and where that visit is now. |
+| Read a patient's appointments | `view=appointments&patientId=…` in a drawer: every booking, newest first, and every transition oldest first with its reason, detail, actor and time. |
+
+Every status is a word and a shape as well as a colour: **Booked · not in the
+queue** on every booking that has not checked in, **Checked in** with the
+token and **Waiting in the queue / With the doctor / Seen / Taken out of the
+queue**, **Cancelled**, **Did not attend**, and **Overbooked** / **Outside
+published hours** with the recorded reason.
+
+### 11.3 How it handles a reference
+
+- **One reference per act on one subject** — booking this patient, checking in
+  this booking, moving this booking. It is released only by a confirmed
+  answer, including a replay. A refusal keeps it (it wrote no receipt), which
+  is what makes the override safe: `OVERRIDE_REASON_REQUIRED` opens a reason
+  and the same request goes again under the same reference.
+- **The note that survives a reload holds opaque identifiers only** — staff id,
+  act, patient or booking id, reference, phase, time — and is refused if it
+  ever carries anything else. The exact request lives in memory only. An
+  unanswered reference does not expire merely because the tablet was left
+  open overnight; `sessionStorage` still ends with the tab.
+- **A lost reply is `unknown`**, never a failure and never green. The card
+  offers **Check what happened** (§4.0a) and, while the tab still has the
+  request, **Send the same request again**. The act's own buttons stay
+  disabled until the outcome has been read.
+- **After a reload** every unresolved note is asked about once, and the answer
+  is shown: recorded (with whether it still stands), still in flight, nothing
+  recorded, or not yours.
+- **A replay shows both facts.** A replayed check-in that has since been undone
+  shows its token *and* "The patient is not in the queue under JMC-0012" — in
+  the timed result and in a notice that stays until dismissed.
+- **Reads have their own states**: reading, still reading after four seconds,
+  unreachable with **Try again**, and — when a refresh fails over an earlier
+  answer — "may be out of date" with the time it was read. Another tablet's
+  change reaches the station through the snapshot revision, which every
+  appointment command bumps.
+
+### 11.4 What this cutover deliberately did not build
+
+- **Appointment types.** `create_appointment_type` and
+  `update_appointment_type` exist, and no read lists the types there are. A
+  selector would have to invent one, so every booking made from the station
+  is owner item 65's default of fifteen minutes, and the form says so. A
+  booking made elsewhere with a type still shows that type's name.
+- **Publishing or retiring availability.** Both commands exist; there is no
+  screen for them. The station shows what is published and never edits it.
+- **A multi-day or multi-doctor calendar view, and drag-to-move.** One day at
+  a time, with a doctor named on each row when there is more than one.
+- **Urgent priority from the queue** (`set_queue_priority`). Its contract is
+  unchanged; no screen presses it yet.
+- **Reminders, recalls and any patient-facing booking.** Slice 3 and Slice 5.
+- **Recovery across devices.** The note is per tab, like the consultation
+  attempt's and the result station's. A person who picks up a different
+  tablet after a lost reply sees the booking in the calendar, which is the
+  record, but not the "outcome not confirmed" card.
+- **A cancelled or no-show booking cannot be reopened** — by contract
+  (§4, `APPOINTMENT_CLOSED`). The station offers nothing for it; book again.

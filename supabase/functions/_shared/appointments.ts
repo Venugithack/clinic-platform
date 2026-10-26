@@ -51,6 +51,7 @@ import { randomUUID } from 'node:crypto'
 import { audit, db, isoNow, transaction } from './db.ts'
 import { requestFingerprint } from './idempotency.ts'
 import type { SessionView } from './types.ts'
+import type { AppointmentCommandName, AppointmentCommandOutcome } from './appointment-types.ts'
 import { hasRole } from './auth.ts'
 import {
   booleanValue, CommandRefusal, optional, optionalDate, optionalPositiveInteger,
@@ -475,7 +476,7 @@ async function clearSlot(
  */
 
 /** The namespace one command key serializes in. One point, as the review asks. */
-const RECEIPT_LOCK_NAMESPACE = 517_205
+export const RECEIPT_LOCK_NAMESPACE = 517_205
 
 /*
  * ── WHAT MAY HAPPEN BEFORE THE RECEIPT IS READ, AND WHAT MAY NOT ─────────
@@ -523,7 +524,7 @@ class AlreadyDone extends Error {
 
 async function receiptFor(key: string): Promise<Row | undefined> {
   return await db.prepare(
-    `select id, command, request_fingerprint, result, booking_id, arrival_id, created_at
+    `select id, command, request_fingerprint, result, booking_id, arrival_id, actor_id, created_at
        from appointment_command_receipts where idempotency_key = ?`,
   ).get(key) as Row | undefined
 }
@@ -802,7 +803,7 @@ export async function runAppointmentCommand(
           // replay can say whether the sentence is still true.
           data: { appointmentTypeId: id, applied: { name, durationMinutes: duration } },
         }
-      }, appointmentTypeStands)
+      }, standingFor('create_appointment_type'))
     }
 
     case 'update_appointment_type': {
@@ -852,7 +853,7 @@ export async function runAppointmentCommand(
             },
           },
         }
-      }, appointmentTypeStands)
+      }, standingFor('update_appointment_type'))
     }
 
     /* ───────────────────────────────────────────── owner item 71 */
@@ -924,7 +925,7 @@ export async function runAppointmentCommand(
             data: { availabilityId: id, doctorId },
           }
         },
-        availabilityStanding(true),
+        standingFor('publish_availability'),
       )
     }
 
@@ -952,7 +953,7 @@ export async function runAppointmentCommand(
           message: 'Window retired. Appointments already booked into it are unchanged.',
           data: { availabilityId: id },
         }
-      }, availabilityStanding(false))
+      }, standingFor('retire_availability'))
     }
 
     /* ───────────────────────────────────────── owner items 66–70 */
@@ -1061,7 +1062,7 @@ export async function runAppointmentCommand(
         // reference was spent: a retry arriving after the patient telephoned
         // and the booking was cancelled must not report "already booked" with
         // an id a screen renders as live.
-        bookingStillStands,
+        standingFor('book_appointment'),
       )
     }
 
@@ -1220,7 +1221,7 @@ export async function runAppointmentCommand(
             bookingId,
           }
         },
-        moveStillStands,
+        standingFor('reschedule_appointment'),
       )
     }
 
@@ -1279,7 +1280,7 @@ export async function runAppointmentCommand(
           data: { bookingId },
           bookingId,
         }
-      }, cancellationStillStands)
+      }, standingFor('cancel_appointment'))
     }
 
     case 'mark_no_show': {
@@ -1344,7 +1345,7 @@ export async function runAppointmentCommand(
           data: { bookingId },
           bookingId,
         }
-      }, noShowStillStands)
+      }, standingFor('mark_no_show'))
     }
 
     case 'check_in_appointment': {
@@ -1432,7 +1433,7 @@ export async function runAppointmentCommand(
           bookingId,
           arrivalId,
         }
-      }, checkInStanding)
+      }, standingFor('check_in_appointment'))
     }
 
     /* ───────────────────────────────────────────── owner item 70 */
@@ -1487,7 +1488,7 @@ export async function runAppointmentCommand(
           data: { appointmentId, urgent, reason: urgent ? reason : '' },
           arrivalId: appointmentId,
         }
-      }, priorityStanding)
+      }, standingFor('set_queue_priority'))
     }
 
     default:
@@ -1788,5 +1789,202 @@ async function checkInStanding(receipt: Row): Promise<Record<string, unknown>> {
     currentArrivalStatus: arrival ? text(arrival.status) : undefined,
     currentBookingStatus: booking ? text(booking.status) : undefined,
     superseded: !(stillInTheQueue && stillCheckedIn),
+  }
+}
+
+/* ──────────────────────────────────────────── what one reference did ── */
+
+/**
+ * Which `standing` each command replays with, written down once.
+ *
+ * The replay inside `once()` and the outcome read below both ask "does what
+ * this receipt recorded still hold?", and two copies of that answer are two
+ * copies that can disagree — a screen told `superseded: false` by one and
+ * `true` by the other about the same reference. So the switch above reads its
+ * `standing` out of this table and so does the read, and there is nothing to
+ * keep in step.
+ */
+const STANDING: Record<AppointmentCommandName, (receipt: Row) => Promise<Standing>> = {
+  create_appointment_type: appointmentTypeStands,
+  update_appointment_type: appointmentTypeStands,
+  publish_availability: availabilityStanding(true),
+  retire_availability: availabilityStanding(false),
+  book_appointment: bookingStillStands,
+  reschedule_appointment: moveStillStands,
+  cancel_appointment: cancellationStillStands,
+  mark_no_show: noShowStillStands,
+  check_in_appointment: checkInStanding,
+  set_queue_priority: priorityStanding,
+}
+
+function standingFor(command: AppointmentCommandName): (receipt: Row) => Promise<Standing> {
+  return (receipt) => STANDING[command](receipt)
+}
+
+const isAppointmentCommand = (value: string): value is AppointmentCommandName =>
+  Object.hasOwn(STANDING, value)
+
+/** An instant the driver handed back as a `Date`, as the contract spells one. */
+const isoOf = (value: unknown) => (value instanceof Date ? value.toISOString() : text(value))
+
+/**
+ * Whether a request under this reference is being carried out right now.
+ *
+ * `once()` takes `pg_advisory_xact_lock(RECEIPT_LOCK_NAMESPACE, hashtext(key))`
+ * before it reads the receipt a second time and holds it until it commits, so
+ * a lock on that pair IS a request in flight. It is observed in `pg_locks`
+ * rather than tried, for the reason `readReconciliation` gives: a read that
+ * took the lock, even for an instant, could make a real request wait on it —
+ * and `db` is a pool, so a session lock taken by one query and released by the
+ * next may be released on the wrong connection. Nothing is acquired here.
+ *
+ * `classid` is the first key and `objid` the second; `hashtext` is a signed
+ * int4 and `objid` an unsigned oid, so the mask converts the bit pattern
+ * rather than the number. Filtered to this database because `pg_locks` is
+ * cluster-wide. A waiter counts as well as a holder: both are a request that
+ * has reached the clinic and not finished.
+ */
+async function referenceInFlight(key: string): Promise<boolean> {
+  const row = await db.prepare(
+    `select exists (
+       select 1 from pg_locks
+        where locktype = 'advisory'
+          and database = (select oid from pg_database where datname = current_database())
+          and classid = ${RECEIPT_LOCK_NAMESPACE}
+          and objid = ((hashtext(?)::bigint) & 4294967295)::oid
+          and objsubid = 2
+     ) as held`,
+  ).get(key) as Row | undefined
+  return row?.held === true
+}
+
+/** Whose booking or visit a receipt touched, so a screen can name them itself. */
+async function patientOfReceipt(receipt: Row): Promise<string | undefined> {
+  const bookingId = text(receipt.booking_id)
+  if (bookingId) {
+    const row = await db.prepare(
+      'select patient_id from appointment_bookings where id = ?',
+    ).get(bookingId) as Row | undefined
+    if (row) return text(row.patient_id)
+  }
+  const arrivalId = text(receipt.arrival_id)
+  if (arrivalId) {
+    const row = await db.prepare(
+      'select patient_id from appointments where id = ?',
+    ).get(arrivalId) as Row | undefined
+    if (row) return text(row.patient_id)
+  }
+  return undefined
+}
+
+async function describeReceipt(
+  session: SessionView,
+  key: string,
+  receipt: Row,
+): Promise<AppointmentCommandOutcome> {
+  /*
+   * Actor-scoped, and not merely role-scoped.
+   *
+   * The fingerprint every receipt is matched against names its actor (§4.0:
+   * "the actor is part of what a reference names"), so nobody but the person
+   * who spent a reference can ever retry under it — a colleague's exact
+   * request is `APPOINTMENT_REFERENCE_REUSED`. The only person with a use for
+   * this answer is therefore that one person, and answering anybody else
+   * would turn a recovery read into a way to read another member of staff's
+   * receipts by guessing at keys. They are told the reference is not theirs,
+   * which is all they need to stop using it.
+   */
+  if (text(receipt.actor_id) !== session.staffId) {
+    return {
+      key,
+      state: 'not_yours',
+      detail:
+        'Another member of staff sent a request under this reference, so nothing about it is shown here ' +
+        'and nothing you send under it can be carried out. Start again; this tablet will use a reference ' +
+        'of its own.',
+    }
+  }
+
+  const command = text(receipt.command)
+  const stored = storedResult(receipt.result)
+  const standing = isAppointmentCommand(command) ? await STANDING[command](receipt) : {}
+  const message = text(stored.message)
+
+  return {
+    key,
+    state: 'committed',
+    command: isAppointmentCommand(command) ? command : undefined,
+    at: isoOf(receipt.created_at),
+    message,
+    // The same merge `replayReceipt` makes, minus `duplicate`: this is a read
+    // about a reference, not a second answer to a command.
+    data: { ...(stored.data ?? {}), ...standing },
+    bookingId: text(receipt.booking_id) || undefined,
+    arrivalId: text(receipt.arrival_id) || undefined,
+    patientId: await patientOfReceipt(receipt),
+    detail: message,
+  }
+}
+
+/**
+ * What one appointment reference did, for the person who sent it.
+ *
+ * ── THE GAP THIS CLOSES ───────────────────────────────────────────────────
+ *
+ * Every appointment command answers a lost reply by replaying its receipt —
+ * but only to a retry of the EXACT request, and a tablet reloaded after a lost
+ * reply no longer has the request. Rebuilding it would mean keeping the
+ * patient, the time and the clinical reason in browser storage, which the
+ * appointment station must not do. `view=outcome` was no help: it reads
+ * encounters, dispenses, sales, payments and goods receipts and has never
+ * read `appointment_command_receipts`, so a nurse was told their role "cannot
+ * resolve a reference of this kind" and a doctor was told "nothing in the
+ * clinic carries this reference" about a booking that had committed.
+ *
+ * So the tablet keeps the reference and nothing else, and asks this.
+ *
+ * ── WHAT EACH ANSWER LICENSES ─────────────────────────────────────────────
+ *
+ * `committed` settles it: the original outcome, and whether it still stands,
+ * exactly as a replay would have carried them. `in_flight` licenses nothing
+ * but looking again. `not_committed` is what the clinic held at the instant
+ * it was asked — a request that has not yet reached the lock is invisible to
+ * everybody — so it licenses sending again UNDER THE SAME REFERENCE, which is
+ * safe whatever is still on its way: an identical request is answered with
+ * the one outcome, and a different one is refused as a reused reference.
+ * It never licenses a fresh reference for the same act.
+ *
+ * The receipt is read twice, either side of the lock check, because a request
+ * can commit between the first read and the check; the second read is what
+ * stops that one being reported as nothing at all.
+ */
+export async function readAppointmentCommandOutcome(
+  session: SessionView,
+  key: string,
+): Promise<AppointmentCommandOutcome> {
+  const trimmed = key.trim()
+
+  const first = await receiptFor(trimmed)
+  if (first) return await describeReceipt(session, trimmed, first)
+
+  if (await referenceInFlight(trimmed)) {
+    return {
+      key: trimmed,
+      state: 'in_flight',
+      detail:
+        'A request under this reference is being carried out right now and has not finished. ' +
+        'Look again in a moment, and send nothing else under it until it has.',
+    }
+  }
+
+  const second = await receiptFor(trimmed)
+  if (second) return await describeReceipt(session, trimmed, second)
+
+  return {
+    key: trimmed,
+    state: 'not_committed',
+    detail:
+      'Nothing has been recorded under this reference. Sending it again under the same reference is ' +
+      'safe: however many copies reach the clinic, it is carried out once.',
   }
 }

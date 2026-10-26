@@ -5,6 +5,7 @@ export type View =
   | 'overview'
   | 'patients'
   | 'queue'
+  | 'appointments'
   | 'due'
   | 'vitals'
   | 'consultation'
@@ -36,6 +37,19 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
     { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },
+    /*
+     * The appointment book, on the admin, doctor and nurse rails and on no
+     * other. Those are exactly the roles `book_appointment` and its siblings
+     * admit and the calendar reads answer (SLICE2_FRONTEND_CONTRACT.md §8).
+     * The pharmacy rail does not carry it because the counter holds none of
+     * those commands and the reads refuse it — a station drawn over controls
+     * that could only fail is not an arrangement of what the role may do.
+     *
+     * It sits under More for the doctor and the nurse: their daily bars stay
+     * three stations, and a booking is occasional work beside the queue
+     * rather than the queue itself.
+     */
+    { id: 'appointments', label: 'Appointments', eyebrow: 'Booked visits', icon: 'calendar' },
     { id: 'staff', label: 'Staff', eyebrow: 'Admin control', icon: 'user' },
     { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print', icon: 'settings' },
     { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation', icon: 'bed' },
@@ -71,6 +85,7 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'queue', label: 'Today', eyebrow: "Today's flow", icon: 'queue' },
     { id: 'consultation', label: 'Consult', eyebrow: 'Doctor workspace', icon: 'stethoscope' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },
+    { id: 'appointments', label: 'Appointments', eyebrow: 'Booked visits', icon: 'calendar' },
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
     // The nurse's station, on the doctor's rail, for the days there is no
     // nurse. Slice 1's gate is that a doctor alone can register a patient,
@@ -117,6 +132,7 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'vitals', label: 'Vitals', eyebrow: 'Nursing station', icon: 'pulse' },
     { id: 'beds', label: 'Observation', eyebrow: 'Four-bed observation', icon: 'bed' },
     { id: 'queue', label: 'Today', eyebrow: "Today's flow", icon: 'queue' },
+    { id: 'appointments', label: 'Appointments', eyebrow: 'Booked visits', icon: 'calendar' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },
     { id: 'overview', label: 'Overview', eyebrow: 'The clinic today', icon: 'overview' },
     { id: 'reports', label: 'Reports', eyebrow: 'Ask the record', icon: 'search' },
@@ -220,6 +236,7 @@ const ADMIN_GROUPS = [
     ids: [
       'patients',
       'queue',
+      'appointments',
       'due',
       'vitals',
       'consultation',

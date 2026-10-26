@@ -3180,6 +3180,30 @@ statement out of the refusal text itself and executes those characters, so
 "verbatim" is a fact rather than a claim. And `docs/README.md` said thirty-six
 unit tests where the gate reports thirty-eight.
 
+### 14.16 The appointment station's one read, 24 September 2026
+
+No migration, no table, no column. The bounded appointment-book cutover
+(`reference/SLICE2_FRONTEND_CONTRACT.md` §11) needed three backend changes,
+all in the read path:
+
+- **`view=appointment_outcome`** — `readAppointmentCommandOutcome` in
+  `_shared/appointments.ts`, capability `view.appointment_outcome` (admin,
+  doctor, nurse) and then scoped to the receipt's own `actor_id`. It reads
+  `appointment_command_receipts` by key, observes `RECEIPT_LOCK_NAMESPACE` in
+  `pg_locks` for a request in flight, and merges the same per-command
+  `standing` the replay merges — the switch in `runAppointmentCommand` now
+  reads its `standing` from the same `STANDING` table, so the replay and the
+  read cannot disagree about `superseded`. Contract §4.0a.
+- **`view=outcome` stops saying something untrue.** For a key an appointment
+  receipt carries, it now returns `committed: true` with `operation: "unknown"`
+  and directs the caller to the actor-scoped appointment outcome read. It does
+  not expose the appointment's details.
+- **The calendar and history reads send instants as UTC ISO-8601 with
+  milliseconds**, as §5 of the contract always said. They were sending
+  `String(Date)`. The view shapes moved to `_shared/appointment-types.ts`, a
+  leaf with no imports re-exported through `types.ts`, and a booking's
+  `status` is typed as `booked | checked_in | cancelled | no_show`.
+
 ---
 
 ## 15. Backend programme Slice 3A: communication truth

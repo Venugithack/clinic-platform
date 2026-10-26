@@ -604,6 +604,13 @@ GET /workspace?view=outcome&key=<idempotency key>
 `operation` is one of `consultation`, `dispense`, `otc_sale`, `payment`,
 `goods_receipt`, `unknown`.
 
+**`committed: true` with `operation: "unknown"`** is the answer for a key that
+an appointment command spent (added 24 September 2026). This lookup does not
+describe appointment commands — no `reference`, no `at`, no detail beyond
+pointing at `view=appointment_outcome`, which answers the reference's own
+sender (`SLICE2_FRONTEND_CONTRACT.md` §4.0a). Do not treat it as one of the
+five operations above, and never read it as licence to retry.
+
 **This is the answer to outcome-unknown.** `lib/api.ts` cannot tell a request
 that never left the tablet from one that committed and lost its reply; both
 arrive as the same `TypeError`. The tablet already holds the key it sent, so it

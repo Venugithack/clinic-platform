@@ -48,6 +48,9 @@ import {
   type CapabilityId, type PatientContextSection,
 } from './capabilities.ts'
 import type { Role, SessionView } from './types.ts'
+import type {
+  AvailabilityWindow, BookingStatus, Calendar, CalendarBooking, PatientAppointment,
+} from './appointment-types.ts'
 
 type Row = Record<string, unknown>
 
@@ -1261,7 +1264,7 @@ export async function readSafeExit(
 
 export type Outcome = {
   key: string
-  /** The command that owns this key, or `unknown` when nothing committed. */
+  /** The command this lookup describes, or `unknown` when it cannot name one. */
   operation: 'consultation' | 'dispense' | 'otc_sale' | 'payment' | 'goods_receipt' | 'unknown'
   committed: boolean
   reference?: string
@@ -1382,6 +1385,27 @@ export async function readOutcome(session: SessionView, key: string): Promise<Ou
         reference: text(receipt.grn_number), at: text(receipt.received_at),
         detail: `Delivery received as ${text(receipt.grn_number)}.`,
       }
+    }
+  }
+
+  /*
+   * An appointment reference is not one of the five kinds this reads, and
+   * the sentence below would be false about it.
+   *
+   * `appointment_command_receipts` is Slice 2's, and this lookup predates it.
+   * A doctor asking about a booking that had committed used to be told
+   * "Nothing in the clinic carries this reference". A receipt proves the
+   * opposite, so this lookup reports that something committed without exposing
+   * its details. `view=appointment_outcome` gives the actor-scoped answer.
+   */
+  const appointmentReference = await db.prepare(
+    'select 1 as found from appointment_command_receipts where idempotency_key = ?',
+  ).get(trimmed)
+  if (appointmentReference) {
+    return {
+      key: trimmed, operation: 'unknown', committed: true,
+      detail: 'A request under this reference committed in the appointment book. ' +
+        'Use the appointment outcome lookup to see what it did and whether it still stands.',
     }
   }
 
@@ -1532,49 +1556,12 @@ export async function readEquivalents(
 
 /* ──────────────────────────────────────────────── the appointment book */
 
-export type CalendarBooking = {
-  bookingId: string
-  patientId: string
-  patientName: string
-  doctorId: string
-  doctorName: string
-  scheduledAt: string
-  durationMinutes: number
-  reason: string
-  status: string
-  appointmentType?: string
-  overbooked: boolean
-  outsideAvailability: boolean
-  overbookedReason?: string
-  checkedInAt?: string
-  /** The queue row this booking became, once it became one. */
-  arrivalId?: string
-  arrivalToken?: string
-  arrivalStatus?: string
-  /** The most recent transition, so a row can say why it looks like that. */
-  lastEvent?: { event: string; reason: string; by: string; at: string }
-}
-
-export type AvailabilityWindow = {
-  availabilityId: string
-  doctorId: string
-  kind: 'open' | 'blocked'
-  weekday?: number
-  onDate?: string
-  startsAt: string
-  endsAt: string
-  effectiveFrom?: string
-  effectiveTo?: string
-  note: string
-}
-
-export type Calendar = {
-  from: string
-  to: string
-  bookings: CalendarBooking[]
-  availability: AvailabilityWindow[]
-  truncated: boolean
-}
+/*
+ * The shapes live in `appointment-types.ts`, a leaf with no imports, because
+ * the appointment station reads them and this file reaches the database. They
+ * are re-exported so that nothing importing them from here has to move.
+ */
+export type { AvailabilityWindow, Calendar, CalendarBooking, PatientAppointment }
 
 /** How wide a calendar request may be. The booking horizon, and not a day more. */
 const CALENDAR_SPAN_DAYS = 90
@@ -1584,6 +1571,21 @@ const CALENDAR_CAP = 500
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/
 
+/**
+ * An instant, as the contract spells one: UTC ISO-8601 with milliseconds.
+ *
+ * The driver hands a `timestamptz` back as a JavaScript `Date`, and `text()`
+ * of a `Date` is `toString()` — "Fri Sep 25 2026 10:30:00 GMT+0530 (India
+ * Standard Time)", in whatever zone the function happens to run in, with the
+ * milliseconds gone. `SLICE2_FRONTEND_CONTRACT.md` §5 promised
+ * `2026-09-16T04:30:00.000Z` and this read was not sending it; the appointment
+ * station was the first thing to read the field and found out. A string that
+ * arrives as a string is left alone.
+ */
+const iso = (value: unknown) => (value instanceof Date ? value.toISOString() : text(value))
+const optionalIso = (value: unknown) =>
+  (value === null || value === undefined ? undefined : iso(value))
+
 function mapBooking(row: Row): CalendarBooking {
   return {
     bookingId: text(row.id),
@@ -1591,15 +1593,15 @@ function mapBooking(row: Row): CalendarBooking {
     patientName: text(row.patient_name),
     doctorId: text(row.doctor_id),
     doctorName: text(row.doctor_name),
-    scheduledAt: text(row.scheduled_at),
+    scheduledAt: iso(row.scheduled_at),
     durationMinutes: num(row.duration_minutes),
     reason: text(row.reason),
-    status: text(row.status),
+    status: text(row.status) as BookingStatus,
     appointmentType: optional(row.appointment_type),
     overbooked: row.overbooked === true,
     outsideAvailability: row.outside_availability === true,
     overbookedReason: text(row.overbooked_reason) || undefined,
-    checkedInAt: optional(row.checked_in_at),
+    checkedInAt: optionalIso(row.checked_in_at),
     arrivalId: optional(row.arrival_id),
     arrivalToken: optional(row.arrival_token),
     arrivalStatus: optional(row.arrival_status),
@@ -1608,7 +1610,7 @@ function mapBooking(row: Row): CalendarBooking {
         event: text(row.last_event),
         reason: text(row.last_event_reason),
         by: text(row.last_event_by),
-        at: text(row.last_event_at),
+        at: iso(row.last_event_at),
       }
       : undefined,
   }
@@ -1737,10 +1739,6 @@ export async function readCalendar(
   }
 }
 
-export type PatientAppointment = CalendarBooking & {
-  history: { event: string; reason: string; detail: string; by: string; at: string }[]
-}
-
 /** How many of a patient's appointments come back, newest first. */
 const PATIENT_APPOINTMENT_CAP = 50
 
@@ -1786,7 +1784,7 @@ export async function readPatientAppointments(
       reason: text(event.reason),
       detail: text(event.detail),
       by: text(event.actor),
-      at: text(event.created_at),
+      at: iso(event.created_at),
     })
     byBooking.set(key, list)
   }

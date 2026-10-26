@@ -971,3 +971,10 @@ export interface CommandResponse {
  * underneath it — is not.
  */
 export * from './diagnostics-types.ts'
+
+/*
+ * Slice 2's appointment-book read models, from their own leaf, for the same
+ * reason: `workspace.ts` and `appointments.ts` reach the database, and the
+ * appointment station must not.
+ */
+export * from './appointment-types.ts'

@@ -29,9 +29,15 @@ protected worker contract — are implemented; and **Slice 4** — the outpatien
 diagnostics loop, against owner items 84–88 — is implemented. The bounded
 Slice 2 frontend safety cutover is also
 implemented locally: the consultation screen holds one attempt across visit
-changes and gives doctors the audited reconciliation workflow. The full
-appointment-calendar UI is not implemented, and **no screen renders any of
-Slice 3.** Slice 4's bounded doctor-review cutover IS implemented: the Review
+changes and gives doctors the audited reconciliation workflow. So is the
+bounded **appointment-book cutover** (24 September 2026): an Appointments
+station for admin, doctor and nurse that shows one clinic-local day with its
+published hours, the Expected today and No-show review lists, booking a known
+patient, moving, cancelling, a manual no-show, check-in into the ordinary
+queue, and each patient's append-only appointment history —
+`reference/SLICE2_FRONTEND_CONTRACT.md` §11 is exactly what it covers.
+Appointment-type and availability editing have no screen, and **no screen
+renders any of Slice 3.** Slice 4's bounded doctor-review cutover IS implemented: the Review
 station now opens with the results waiting for a doctor, and the legacy
 prescription-line backlog sits beneath it unchanged. Ordering, the catalogue,
 report intake and everything patient-facing remain unbuilt.
@@ -75,7 +81,7 @@ has a screen and which part does not.
 | Backend implementation of the competitive and workflow improvements | [`reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md), then the current core documents it requires |
 | What that programme found, what it still has to decide, and in what order | [`reference/BACKEND_PROGRAMME_REGISTER.md`](reference/BACKEND_PROGRAMME_REGISTER.md) — the evidence baseline, work register, decision register and compatibility map |
 | Investigations, referrals, results, review, or telling a patient a result is ready | [`reference/SLICE4_FRONTEND_CONTRACT.md`](reference/SLICE4_FRONTEND_CONTRACT.md), then `SCHEMA_AND_TYPES.md` §17 and owner policy §N |
-| Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The bounded consultation safety cutover exists; the full appointment-book/calendar UI does not. |
+| Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The bounded consultation safety cutover and the bounded appointment-book station both exist; its §11 lists what the station leaves unbuilt. |
 | Staging, rollout, or PIN recovery | The applicable runbook in [`operations/`](operations/) |
 | Product rationale from the design sessions | [`reference/PRODUCT_UX_DISCOVERY.md`](reference/PRODUCT_UX_DISCOVERY.md); later core documents take precedence |
 | Why an earlier decision was raised | [`../archive/docs/current-programme/`](../archive/docs/current-programme/) |
@@ -168,7 +174,7 @@ driven by a person at all:
 | `results` | Slice 4's laboratory reports: attach one, mint a sixty-second ticket, fetch the bytes. A separate endpoint from `images` because a photograph the clinic takes and a report the clinic receives are governed by different owner items. Pharmacy is refused outright, and an administrator may attach a report without being able to open one |
 | `whatsapp` | **not a person.** Meta's verification challenge and its signed statuses webhook. Verifies `X-Hub-Signature-256` over the raw request bytes before parsing anything, and is the only thing in this application that can say a message was delivered |
 | `worker` | **not a person.** One dispatch cycle, behind `CLINIC_WORKER_TOKEN`. A staff session is refused here exactly as an anonymous caller is; see `SCHEMA_AND_TYPES.md` §16.6 |
-| `workspace` | what a workspace opens with — patient search, the patient band, actionable counts and their drill-downs, visit progress, safe-exit obligations, what an idempotency key committed, proven-equivalent products, and the three Slice 2 views: the appointment calendar, a patient's own appointments, and the reconciliation of an unresolved consultation attempt. Read on demand; its roles come from one capability table |
+| `workspace` | what a workspace opens with — patient search, the patient band, actionable counts and their drill-downs, visit progress, safe-exit obligations, what an idempotency key committed, proven-equivalent products, and the Slice 2 views: the appointment calendar, a patient's own appointments, what one appointment reference did (for the person who sent it), and the reconciliation of an unresolved consultation attempt. Read on demand; its roles come from one capability table |
 
 Two properties are worth knowing before you change either half.
 
@@ -191,8 +197,13 @@ to Mumbai and back with the button busy through both.
 app/                    layout, one page, the web manifest — the whole route tree
 components/             ClinicApp (the chrome and the ten workspaces) and ui/
   result-review.tsx     the doctor's Slice 4 station, inside Review
+  appointment-book.tsx  the Slice 2 appointment station, and the expected-today
+                        pointer on Today and Due now
 lib/
   api.ts                the ONLY thing that talks to the backend; token handling
+  appointment-attempt.ts  one reference per appointment act, held until the
+                        clinic confirms it; the reload note holds ids only
+  appointment-book.ts   clinic-time, published-hours and replay arithmetic
   attempt-key.ts        the consultation attempt's browser-storage lifecycle
   consultation-attempt.ts  client handling for attempt refusal and recovery
   consultation-reconciliation.ts  coded recovery and retry policy
@@ -343,11 +354,11 @@ It is rewritten here against what `npm run` actually does today.
 | Command | What it is |
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` over the page. Does **not** see `supabase/` — `tsconfig.json` excludes it. |
-| `npm test` | **44 tests** over five files, no database, no network. Passwords, order status, money, the consultation attempt key, and — since the staging readiness repair — what counts as a database being ready. |
+| `npm test` | **93 tests** over nine files, no database, no network. Passwords, order status, money, the consultation attempt key, what counts as a database being ready, the result station's recovery note and decisions, and the appointment station's reference lifecycle and clinic-time arithmetic — that a reference is held until the clinic confirms, that the reload note carries identifiers only, and that a `datetime-local` value is never read in the tablet's zone. |
 | `npm run build` | The static export. |
 | `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
-| `npm run test:db` | **987 tests** over 179 suites in thirty-one files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83, Slice 3B's provider adapter, dispatch worker and authenticated webhook, and Slice 4's diagnostics loop against owner items 84–88 — the catalogue's two-tier authority, the two flag origins and the generated effective flag, wrong-patient attachment refused by composite key, corrections invalidating a stale review and a stale authorization, owner item 87's escalation clock, and owner item 88's rule that acceptance is not delivery — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, a consent withdrawal racing a worker that is already preparing it, two doctors reviewing one result, a review racing a correction, and two authorizations of one result. **No test here makes an external provider request**: the messaging channel is injected, the test adapter refuses at construction to address anything but loopback, and the Slice 3B suite replaces `fetch` itself with a stub that throws and records, then asserts at the end that nothing was ever attempted. |
-| `npm run test:browser` | **66 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
+| `npm run test:db` | **1001 tests** over 184 suites in thirty-two files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, the appointment station's outcome read — actor-scoped, in flight observed by lock, a refusal leaving the reference unspent — Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83, Slice 3B's provider adapter, dispatch worker and authenticated webhook, and Slice 4's diagnostics loop against owner items 84–88 — the catalogue's two-tier authority, the two flag origins and the generated effective flag, wrong-patient attachment refused by composite key, corrections invalidating a stale review and a stale authorization, owner item 87's escalation clock, and owner item 88's rule that acceptance is not delivery — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, a consent withdrawal racing a worker that is already preparing it, two doctors reviewing one result, a review racing a correction, and two authorizations of one result. **No test here makes an external provider request**: the messaging channel is injected, the test adapter refuses at construction to address anything but loopback, and the Slice 3B suite replaces `fetch` itself with a stub that throws and records, then asserts at the end that nothing was ever attempted. |
+| `npm run test:browser` | **117 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
 | `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
 | `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. A **fresh dump**, out and back. |
 | `npm run staging:archive-drill` | **85 checks.** The stored-object restore proof, rehearsed against a directory standing in for the bucket: the real `scripts/db-restore-archive.sh` selects an object out of a retention prefix, downloads it, compares sizes, decrypts it with a throwaway age identity, verifies the gzip stream, restores it into a generated loopback scratch database and counts it. The rest of the checks are the refusals — traversal, cross-prefix, an unencrypted object, a zero-byte object, a short transfer, corrupted ciphertext, a wrong identity, a broken gzip stream, unloadable SQL, a non-loopback target, the live and staging database names, an existing database, the backup writer's own credentials — plus that no rclone write ever runs, that nothing secret or identifying reaches the output, and that the temporary files and the scratch database are gone afterwards on every path. It reaches no network. |
@@ -372,9 +383,13 @@ held either, failing before it typechecks a line. Deno is not a dependency here;
 
 ### What is still not covered
 
-**The bounded safety cutover is not the full Slice 2 UI programme.** The current
-consultation screen implements attempt recovery and reconciliation, but the
-appointment calendar and broader appointment-management screens remain unbuilt.
+**The two bounded Slice 2 cutovers are not the whole Slice 2 UI programme.**
+The consultation screen implements attempt recovery and reconciliation, and
+the Appointments station implements one day's book from booking through
+check-in. Appointment types, publishing and retiring availability, a
+multi-day calendar, urgent queue priority and cross-device recovery of a lost
+appointment reply have no screen; `reference/SLICE2_FRONTEND_CONTRACT.md` §11.4
+says why each was left.
 
 **Slice 3B built the adapter and the webhook, and still nothing has been
 sent.** No message has ever gone out, no provider has ever answered a line of
