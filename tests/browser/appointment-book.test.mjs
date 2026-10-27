@@ -595,11 +595,27 @@ describe('booking, and the door into the queue', () => {
     assert.ok(Date.parse(arrival.scheduled_at) >= pressedAt - 60_000, 'the arrival is stamped with the arrival, not the booking')
     assert.ok(new Date(booking.scheduled_at).getTime() < Date.parse(arrival.scheduled_at) - 30 * 60_000)
 
+    // Not "last in the queue". The fixtures' own arrivals are pinned to clock
+    // times today, 10:10 to 11:45, so before a quarter to twelve some of them
+    // have, as far as the queue knows, not arrived yet — and a patient who
+    // walks in at nine belongs ahead of them. This failed at five past
+    // midnight on 27 October for exactly that reason. The rule is position by
+    // arrival, so that is what is asserted, at any hour.
     const queue = await query(
-      `select patient_id from jmc.appointments
+      `select patient_id, urgent, scheduled_at from jmc.appointments
         where status in ('waiting','in_consult') order by urgent desc, scheduled_at, created_at`,
     )
-    assert.equal(queue.at(-1).patient_id, P.late.id, 'owner item 70: behind everybody who arrived before them')
+    const arrivedAt = new Date(arrival.scheduled_at).getTime()
+    const at = queue.findIndex((row) => row.patient_id === P.late.id)
+    assert.ok(at >= 0, 'the late patient is in the queue')
+    assert.ok(
+      queue.slice(0, at).every((row) => row.urgent || new Date(row.scheduled_at).getTime() <= arrivedAt),
+      'owner item 70: nobody ahead of them arrived after them',
+    )
+    assert.ok(
+      queue.slice(at + 1).every((row) => !row.urgent && new Date(row.scheduled_at).getTime() >= arrivedAt),
+      'owner item 70: behind everybody who arrived before them',
+    )
 
     await goToStation('Today')
     await waitFor(`!!document.querySelector('[data-testid="queue-row-${P.late.id}"]')`, { what: 'the late patient in the queue' })

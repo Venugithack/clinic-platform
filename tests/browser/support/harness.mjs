@@ -218,7 +218,9 @@ export async function waitFor(js, { timeout = 15_000, every = 250, what = js } =
   let last = ''
   while (Date.now() < until) {
     last = evaluate(js)
-    if (last && !/^(false|null|undefined|0|)$/i.test(last.trim())) return last
+    // `""` is agent-browser printing an empty string, not a value: without it
+    // here a wait for words on the screen returned before they were drawn.
+    if (last && !/^(false|null|undefined|0|""|)$/i.test(last.trim())) return last
     await new Promise((done) => setTimeout(done, every))
   }
   throw new Error(`timed out after ${timeout}ms waiting for ${what}\nlast value: ${last}`)
