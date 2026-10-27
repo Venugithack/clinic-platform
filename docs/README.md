@@ -417,10 +417,12 @@ backend contract was not changed in this frontend cutover.
 
 **CI runs two of those and reports a third.** `.github/workflows/ci.yml` has
 `check` (types, unit tests, build, backend types), `database` (migrations,
-`test:db`, the restore drill) and `browser`. **The `browser` job has never
-run** — nothing in this programme has been pushed — so it is a job that
-reports, not a gate, until it has been green twice. `docs/operations/STAGING.md` §6 says
-the same at more length.
+`test:db`, the restore drill) and `browser`. **The `browser` job has run
+once**, green, on pull request #38 on 27 October 2026; it is a job that
+reports, not a gate, until it has been green twice. The same run is also the
+first time `database` met a runner, and it was stopped at its old 15-minute
+limit partway through a suite that takes about 22; the limit is now 40.
+`docs/operations/STAGING.md` §6 says the same at more length.
 
 **No test has ever touched the clinic's data.** The fixtures are synthetic and
 small. Nothing here proves a migration behaves against two years of real rows;

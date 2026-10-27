@@ -595,7 +595,8 @@ generated as `clinic_restore_drill_archive_<random>` — which is what
 
 Named rather than implied, in the register `docs/README.md` §6 uses.
 
-**The browser suite is now in CI, and has never run there.** `.github/workflows/ci.yml`
+**The browser suite is now in CI, and has run there once, green** — pull
+request #38, 27 October 2026, 119 journeys. `.github/workflows/ci.yml`
 gained a `browser` job: Node 24, `npm ci`, Chrome pinned to `131.0.6778.85` by
 `browser-actions/setup-chrome`, and `npm run test:browser` with
 `AGENT_BROWSER_EXECUTABLE_PATH` pointing at it, so the driver takes the browser

@@ -378,7 +378,7 @@ select count(*) from information_schema.role_table_grants
 | **That an authorized doctor is a registered doctor** | Owner item 84 requires a registered doctor to approve clinical catalogue content. What this application can prove is the doctor role plus the explicitly-set authorization flag; it holds no evidence of anybody's professional registration and does not claim to check one. | Clinic — onboarding and governance, policy item 84 |
 | **A result-ready template approved by Meta**, and the whole of the row above about sending | Owner item 88 fixes the wording — "Your investigation result has been reviewed and is ready. Please contact the clinic." — and the clinic can approve it internally today. Meta has approved nothing, and the connection is unconfigured, so every authorized notice is suppressed into the admin's queue with `channel_not_configured` exactly as every other purpose is. | Owner and clinic — section M's closing paragraph |
 | **A laboratory's real report format** | Every result in this release was typed in or attached by a member of staff. No analyzer feed, no laboratory portal, no HL7 and no results inbox exists or is planned in it, and `imported_structured_feed` is a provenance value a human records rather than a connection. Whether the clinic's laboratory can supply a machine-readable report at all is unknown. | Clinic |
-| The browser CI job | Has never run; nothing has been pushed. | First green run |
+| The browser CI job | Green once, on pull request #38 on 27 October 2026. A gate only after a second green run. | Second green run |
 | Tablets on clinic Wi-Fi | Not simulated. | Clinic |
 
 ---

@@ -25,8 +25,9 @@ name: CI
 # the built export through a real Chrome.
 #
 # What is still worth saying plainly is which of them has ever run. `browser`
-# has not: nothing in this programme has been pushed. A job that reports is not
-# a gate until it has been green twice.
+# ran for the first time on 27 October 2026, on pull request #38, and was
+# green: 119 journeys. A job that reports is not a gate until it has been
+# green twice.
 
 on:
   push:
@@ -152,7 +153,10 @@ jobs:
   database:
     name: migrations · characterization suite
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # 15 was set when the suite was a few hundred tests. At 1014 it takes about
+    # 22 minutes, and its first run here, on 27 October 2026, was stopped at
+    # 15 in the middle of a green suite — which GitHub reports as "cancelled".
+    timeout-minutes: 40
 
     services:
       # Named and ported to match what scripts/staging/guard.mjs will accept.
@@ -240,13 +244,12 @@ jobs:
   #
   # ── WHAT HAS NOT BEEN VERIFIED ───────────────────────────────────────────
   #
-  # This job has never run. Nothing in this programme has been pushed, so no
-  # runner has executed it, and the exact behaviour of Chrome headless on a
-  # GitHub runner — sandbox flags, missing fonts, the shared-memory size that
-  # makes headless Chrome fall over on a container — is not something a
-  # developer's machine can answer. It is written to be correct and is recorded
-  # here as unverified. Make it a required check on the branch only after it
-  # has been green twice; until then it is a job that reports, not a gate.
+  # This job first ran on 27 October 2026, on pull request #38, and was green.
+  # One green run answers the question this block used to ask — whether Chrome
+  # headless on a GitHub runner, with its sandbox flags, fonts and
+  # shared-memory size, drives the export at all — but it is one run. Make it
+  # a required check on the branch only after it has been green twice; until
+  # then it is a job that reports, not a gate.
   browser:
     name: browser journeys
     runs-on: ubuntu-24.04
