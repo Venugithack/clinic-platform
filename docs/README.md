@@ -333,8 +333,10 @@ pinned copy. Remember §4: the `NEXT_PUBLIC_FUNCTIONS_URL` in the environment at
 project to act on until you link one (`npx supabase link --project-ref <ref>`)
 or pass `--project-ref` to each command. Migrations go up with
 `npx supabase db push`; each function with
-`npx supabase functions deploy <name>`. Secrets with
-`npx supabase secrets set`.
+`npx supabase functions deploy <name> --no-verify-jwt` — the flag is required,
+because the tablets send the clinic's own session token rather than a Supabase
+JWT and the gateway would otherwise refuse every request
+(`operations/ROLLOUT.md` §3). Secrets with `npx supabase secrets set`.
 
 Those Supabase commands are written from the CLI's documented interface and
 from what the repository requires. **They have not been run from a clean

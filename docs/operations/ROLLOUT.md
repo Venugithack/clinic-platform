@@ -1,7 +1,8 @@
 # Rollout
 
 **Jayamurugan Clinic — Slices 2.1.1 to 6**
-**Written 12 September 2026. Nothing in it has been run against the clinic.**
+**Written 12 September 2026, brought up to date 27 October 2026. Nothing in it
+has been run against the clinic.**
 
 This is the operating document for taking the work in this branch to the clinic:
 what to check before, what to run, what to check after, and what to do when it
@@ -18,8 +19,9 @@ Read §1 before doing anything else.
 | | |
 |---|---|
 | Branch | `slice-0-staging-foundation` |
-| Pushed | **No.** Nothing in this programme has left this machine. |
+| Pushed | **Yes**, on 26 October 2026, and proposed for `main` as a pull request. Merging it deploys nothing: no workflow deploys, and both halves go out by hand (§3). |
 | Deployed | **No.** No migration has been applied to the clinic, no function deployed, no secret changed. |
+| What the clinic runs | `main` as of 9 September 2026. Checked from outside on 27 October 2026, without signing in: the page at `app.jayamuruganclinic.online` carries none of this branch's screens, and of the sixteen functions only `main`'s nine answer — `workspace`, `inventory`, `reports`, `results` and `images` return *not found*. The database should therefore hold `main`'s nine migrations; preflight §2 is what confirms it. |
 | Verified | On guarded local staging: a disposable PostgreSQL 17, synthetic fixtures, and the real code. |
 | Not verified | Anything that needs the clinic's own data, a real printer, real tablets on clinic Wi-Fi, Supabase's Storage bucket policy, a CI runner, or the clinic accountant — the recovery/write-off workflow for a bill under financial review (over-refunded, or cancelled and not at ₹0, which is also what the refusals on a voided bill wait for) and the GST credit/debit-note treatment are theirs to settle and neither has been read by one. §7 lists every one. |
 
@@ -91,6 +93,17 @@ select count(*) from jmc.staff where active = 1 and roles_json like '%"admin"%';
 -- been read, because nothing in this programme queries production.
 select rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole
   from pg_roles where rolname = current_user;
+
+-- ── 8. The one guard that can stop the push on the clinic's own data ─────
+-- 20260920000000 refuses to apply while two OPEN visits share a queue token.
+-- Run this again just before `supabase db push`, with the queue closed for
+-- the day; it must be empty. Finished and cancelled visits do not count.
+select token, count(*) from jmc.appointments
+ where status in ('waiting', 'in_consult') group by 1 having count(*) > 1;
+
+-- ── 9. Which migrations the clinic actually has ──────────────────────────
+-- Expect main's nine, ending 20260909125237. §3 applies everything after.
+select version from supabase_migrations.schema_migrations order by 1;
 ```
 
 Write the answers down. §6 compares against them.
@@ -99,52 +112,113 @@ Write the answers down. §6 compares against them.
 
 ## 3. Applying it
 
-Six migrations, in this order, each once:
+Twenty-one migrations — everything after `main`'s last,
+`20260909125237_harden_active_clinic.sql` — in this order, each once:
 
 ```text
+20260910120000_pin_format.sql
+20260910130000_vitals_not_measured.sql
+20260911045325_slice2_doctor_nurse_workspaces.sql
+20260911120000_slice2_clinical_vocabulary.sql
+20260911190000_slice2_1_unresolved_prescription_history.sql
 20260911210000_slice2_1_1_resolution_scope.sql
 20260912000000_slice3_identity_packages_stock.sql
 20260913000000_slice4_dispensing_billing_payments.sql
 20260914000000_slice5_clinical_images.sql
 20260915000000_financial_edge_states.sql
 20260916000000_void_balance_and_review_queue.sql
+20260917000000_staff_theme_and_draft_follow_up.sql
+20260918000000_consultation_idempotency.sql
+20260919000000_slice1_read_model_indexes.sql
+20260920000000_slice2_appointments_and_reconciliation.sql
+20260921000000_slice2_acceptance_correction.sql
+20260922000000_same_attendance_closes_the_visit.sql
+20260923000000_a_reconciled_visit_stays_reconciled.sql
+20260924000000_slice3a_communication_truth.sql
+20260925000000_slice3b_provider_events.sql
+20260926000000_slice4_diagnostics.sql
 ```
 
-(Slice 2 and 2.1 are already in the set; if the clinic is behind, apply from
-wherever it actually is.)
+If preflight 9 shows the clinic somewhere other than `main`'s nine, apply from
+wherever it actually is.
 
 **Every one must run inside a transaction**, so that a file which fails halfway
 leaves nothing behind.
 
-None of these six relies on `set local search_path = jmc`, and that is
-deliberate: every object in them is written `jmc.`-qualified instead. The
-clinic's *earlier* migrations do begin with that line, and it is the reason the
-transaction rule was written down in the first place — `SET LOCAL` outside a
-transaction block does nothing at all, and Postgres warns and then creates the
-tables in `public`, where the retired application lives and eight table names
-collide exactly. `supabase db push` wraps each file; nothing else is guaranteed
-to. If the clinic is behind far enough to be applying any of the pre-Slice-2
-files, that trap is live. `docs/operations/STAGING.md` §3.1 is the long version.
+Ten of the twenty-one begin with `set local search_path = jmc` — the first
+three, and every one from `20260920000000` on. That line is the reason the
+transaction rule was written down: `SET LOCAL` outside a transaction block does
+nothing at all, and Postgres warns and then creates the tables in `public`,
+where the retired application lives and eight table names collide exactly.
+`supabase db push` wraps each file, and the clinic's own nine went in that way
+and landed in `jmc`; nothing else is guaranteed to. Do not paste these files
+into the SQL editor. `docs/operations/STAGING.md` §3.1 is the long version.
+
+A transaction per *file* is not one transaction for the push. If a file
+refuses, the files before it stay applied and the ones after it do not, and the
+clinic is then half-migrated under functions that expect either all of it or
+none. Of every refusal in these twenty-one, exactly one can meet the clinic's
+own data: `20260920000000` stops if two open visits share a queue token. The
+others guard tables that arrive empty in this same push. Preflight 8, run with
+the queue closed, is what makes that one impossible.
+
+Then, in this order, with the clinic closed:
 
 ```bash
-# Rehearse against a restored copy first. Not optional.
+# Rehearse first. Not optional. This applies every migration above to a
+# representative history; it is not the clinic's own data.
 npm run staging:rehearse
 
-# Then, with a backup taken and verified in the last hour:
-supabase db push
-supabase functions deploy      # command, snapshot, login, logout, register,
-                               # record, staff, csv, bootstrap, inventory,
-                               # images, reports
+# With a backup taken and verified in the last hour, and preflight 8 empty.
+# The dry run lists what will be applied; it must be exactly the list above.
+npx supabase db push --project-ref <ref> --dry-run
+npx supabase db push --project-ref <ref>
+
+# The fourteen functions a person uses. `whatsapp` and `worker` wait for §9.
+# --no-verify-jwt is NOT optional — see below.
+npx supabase functions deploy --project-ref <ref> --no-verify-jwt \
+  bootstrap command csv images inventory login logout record register \
+  reports results snapshot staff workspace
+
+# The page last, built against the clinic's functions — not the staging URL,
+# which is what everything else in this repository builds against — and
+# checked before it is uploaded.
+NEXT_PUBLIC_FUNCTIONS_URL=https://<ref>.supabase.co/functions/v1 npx next build
+grep -rl "127.0.0.1" out/ && echo "STOP: out/ points at staging" || npx wrangler deploy
 ```
+
+**`--no-verify-jwt` on every deploy.** Without it Supabase's gateway demands a
+Supabase-issued JWT before the request reaches the function, and this
+application never sends one: the bearer token is the clinic's own session
+(`docs/README.md` §1). Every tablet would be refused at the gateway with the
+functions themselves never running — the whole clinic signed out at once. The
+deployed functions run with the check off; that was confirmed from outside on
+27 October 2026, when an unauthenticated request to `snapshot` was answered by
+the function's own *Sign in required* rather than by the gateway. There is no
+`supabase/config.toml` to carry the setting, so the flag on the command is the
+only thing that does.
+
+The page goes last, straight after the functions. The new page calls five
+functions the old backend does not have, so it must never be live before them;
+with the clinic closed nobody is using the old page in the minutes between.
 
 ### What each migration does to existing rows
 
 | Migration | Touches history |
 |---|---|
+| PIN format | Adds `staff.pin_format` and marks every existing account `legacy_six`, so everyone keeps the PIN they have until they are reset (§4.1). No PIN is changed. |
+| Vitals not measured | Lets each of the five readings be empty, turns blank `bp` strings into NULL, and adds a check that a vitals row holds at least one reading. Every existing row already does: the other four columns were `not null` until this file. |
+| Slice 2 workspaces | Gives the existing doctor-and-admin account the clinic-template publishing flag. Numbers every existing prescription `RX-000001` upwards in signing order. Builds `prescription_lines` from `items_json` beside it and leaves the JSON — the signed record — untouched. Twelve new tables. |
+| Slice 2 vocabulary | Seeds the owner-approved starter phrases as release `en-2026.09`. Touches no existing row. |
+| Slice 2.1 | Any prescription item whose medicine no longer exists, or whose quantity cannot be read, becomes an explicit unresolved line instead of a guess. Those lines are preflight 2's count and §4.6's work for a doctor. |
 | Slice 2.1.1 | Nothing. Adds a trigger and asserts no existing resolution is out of scope. |
 | Slice 3 | Converts **every money column** from `real` to `numeric(12,2)`, rounding to the paisa. Gives every batch and medicine a base unit, taken from the `unit` column that quantity was always counted in. Adds no package to any existing batch — inventing one would be a guess frozen onto the batch. |
 | Slice 4 | Gives every prescription a `valid_until` of signing + 7 days. Moves every `bills` row into an invoice, a line and (where paid) a payment; **empties `jmc.bills` and leaves it standing** as a tombstone. Sets the clinic consultation fee to ₹300 only where none is configured. Builds `otc_lines` from `lines_json`. |
 | Slice 5 | Nothing. New tables only. |
+| Theme and draft follow-up · consultation idempotency · read-model indexes | New columns with defaults, a unique index on a column that arrives empty, and seven ordinary indexes. No existing value changes. |
+| Appointments and reconciliation | Five new tables, and a unique index on the token of every **open** visit. **Refuses** if two open visits share a token — preflight 8. Finished and cancelled visits are left exactly as they are. |
+| Acceptance correction · same attendance · reconciled visit | Triggers, functions, one new table and two new columns. The one `update` touches `appointment_bookings`, which is empty in the clinic until this push, and the two refusals guard tables that are too. |
+| Slice 3B (provider events) | **Nothing.** One new table, empty. |
 | Financial edge states | **Nothing, and that is the point.** Views only: `invoice_balances` and `patient_balances` are replaced and `financial_review_queue` is created. No table, column, constraint or row is touched. Any over-refunded bill it puts on the queue was already over-refunded before it ran; what changes is that the application can now say so. |
 | Slice 3A (communication truth) | **Nothing.** Five new tables and two trigger functions; no existing table, column, index or row is touched, and **nothing is backfilled** — least of all a consent. `patients.whatsapp_consent` names no purposes, so it is not per-purpose consent and turning it into one would be inventing evidence about what patients were told. The five tables therefore arrive empty and stay empty until somebody records an opt-in and a doctor approves a wording. Nothing in this release sends a message, so there is no cutover step and no staff instruction that goes with it. |
 | Slice 4 (diagnostics) | **Nothing.** Six new tables, one sequence, and a widened value list: `result_ready` is admitted to the purpose check on four Slice 3A tables, `result_ready` to the schedule kinds, `investigation_result` to the source types, and two suppression reasons to the outbox. Widening a check admits a value and changes no existing row. **Nothing is backfilled** — there is no investigation in this clinic's past to migrate, and turning a clinical image into a result would invent evidence. The six tables arrive empty and stay empty until a doctor approves a catalogue entry. Note the name collision in this table and nowhere else: this row is the **backend programme's** Slice 4, `20260926000000`; the row above it is the original dispensing Slice 4, `20260913000000`. |
@@ -336,20 +410,34 @@ end of this section is what to do about that, and that object is the backup you
 will actually reach for.
 
 **A migration failed part-way.** It cannot have. Each runs in one transaction,
-so it either applied or it did not. Check which of the six are present
-(`select * from supabase_migrations.schema_migrations`) and fix forward.
+so it either applied or it did not. The *push* can stop part-way, though — the
+files before the refusal stay applied (§3). Check which of the twenty-one are
+present (`select * from supabase_migrations.schema_migrations`) and fix
+forward.
 
-**The application is broken and the data is fine.** Roll back the functions,
-not the database:
+**The application is broken and the data is fine.** Roll back the functions
+and the page, not the database:
 
 ```bash
-supabase functions deploy --project-ref <ref>   # from the previous commit
+git checkout 6321415   # the previous release: main as of 9 September 2026
+npx supabase functions deploy --project-ref <ref> --no-verify-jwt \
+  bootstrap command csv login logout record register snapshot staff
+NEXT_PUBLIC_FUNCTIONS_URL=https://<ref>.supabase.co/functions/v1 npx next build
+npx wrangler deploy    # the old page as well: the new one calls five functions
+                       # the old release does not have
 ```
 
 The schema is additive except for one thing — `jmc.bills` is emptied — so the
 previous release will run against the new schema with one exception: it reads
 `bills`, and will show no bills. That is a visible, harmless wrongness for the
 length of a rollback, and the money is in `invoices` throughout.
+
+That paragraph was reasoned for the six migrations this section was first
+written against. Fifteen more have been added since, and **nobody has run the
+9 September functions against the full new schema**. Two changes matter to an
+old reader and the paragraph above covers neither: vitals readings that may now
+be NULL, and money that Slice 3 turned from `real` into `numeric`. Treat this
+rollback as unrehearsed until it has been tried once on staging.
 
 **The data is wrong.** Nothing here rewrites history, so the fix is always a
 compensating event rather than an UPDATE: an adjustment movement, a credit
@@ -464,7 +552,10 @@ None of it has been done, and none of it was done by the work that built this.
    is not `BACKUP_AGE_RECIPIENT`, which is the public half and cannot decrypt
    anything; the script refuses the recipient by name if it is handed one.
 4. **Dispatch `Archive restore proof` manually**, leaving the retention kind at
-   `daily`, and approve it when GitHub asks.
+   `daily`, and approve it when GitHub asks. GitHub only offers a manual run
+   for a workflow that exists on the default branch, so this step waits for
+   the branch to be merged into `main`; until then the workflow cannot be
+   found, let alone run.
 5. **Read the report.** It is the only artifact, and it carries the retention
    kind, the object basename, the remote and downloaded byte sizes, the
    encrypted object's SHA-256, the decrypted size, the restored schema names,
@@ -578,8 +669,8 @@ every request including a correctly signed one.
 ### 9.3 Deploying the two new functions
 
 ```bash
-npx supabase functions deploy whatsapp --project-ref <ref>
-npx supabase functions deploy worker   --project-ref <ref>
+npx supabase functions deploy whatsapp --project-ref <ref> --no-verify-jwt
+npx supabase functions deploy worker   --project-ref <ref> --no-verify-jwt
 ```
 
 Then give Meta the webhook URL — `https://<ref>.supabase.co/functions/v1/whatsapp`
