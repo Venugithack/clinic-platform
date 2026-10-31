@@ -678,8 +678,18 @@ begin
 
   -- The sequences continue past what the backfill used, so the next document
   -- printed does not carry a number already on paper.
-  perform setval('jmc.invoice_seq', greatest((select count(*) from jmc.invoices), 1), true);
-  perform setval('jmc.receipt_seq', greatest((select count(*) from jmc.payments), 1), true);
+  --
+  -- `count + 1, false` ("this is the next number out"), the same shape as
+  -- prescription_number_seq in Slice 2. This line used to read
+  -- `greatest(count, 1), true`, which says the same thing for a clinic with
+  -- bills and something different for one with none: it marks 1 as used, so
+  -- an empty clinic's first bill was INV-000002 and its first receipt
+  -- RCP-000002, with nothing ever numbered 1. Nothing caught it because the
+  -- test harness and the fixtures set both sequences themselves. The
+  -- clean-start rehearsal does not, and it found it on 31 October 2026, before
+  -- this migration had been applied to the clinic.
+  perform setval('jmc.invoice_seq', (select count(*) + 1 from jmc.invoices), false);
+  perform setval('jmc.receipt_seq', (select count(*) + 1 from jmc.payments), false);
 
   /*
    * Emptied and left standing, rather than dropped.

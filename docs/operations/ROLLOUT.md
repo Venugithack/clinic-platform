@@ -1,8 +1,19 @@
 # Rollout
 
 **Jayamurugan Clinic — Slices 2.1.1 to 6**
-**Written 12 September 2026, brought up to date 27 October 2026. Nothing in it
-has been run against the clinic.**
+**Written 12 September 2026, brought up to date 31 October 2026. Nothing in it
+has been run against the clinic except the read-only preflight (§2).**
+
+> **31 October 2026: this is a first launch, not a migration.** The clinic has
+> never used the deployed app; it starts on the night of this update. The live
+> database holds only test data and four test accounts. The owner decided to
+> **start clean**: §3.1 empties it just before the update, and the doctor creates
+> the first real administrator on the lock screen straight after (§4). Large
+> parts of this document were written for carrying a working clinic's history
+> across: the doctor review queue, the `valid_until` warning to staff, the
+> backfill table in §3 and the history comparisons in §6. After a clean start
+> they describe empty tables. They are kept because they become true again the
+> first time a clinic with history runs this update.
 
 This is the operating document for taking the work in this branch to the clinic:
 what to check before, what to run, what to check after, and what to do when it
@@ -18,9 +29,10 @@ Read §1 before doing anything else.
 
 | | |
 |---|---|
-| Branch | `slice-0-staging-foundation` |
-| Pushed | **Yes**, on 26 October 2026, and proposed for `main` as a pull request. Merging it deploys nothing: no workflow deploys, and both halves go out by hand (§3). |
+| Branch | `main`. `slice-0-staging-foundation` was merged as pull request #38 on 31 October 2026 (`448fee8`), with all three CI jobs green. |
+| Pushed | **Yes.** Merging deployed nothing, as expected: no workflow deploys, and both halves go out by hand (§3). The live page was checked unchanged after the merge. |
 | Deployed | **No.** No migration has been applied to the clinic, no function deployed, no secret changed. |
+| Preflight | **Run, 31 October 2026** (read-only, §2): 3 prescriptions, 3 unpaid bills totalling ₹700, 3 counter sales, 2 medicines, 2 batches, 8 stock movements, 3 encounters. 1 admin and 4 active staff, all test accounts. 0 unreadable prescription lines, 0 shelf/ledger differences, 0 open visits sharing a token. Migrations: exactly `main`'s nine. Query 4 failed as expected, because `schedule_verified_at` arrives with this update; the fallback found 2 medicines, both OTC. Nothing blocks the push. |
 | What the clinic runs | `main` as of 9 September 2026. Checked from outside on 27 October 2026, without signing in: the page at `app.jayamuruganclinic.online` carries none of this branch's screens, and of the sixteen functions only `main`'s nine answer — `workspace`, `inventory`, `reports`, `results` and `images` return *not found*. The database should therefore hold `main`'s nine migrations; preflight §2 is what confirms it. |
 | Verified | On guarded local staging: a disposable PostgreSQL 17, synthetic fixtures, and the real code. |
 | Not verified | Anything that needs the clinic's own data, a real printer, real tablets on clinic Wi-Fi, Supabase's Storage bucket policy, a CI runner, or the clinic accountant — the recovery/write-off workflow for a bill under financial review (over-refunded, or cancelled and not at ₹0, which is also what the refusals on a voided bill wait for) and the GST credit/debit-note treatment are theirs to settle and neither has been read by one. §7 lists every one. |
@@ -89,8 +101,10 @@ select count(*) from jmc.batches b
 select count(*) from jmc.staff where active = 1 and roles_json like '%"admin"%';
 
 -- ── 7. What the database will actually let the application do ────────────
--- docs/SCHEMA_AND_TYPES.md §7.4: the deployed role's attributes have never
--- been read, because nothing in this programme queries production.
+-- docs/SCHEMA_AND_TYPES.md §7.4. First read on 31 October 2026: rolsuper
+-- false, rolbypassrls true, rolcreatedb true, rolcreaterole true, for the
+-- role .env.local's DATABASE_URL signs in as. Bypassing RLS is why the
+-- zero-policy tables do not stop it.
 select rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole
   from pg_roles where rolname = current_user;
 
@@ -165,11 +179,23 @@ the queue closed, is what makes that one impossible.
 Then, in this order, with the clinic closed:
 
 ```bash
-# Rehearse first. Not optional. This applies every migration above to a
-# representative history; it is not the clinic's own data.
+# Rehearse first. Not optional. The first applies every migration above to a
+# representative history; the second is launch night's database half end to
+# end: the clinic's nine, test data, the clean start, the twenty-one, and an
+# empty clinic with every number at 1. Neither touches the clinic's own data.
 npm run staging:rehearse
+npm run staging:clean-start
 
-# With a backup taken and verified in the last hour, and preflight 8 empty.
+# A backup, taken and verified in the last hour: run the Backup workflow by
+# hand (Actions -> Backup -> Run workflow) and wait for it to go green. It is
+# the only way back to the database as it was (§8).
+
+# The clean start (§3.1). The dry run changes nothing and prints a total; the
+# commit takes that total, and refuses if anything moved in between.
+node scripts/launch/clean-start.mjs
+node scripts/launch/clean-start.mjs --commit=<the total it printed>
+
+# Preflight 8 is empty by construction after a clean start: there are no visits.
 # The dry run lists what will be applied; it must be exactly the list above.
 npx supabase db push --project-ref <ref> --dry-run
 npx supabase db push --project-ref <ref>
@@ -185,7 +211,20 @@ npx supabase functions deploy --project-ref <ref> --no-verify-jwt \
 # checked before it is uploaded.
 NEXT_PUBLIC_FUNCTIONS_URL=https://<ref>.supabase.co/functions/v1 npx next build
 grep -rl "127.0.0.1" out/ && echo "STOP: out/ points at staging" || npx wrangler deploy
+
+# Straight away, before anybody else can: the doctor opens
+# app.jayamuruganclinic.online and creates the first administrator (§4, step 1).
 ```
+
+**The first administrator, straight away.** After the clean start `staff` is
+empty, and while it is, `bootstrap` gives administrator rights to whoever calls
+it first. That is the design: it is how an empty clinic gets its first account,
+and it switches itself off for good once a single staff row exists. It also
+means the window from the clean start to the doctor's first tap should be
+minutes, not a night. If the lock screen ever answers *This clinic already has
+a staff record* on launch night, somebody else got there first. Stop, take
+nothing on trust, and run the clean start again from a fresh dry run. It
+cannot run once the migrations are in, so that means restoring the backup.
 
 **`--no-verify-jwt` on every deploy.** Without it Supabase's gateway demands a
 Supabase-issued JWT before the request reaches the function, and this
@@ -230,6 +269,68 @@ cannot supply a remainder against any of them. That is correct — it is the rul
 the clinic chose — and it is also a thing staff will meet, so tell them before
 they meet it.
 
+After the clean start there is nothing for any row of that table to touch, and
+no prescription for the `valid_until` rule to catch. Every backfill above runs
+over zero rows.
+
+### 3.1 The clean start
+
+Decided 31 October 2026: the clinic has never used the deployed app, so what
+the database holds is test data, and it goes before the update rather than
+being carried into it. Left in place, the three test prescriptions would have
+become `RX-000001` to `RX-000003`. The three test bills would have become
+invoices, putting ₹700 nobody owes into the dues reports. The test counter
+sales would have stayed in the registers an inspector can ask for.
+
+`scripts/launch/clean-start.mjs` runs one transaction:
+
+| | |
+|---|---|
+| Empties | All 26 tables of the clinic's own records: patients, visits, vitals, consultations, prescriptions, bills, counter sales, medicines, suppliers, batches, stock movements, orders, write-offs, returns, till sessions, stock-takes, audit events, WhatsApp log, CSV imports, **staff, sessions and PIN attempts**. |
+| Resets | The five document-number sequences (tokens, counter receipts, purchase orders, supplier returns, stock-takes) back to 1. |
+| Keeps | `clinic_settings`, the details that print, which the doctor checks on the Clinic screen afterwards (§4). `clinic_revision`, which moves forward so any open tablet drops what it holds. **The observation beds**, each made empty and available: the application can rename a bed or change its state but **cannot create one** (there is `update_bed` and no `add_bed`). The clinic's beds were seeded by the retired application on 31 August 2026, as `Bed 1` to `Bed 4`, so emptying the table would leave Observation with no beds and no way to add any. The dry run lists them. If the clinic has a different number, that is a gap to close before launch, not after. Nothing outside the `jmc` schema. |
+| Refuses | Unless the applied migrations are exactly `main`'s nine, so it can never run after the update; unless the `jmc` tables are exactly the 29 it knows; if patients, visits, consultations, prescriptions, bills or counter sales hold more than 20 rows each, which would be a clinic in use; and on commit, unless `--commit=N` names the exact number of rows the same run is about to remove. |
+
+Without `--commit` it does all of that, checks the result, prints what it
+removed and rolls back. Read that output before committing: it lists every
+table's count and the clinic details being kept.
+
+**What its rehearsal found.** `npm run staging:clean-start` builds the clinic
+exactly as it stands (the nine migrations and the `supabase_migrations` ledger),
+puts a row in every one of the 26 tables and two beds in use, and then holds the
+script and the twenty-one migrations after it to account. Running it first found
+two defects, both fixed before this was written:
+
+- **The dry run reset the numbering.** The first draft used `setval`, which a
+  rollback does not undo, so "changes nothing" was untrue of exactly the five
+  numbers the script exists to reset. It now uses `ALTER SEQUENCE … RESTART`,
+  which is transactional. The rehearsal checks the numbering is untouched
+  after a dry run and after a refused commit.
+- **Slice 4 numbered an empty clinic's first bill INV-000002.**
+  `20260913000000` continued `invoice_seq` and `receipt_seq` with
+  `setval(seq, greatest(count, 1), true)`, which marks 1 as used when there
+  are no bills. The clinic's first bill and first receipt would have been
+  `INV-000002` and `RCP-000002`, and that missing number 1 is what an
+  accountant asks about. It now reads `count + 1, false`, the shape Slice 2
+  already used for prescriptions. For a database that has bills, the result is
+  the same as before. The migration had never been applied to the clinic, so
+  correcting it in place is within policy register item 34, which freezes only
+  applied migrations. The test harness and the fixtures both set these
+  sequences themselves, which is why 1,014 database tests never saw it.
+
+After the update the rehearsal finds every one of the 13 `jmc` sequences
+starting at 1. It finds `staff` empty, the consultation fee at ₹300 and both beds
+empty and available. The only rows anywhere are the three kept tables and the
+starter clinical phrases (release `en-2026.09`).
+
+The first evening that follows was also walked through once in a real browser
+against that empty staging clinic, on 31 October 2026: *Create the first
+administrator* → name, username, PIN twice → *Open the clinic* → sign in → Staff
+→ Edit → tick Doctor and *May publish clinical templates* → Save → (signed out,
+by design: a change of roles ends that person's sessions) → sign in again →
+Clinic → fill in the details → *Save clinic details*. Each step stored what it
+said, including the audit rows `staff.bootstrapped` and `staff.updated`.
+
 ---
 
 ## 4. The setup the clinic has to do, in order
@@ -237,10 +338,25 @@ they meet it.
 Nothing below can be done for them, and the counter is partly refused until it
 is.
 
+After the clean start the first step is new and the PIN step has nothing to do:
+every account is created on four digits, so there is no legacy PIN to reset.
+
+0. **Open the clinic, on launch night.** The doctor, on
+   `app.jayamuruganclinic.online`: *Create the first administrator* → their
+   name, a username, a four-digit PIN twice → *Open the clinic* → sign in.
+   Then **Staff → Edit** on their own row: tick **Doctor** and **May publish
+   clinical templates for every doctor**, then *Save changes*. That signs them
+   out, by design: a change of roles ends that person's sessions. Sign in
+   again. Then **Clinic**: name, address, drug licence number, doctor
+   registration number, GSTIN, consultation fee (₹300 by default) and footer,
+   then *Save clinic details*. These print on every bill and prescription.
+   Then **Staff → Add a staff account** for each real person, each with their
+   own PIN.
 1. **Reset the PINs.** `docs/operations/PIN_RESET_RUNBOOK.md`. Confirm an admin exists
    first (preflight 6). Until a staff member is reset they keep their
    six-digit PIN; the legacy count must reach zero before six-digit
-   compatibility comes out of the code.
+   compatibility comes out of the code. *After a clean start: nothing to do.
+   The legacy count is zero from the first account.*
 2. **Classify every medicine.** Formulary → each medicine → Classification.
    Until then it is `Unknown — pharmacist review required` and the anonymous
    counter path refuses it. The Package audit report lists what is left.
@@ -253,7 +369,8 @@ is.
    differences post as append-only opening adjustments. This is what makes
    preflight 5 zero.
 6. **Clear the doctor review queue.** Consult → Review queue. Every unreadable
-   line, one at a time, by a doctor. Preflight 2 said how many.
+   line, one at a time, by a doctor. Preflight 2 said how many. *After a clean
+   start: empty. Preflight 2 found none anyway.*
 
 ---
 
@@ -414,6 +531,13 @@ so it either applied or it did not. The *push* can stop part-way, though — the
 files before the refusal stay applied (§3). Check which of the twenty-one are
 present (`select * from supabase_migrations.schema_migrations`) and fix
 forward.
+
+**After the clean start, before the clinic has used it.** The cleanest way back
+is the whole way: restore the backup taken just before the clean start, then
+deploy the previous release's functions and page as below. That is a state
+somebody has actually seen working. Once the clinic has recorded its first real
+patient, that backup is no longer the way back, because restoring it would
+erase them.
 
 **The application is broken and the data is fine.** Roll back the functions
 and the page, not the database:

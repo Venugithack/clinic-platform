@@ -21,7 +21,8 @@
     "staging:destroy": "node scripts/staging/down.mjs --destroy",
     "staging:drill": "node scripts/staging/restore-drill.mjs",
     "staging:archive-drill": "node scripts/staging/archive-restore-rehearsal.mjs",
-    "staging:rehearse": "node scripts/staging/migration-rehearsal.mjs"
+    "staging:rehearse": "node scripts/staging/migration-rehearsal.mjs",
+    "staging:clean-start": "node scripts/staging/clean-start-rehearsal.mjs"
   },
   "dependencies": {
     "next": "^16.3.0",
