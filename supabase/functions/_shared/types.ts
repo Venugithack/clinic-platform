@@ -460,6 +460,12 @@ export interface BedView {
   handoffRequestedAt?: string
   handoffRequestedBy?: string
   handoffResolvedAt?: string
+  /**
+   * A patient has been in this bed at some point, so its observation timeline
+   * points at it and `remove_bed` refuses it. An empty bed with no history is
+   * one an administrator may take off the board.
+   */
+  hasHistory: boolean
 }
 
 export type SaleClass = 'otc' | 'prescription' | 'restricted' | 'unknown'

@@ -30,12 +30,13 @@
  *   clinic_revision   moved forward rather than reset, so that any open
  *                     tablet drops what it was holding;
  *   beds              the observation beds, each made empty and available.
- *                     A bed is a piece of furniture, not a record. And the
- *                     application has no way to create one: there is an
- *                     `update_bed` command and no `add_bed`. The four the
- *                     clinic has were seeded by the retired application, so
- *                     emptying this table would leave the nurse's Observation
- *                     station with no beds and no way to get any.
+ *                     A bed is a piece of furniture, not a record. When this
+ *                     was written the application had no way to create one,
+ *                     so emptying this table would have left the nurse's
+ *                     Observation station with no beds. `add_bed` and
+ *                     `remove_bed` exist now; keeping the four the retired
+ *                     application seeded still saves the doctor four adds,
+ *                     and the Beds screen adjusts the number from there.
  *
  * It touches nothing outside the `jmc` schema. The retired application's
  * tables in `public` are not this script's business.

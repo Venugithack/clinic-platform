@@ -288,7 +288,7 @@ sales would have stayed in the registers an inspector can ask for.
 |---|---|
 | Empties | All 26 tables of the clinic's own records: patients, visits, vitals, consultations, prescriptions, bills, counter sales, medicines, suppliers, batches, stock movements, orders, write-offs, returns, till sessions, stock-takes, audit events, WhatsApp log, CSV imports, **staff, sessions and PIN attempts**. |
 | Resets | The five document-number sequences (tokens, counter receipts, purchase orders, supplier returns, stock-takes) back to 1. |
-| Keeps | `clinic_settings`, the details that print, which the doctor checks on the Clinic screen afterwards (§4). `clinic_revision`, which moves forward so any open tablet drops what it holds. **The observation beds**, each made empty and available: the application can rename a bed or change its state but **cannot create one** (there is `update_bed` and no `add_bed`). The clinic's beds were seeded by the retired application on 31 August 2026, as `Bed 1` to `Bed 4`, so emptying the table would leave Observation with no beds and no way to add any. The dry run lists them. If the clinic has a different number, that is a gap to close before launch, not after. Nothing outside the `jmc` schema. |
+| Keeps | `clinic_settings`, the details that print, which the doctor checks on the Clinic screen afterwards (§4). `clinic_revision`, which moves forward so any open tablet drops what it holds. **The observation beds**, each made empty and available. The clinic's beds were seeded by the retired application on 31 August 2026, as `Bed 1` to `Bed 4`, and the dry run lists them. When this was written the application could not create a bed, so emptying the table would have left Observation with none. It can now (`add_bed` and `remove_bed`, admin only, 31 October 2026), and keeping the four is still the shorter evening: the doctor adds or removes beds on the **Beds** screen to match the clinic (§4 step 0). Nothing outside the `jmc` schema. |
 | Refuses | Unless the applied migrations are exactly `main`'s nine, so it can never run after the update; unless the `jmc` tables are exactly the 29 it knows; if patients, visits, consultations, prescriptions, bills or counter sales hold more than 20 rows each, which would be a clinic in use; and on commit, unless `--commit=N` names the exact number of rows the same run is about to remove. |
 
 Without `--commit` it does all of that, checks the result, prints what it
@@ -351,7 +351,11 @@ every account is created on four digits, so there is no legacy PIN to reset.
    registration number, GSTIN, consultation fee (₹300 by default) and footer,
    then *Save clinic details*. These print on every bill and prescription.
    Then **Staff → Add a staff account** for each real person, each with their
-   own PIN.
+   own PIN. Then **Beds**: the board starts with `Bed 1` to `Bed 4`. *Add bed*
+   for each further bed, named the way it is written on the bed; *Remove bed*
+   on any the clinic does not have. Remove is offered only on a bed that has
+   never had a patient in it, which on launch night is all of them. Once a
+   patient has been in a bed it stays, and is marked out of service instead.
 1. **Reset the PINs.** `docs/operations/PIN_RESET_RUNBOOK.md`. Confirm an admin exists
    first (preflight 6). Until a staff member is reset they keep their
    six-digit PIN; the legacy count must reach zero before six-digit

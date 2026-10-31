@@ -1636,6 +1636,26 @@ async function allocateStock(
  */
 const ORDER_DRAFT_LOCK = 517_301
 
+/**
+ * One change to the list of observation beds at a time. A bed's name is
+ * unique however it is capitalised, and the table's own constraint only knows
+ * the exact spelling, so "Bed 5" and "bed 5" added at the same moment would
+ * both pass a check that ran before either was written.
+ */
+const BED_LIST_LOCK = 517_302
+
+/** Longest bed name the board's card has room for. */
+const BED_LABEL_LIMIT = 40
+
+/** A bed's name as it is written on the bed: trimmed, single-spaced, short. */
+function bedLabel(payload: Payload): string {
+  const label = value(payload, 'label').replace(/\s+/g, ' ')
+  if (label.length > BED_LABEL_LIMIT) {
+    throw new Error(`A bed name can be at most ${BED_LABEL_LIMIT} characters.`)
+  }
+  return label
+}
+
 /** Order statuses whose outstanding quantity is still on its way to the shelf. */
 const OPEN_ORDER_STATUSES = `('pending','placed','partially_delivered')`
 
@@ -2842,6 +2862,63 @@ export async function runCommand(session: SessionView, action: string, payload: 
      * is `take_payment` now — see counter.ts — which writes payments as their
      * own records and allocates them against an invoice.
      */
+
+    /*
+     * The list of observation beds is the clinic's own furniture, and before
+     * these two commands nothing in this application could change it: the
+     * four beds came from the retired application's seed, and a clinic with
+     * five had no way to say so.
+     *
+     * Adding and removing beds is admin work, like the clinic details that
+     * print. A nurse moves patients in and out of beds (`update_bed`) and
+     * cannot change how many beds there are.
+     *
+     * A bed can be removed only while it is empty and has never had a
+     * patient in it, which is the case of a bed added by mistake or a clinic
+     * with fewer beds than the four it was given. Once a patient has been in
+     * a bed, the observation timeline points at it, and that history stays.
+     * Such a bed is marked out of service instead.
+     */
+    case 'add_bed': {
+      requireRole(session, 'admin')
+      const label = bedLabel(payload)
+      const id = randomUUID()
+      await transaction(async () => {
+        await db.prepare(`select pg_advisory_xact_lock(${BED_LIST_LOCK})`).get()
+        const clash = await db.prepare('select label from beds where lower(label)=lower(?)')
+          .get(label) as { label: string } | undefined
+        if (clash) throw new Error(`There is already a bed called "${clash.label}".`)
+        await db.prepare(`insert into beds (id,label,status,notes) values (?,?,'available','')`).run(id, label)
+        await audit(session.staffId, 'bed.created', 'bed', id, `Added observation bed ${label}`)
+      })
+      return { message: `${label} is on the bed board.` }
+    }
+
+    case 'remove_bed': {
+      requireRole(session, 'admin')
+      const bedId = value(payload, 'bedId')
+      let label = ''
+      await transaction(async () => {
+        await db.prepare(`select pg_advisory_xact_lock(${BED_LIST_LOCK})`).get()
+        const bed = await db.prepare('select label,status,patient_id from beds where id=? for update')
+          .get(bedId) as { label: string; status: string; patient_id: string | null } | undefined
+        if (!bed) throw new Error('That observation bed was not found.')
+        label = bed.label
+        if (bed.status === 'occupied' || bed.patient_id) {
+          throw new Error(`${bed.label} has a patient in it. Discharge or transfer the patient first.`)
+        }
+        const history = await db.prepare('select 1 from observation_events where bed_id=? limit 1').get(bedId)
+        if (history) {
+          throw new Error(
+            `${bed.label} has had a patient in it, and its observation history stays. ` +
+              'Mark it out of service instead.',
+          )
+        }
+        await db.prepare('delete from beds where id=?').run(bedId)
+        await audit(session.staffId, 'bed.removed', 'bed', bedId, `Removed observation bed ${bed.label}`)
+      })
+      return { message: `${label} is off the bed board.` }
+    }
 
     case 'update_bed': {
       requireRole(session, 'admin', 'nurse')
