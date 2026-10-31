@@ -212,7 +212,7 @@ function build(data: ClinicSnapshot, now: number): Group[] {
     }
   }
 
-  // The four observation beds.
+  // The observation beds.
   for (const bed of data.beds) {
     if (bed.status !== 'occupied' || !bed.patientId) continue
     groupFor(bed.patientId, bed.patientName ?? 'Patient in observation').bed = bed
