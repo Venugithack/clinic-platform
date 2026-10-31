@@ -52,7 +52,7 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
     { id: 'appointments', label: 'Appointments', eyebrow: 'Booked visits', icon: 'calendar' },
     { id: 'staff', label: 'Staff', eyebrow: 'Admin control', icon: 'user' },
     { id: 'clinic', label: 'Clinic', eyebrow: 'Details that print', icon: 'settings' },
-    { id: 'beds', label: 'Beds', eyebrow: 'Four-bed observation', icon: 'bed' },
+    { id: 'beds', label: 'Beds', eyebrow: 'Observation beds', icon: 'bed' },
     { id: 'billing', label: 'Billing', eyebrow: 'Collected at the clinic', icon: 'rupee' },
     { id: 'daybook', label: 'Day book', eyebrow: 'Cash and day-close', icon: 'receipt' },
     /*
@@ -130,7 +130,7 @@ export const NAVIGATION: Record<Role, NavItem[]> = {
   nurse: [
     { id: 'due', label: 'Due now', eyebrow: 'Everything waiting on you', icon: 'clock' },
     { id: 'vitals', label: 'Vitals', eyebrow: 'Nursing station', icon: 'pulse' },
-    { id: 'beds', label: 'Observation', eyebrow: 'Four-bed observation', icon: 'bed' },
+    { id: 'beds', label: 'Observation', eyebrow: 'Observation beds', icon: 'bed' },
     { id: 'queue', label: 'Today', eyebrow: "Today's flow", icon: 'queue' },
     { id: 'appointments', label: 'Appointments', eyebrow: 'Booked visits', icon: 'calendar' },
     { id: 'patients', label: 'Patients', eyebrow: 'Patient registry', icon: 'users' },

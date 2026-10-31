@@ -222,6 +222,13 @@ created_at >= <day start>` on every poll against no index.
 
 Indexes: `beds_pkey`, `beds_label_key`.
 
+Rows are added and removed by `add_bed` and `remove_bed` (admin only, added
+31 October 2026). `add_bed` refuses a name that differs from an existing one
+only in capitals, under an advisory lock, because `beds_label_key` compares
+the exact spelling. `remove_bed` deletes only an empty bed with no
+`observation_events`: once a patient has been in a bed, the timeline's
+foreign key points at it and the bed is marked `out_of_service` instead.
+
 ### 1.11 `suppliers`
 
 | Column | Type | Null | Default | Constraint |
@@ -775,6 +782,7 @@ Gated on `doctor` in the snapshot; an admin gets `[]`.
 | `patientId` `admittedAt` | `beds.*` nullable | `optional` |
 | `patientName` | `patients.name` via **left** join | `optional` |
 | `notes` | `beds.notes` — `not null default ''` | `optional`, so it is never actually `undefined` despite being declared `notes?` |
+| `hasHistory` | **derived**: `exists(select 1 from observation_events e where e.bed_id = b.id)` | `=== true`; the board offers *Remove bed* only where this is false |
 
 `MedicineView` — `snapshot.ts:387`, ungated.
 
@@ -1304,7 +1312,7 @@ Thirteen tables, taking `jmc` from 29 to 42, across two migrations:
 | `prescription_prints` | one row per print or reprint REQUESTED, numbered — see below | `record_prescription_print` |
 | `patient_clinical_profiles` | allergy status and clinical flags | `save_patient_clinical_profile` |
 | `vital_review_rules` | the approved "Review this reading" prompts | migration/admin only; never inferred |
-| `observation_events` | the bed timeline: admit, note, instruction, handoff, discharge | `update_bed`, `record_observation`, and the handoff commands |
+| `observation_events` | the bed timeline: admit, note, instruction, handoff, discharge. Its rows are why `remove_bed` refuses a bed that has had a patient | `update_bed`, `record_observation`, and the handoff commands |
 
 Two columns were added to this set afterwards, by
 `20260917000000_staff_theme_and_draft_follow_up.sql`:

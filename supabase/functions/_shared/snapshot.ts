@@ -956,16 +956,25 @@ export async function readSnapshot(
     : []
 
   const beds: BedView[] = careRegister
-    ? (await all(`select b.*,p.name patient_name,hr.name handoff_requested_by_name
+    /*
+     * `has_history` is what `remove_bed` refuses on, sent so the board offers
+     * Remove only where it would succeed. The order puts Bed 10 after Bed 9
+     * rather than after Bed 1: the words of the name first, then its number.
+     */
+    ? (await all(`select b.*,p.name patient_name,hr.name handoff_requested_by_name,
+          exists(select 1 from observation_events e where e.bed_id=b.id) has_history
         from beds b left join patients p on p.id=b.patient_id
         left join staff hr on hr.id=b.handoff_requested_by
-        order by b.label`)).map((r) => ({
+        order by regexp_replace(b.label,'[0-9]+','','g'),
+          nullif(regexp_replace(b.label,'[^0-9]','','g'),'')::numeric nulls first,
+          b.label`)).map((r) => ({
         id: text(r.id), label: text(r.label), status: text(r.status) as BedView['status'], patientId: optional(r.patient_id),
         patientName: optional(r.patient_name), admittedAt: optional(r.admitted_at), notes: optional(r.notes),
         nextCheckAt: optional(r.next_check_at), doctorInstructions: optional(r.doctor_instructions),
         handoffRequestedAt: optional(r.handoff_requested_at),
         handoffRequestedBy: optional(r.handoff_requested_by_name),
         handoffResolvedAt: optional(r.handoff_resolved_at),
+        hasHistory: r.has_history === true,
       }))
     : []
 

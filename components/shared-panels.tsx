@@ -1457,23 +1457,77 @@ function PatientMessage({
 export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const [editing, setEditing] = useState<BedView | null>(null)
   const [observing, setObserving] = useState<BedView | null>(null)
+  const [adding, setAdding] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
+  const removeTask = useTask()
+  /* Which bed is being removed, so only that card's button says so. */
+  const [removing, setRemoving] = useState('')
   const free = data.beds.filter((bed) => bed.status === 'available').length
   const canNurse = data.session.roles.some((role) => role === 'admin' || role === 'nurse')
   const canDoctor = data.session.roles.includes('doctor')
+  /* `add_bed` and `remove_bed` are admin-only. A nurse moves patients through
+     the beds and does not change how many there are. */
+  const canAdmin = data.session.roles.includes('admin')
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000)
     return () => window.clearInterval(timer)
   }, [])
 
+  async function removeBed(bed: BedView) {
+    setRemoving(bed.id)
+    try {
+      await removeTask.run({
+        working: `Removing ${bed.label}…`,
+        request: () => run('remove_bed', { bedId: bed.id }),
+        confirmed: () => ({
+          kind: 'confirmed',
+          title: 'Bed removed',
+          icon: 'bed',
+          identity: bed.label,
+          detail: 'It is off the bed board. It never had a patient in it, so no history was lost.',
+          dwell: DWELL_ROUTINE,
+        }),
+      })
+    } finally {
+      setRemoving('')
+    }
+  }
+
   return (
     <Stack>
       <PageHeader
-        eyebrow="Four-bed observation"
+        eyebrow="Observation beds"
         title="Bed board"
-        sub={`${free} free · ${data.beds.length - free} in use · ${data.beds.length} beds`}
+        sub={`${free} free · ${data.beds.length - free} in use · ${data.beds.length} ${data.beds.length === 1 ? 'bed' : 'beds'}`}
+        action={
+          canAdmin ? (
+            <Button icon="plus" onClick={() => setAdding(true)}>
+              Add bed
+            </Button>
+          ) : undefined
+        }
       />
+
+      <TaskFailure failure={removeTask.failure} onDismiss={removeTask.dismiss} />
+
+      {data.beds.length === 0 ? (
+        <EmptyState
+          title="No observation beds yet"
+          direction={
+            canAdmin
+              ? 'Add each bed the clinic has, named the way it is written on the bed.'
+              : 'An administrator adds the clinic’s beds here. Until then there is nowhere to admit a patient for observation.'
+          }
+          action={
+            canAdmin ? (
+              <Button variant="primary" icon="plus" onClick={() => setAdding(true)}>
+                Add bed
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {data.beds.map((bed) => (
@@ -1514,12 +1568,39 @@ export function BedsPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunn
                     Observation actions
                   </Button>
                 ) : null}
+                {/* Offered only where `remove_bed` would succeed: empty, and
+                    never had a patient in it. A bed with a history is marked
+                    out of service instead, from Update bed. */}
+                {canAdmin && bed.status !== 'occupied' && !bed.patientId && !bed.hasHistory ? (
+                  <ConfirmButton
+                    size="sm"
+                    variant="ghost"
+                    confirmVariant="danger"
+                    busy={removing === bed.id}
+                    busyLabel={removeTask.workingLabel}
+                    disabled={removeTask.busy && removing !== bed.id}
+                    disabledReason="Another bed is being removed."
+                    title="Remove bed?"
+                    question={
+                      <>
+                        Take <span className="font-semibold">{bed.label}</span> off the bed board? It
+                        has never had a patient in it, so nothing is lost. You can add it again later.
+                      </>
+                    }
+                    confirmLabel="Remove bed"
+                    onConfirm={() => removeBed(bed)}
+                  >
+                    Remove bed
+                  </ConfirmButton>
+                ) : null}
               </div>
             </div>
           </Card>
         ))}
       </div>
 
+      <AddBedForm open={adding} beds={data.beds} run={run} onClose={() => setAdding(false)} />
+      <AdminResult task={removeTask} />
       <BedForm bed={editing} data={data} run={run} onClose={() => setEditing(null)} />
       <ObservationForm
         bed={observing}
@@ -1549,6 +1630,131 @@ function localDateTime(value?: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+/** The same tidy-up `add_bed` applies, so the screen and the server agree on a clash. */
+function tidyBedName(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ')
+}
+
+/** Matches BED_LABEL_LIMIT in commands.ts. */
+const BED_NAME_LIMIT = 40
+
+/**
+ * One more observation bed, named the way it is written on the bed.
+ *
+ * Admin only, and the server says so too (`add_bed`). A new bed starts empty
+ * and available; the nurse admits a patient to it from Update bed like any
+ * other.
+ */
+function AddBedForm({
+  open,
+  beds,
+  run,
+  onClose,
+}: {
+  open: boolean
+  beds: BedView[]
+  run: ActionRunner
+  onClose: () => void
+}) {
+  const addTask = useTask()
+  const [name, setName] = useState('')
+
+  // Each opening starts blank, and an earlier refusal does not linger.
+  useEffect(() => {
+    if (!open) return
+    setName('')
+    addTask.dismiss()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  const label = tidyBedName(name)
+  const clash = beds.find((bed) => bed.label.toLowerCase() === label.toLowerCase())
+  const blocked = !label
+    ? 'Name the bed first.'
+    : clash
+      ? `There is already a bed called "${clash.label}".`
+      : ''
+
+  async function save() {
+    if (blocked || addTask.busy) return
+    const result = await addTask.run({
+      working: `Adding ${label}…`,
+      request: () => run('add_bed', { label }),
+      confirmed: () => ({
+        kind: 'confirmed',
+        title: 'Bed added',
+        icon: 'bed',
+        identity: label,
+        detail: 'It is on the bed board, empty and available.',
+        dwell: DWELL_ROUTINE,
+      }),
+    })
+    if (result?.ok) onClose()
+  }
+
+  return (
+    <>
+      <Modal
+        open={open}
+        onClose={onClose}
+        title="Add bed"
+        sub={`The clinic has ${beds.length} ${beds.length === 1 ? 'bed' : 'beds'} now.`}
+        busy={addTask.busy}
+        busyLabel={addTask.workingLabel}
+        footer={
+          <>
+            <Button variant="ghost" onClick={onClose} disabled={addTask.busy}>
+              Cancel
+            </Button>
+            <ActionButton
+              variant="primary"
+              busy={addTask.busy}
+              busyLabel={addTask.workingLabel}
+              disabled={Boolean(blocked)}
+              disabledReason={blocked}
+              onClick={save}
+            >
+              Add bed
+            </ActionButton>
+          </>
+        }
+      >
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void save()
+          }}
+        >
+          <Field
+            label="Bed name"
+            required
+            hint={
+              beds.length > 0
+                ? `As it is written on the bed. The others are ${beds.map((bed) => bed.label).join(', ')}.`
+                : 'As it is written on the bed, for example Bed 1.'
+            }
+          >
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              maxLength={BED_NAME_LIMIT}
+              autoComplete="off"
+              required
+            />
+          </Field>
+          {/* Said on the screen as well as on the button, whose reason only a
+              screen reader hears. */}
+          {clash ? <Notice tone="info">There is already a bed called “{clash.label}”.</Notice> : null}
+          <TaskFailure failure={addTask.failure} onDismiss={addTask.dismiss} />
+        </form>
+      </Modal>
+
+      <AdminResult task={addTask} />
+    </>
+  )
 }
 
 function BedForm({
