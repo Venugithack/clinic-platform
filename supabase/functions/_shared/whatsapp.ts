@@ -1,34 +1,123 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 
-const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN')
-const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
-const appSecret = Deno.env.get('WHATSAPP_APP_SECRET')
-const verifyToken = Deno.env.get('WHATSAPP_VERIFY_TOKEN')
-const apiVersion = Deno.env.get('WHATSAPP_API_VERSION') ?? 'v23.0'
+/**
+ * The clinic's Meta connection, read when it is asked for rather than when
+ * this file is first imported.
+ *
+ * It used to be five module-level `const`s. That is the same five values in
+ * the clinic — an Edge Function's environment is fixed for the life of the
+ * isolate — but it made the configured path untestable: the test harness
+ * imports the backend through one bridge, and by the time any test could set
+ * a variable the module had already decided the answer was "not configured".
+ * A guard whose passing case has never been executed is a guard nobody has.
+ *
+ * Nothing about what is read, or what `whatsappStatus()` answers, changed.
+ */
+function env(name: string): string {
+  return Deno.env.get(name) ?? ''
+}
+
+export type WhatsAppConfig = {
+  accessToken: string
+  phoneNumberId: string
+  appSecret: string
+  verifyToken: string
+  apiVersion: string
+}
+
+/**
+ * All five, or nothing.
+ *
+ * There is deliberately no fallback, no development default and no partial
+ * mode. Owner item 76 says an unavailable official channel suppresses the send
+ * into a staff queue, and a half-configured adapter that reaches Meta with a
+ * missing phone number id is not a channel — it is an outage that reports
+ * itself as a delivery failure against the patient's number.
+ */
+export function whatsappConfig(): WhatsAppConfig | null {
+  const config = {
+    accessToken: env('WHATSAPP_ACCESS_TOKEN'),
+    phoneNumberId: env('WHATSAPP_PHONE_NUMBER_ID'),
+    appSecret: env('WHATSAPP_APP_SECRET'),
+    verifyToken: env('WHATSAPP_VERIFY_TOKEN'),
+    apiVersion: env('WHATSAPP_API_VERSION') || 'v23.0',
+  }
+  if (!config.accessToken || !config.phoneNumberId || !config.appSecret || !config.verifyToken) {
+    return null
+  }
+  return config
+}
 
 export function whatsappStatus() {
-  const configured = Boolean(accessToken && phoneNumberId && appSecret && verifyToken)
+  const configured = whatsappConfig() !== null
   return {
     configured,
-    businessNumberConfigured: Boolean(phoneNumberId),
+    businessNumberConfigured: Boolean(env('WHATSAPP_PHONE_NUMBER_ID')),
     note: configured
       ? 'Official Meta connection is configured.'
       : 'Drafting works now. Connect the clinic Meta account to enable real send and inbound replies.',
   }
 }
 
-export function verifyWebhookSignature(rawBody: string, signature: string | null) {
-  if (!appSecret || !signature?.startsWith('sha256=')) return false
-  const expected = createHmac('sha256', appSecret).update(rawBody).digest('hex')
+/**
+ * Meta's `X-Hub-Signature-256`, checked against the bytes that arrived.
+ *
+ * ── WHY THIS TAKES BYTES AND NOT A STRING ──────────────────────────────────
+ *
+ * The signature is an HMAC over the request body exactly as Meta serialized
+ * it. Anything that re-encodes it first — parsing the JSON and stringifying it
+ * again, or reading it as text and re-encoding — is signing a different
+ * document that usually happens to be byte-identical, and stops being so the
+ * first time Meta emits a non-ASCII character, a different key order or
+ * different whitespace. A patient named with a character outside ASCII is not
+ * an edge case in this clinic.
+ *
+ * So the caller passes the raw bytes it read off the request and never the
+ * parsed object. The string overload is kept because `sendWhatsAppText`'s
+ * callers and the older tests use it, and a string is encoded here once, in
+ * one place, rather than at each call site.
+ */
+export function verifyWebhookSignature(
+  rawBody: string | Uint8Array,
+  signature: string | null,
+): boolean {
+  const secret = env('WHATSAPP_APP_SECRET')
+  if (!secret || !signature?.startsWith('sha256=')) return false
+
+  const bytes = typeof rawBody === 'string' ? new TextEncoder().encode(rawBody) : rawBody
+  const expected = createHmac('sha256', secret).update(Buffer.from(bytes)).digest('hex')
   const supplied = signature.slice('sha256='.length)
-  const expectedBytes = Buffer.from(expected, 'hex')
-  const suppliedBytes = Buffer.from(supplied, 'hex')
-  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
+
+  // Hex of a fixed-width digest, so a length difference is a malformed header
+  // rather than a near miss; `timingSafeEqual` throws on unequal lengths, so
+  // the check has to come first either way.
+  if (!/^[0-9a-f]{64}$/i.test(supplied)) return false
+  return timingSafeEqual(
+    Buffer.from(expected, 'hex'),
+    Buffer.from(supplied.toLowerCase(), 'hex'),
+  )
+}
+
+/**
+ * Meta's verification challenge token, compared without leaking its length or
+ * its matching prefix through timing.
+ *
+ * A plain `===` on a secret is the textbook side channel, and this one is
+ * reachable by anybody on the internet who knows the endpoint's URL.
+ */
+export function verifyTokenMatches(supplied: string): boolean {
+  const expected = env('WHATSAPP_VERIFY_TOKEN')
+  if (!expected || !supplied) return false
+  const a = new TextEncoder().encode(expected)
+  const b = new TextEncoder().encode(supplied)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b))
 }
 
 export function webhookVerifyToken() {
-  return verifyToken
+  const token = env('WHATSAPP_VERIFY_TOKEN')
+  return token === '' ? undefined : token
 }
 
 /**
@@ -53,7 +142,7 @@ export function webhookVerifyToken() {
  * a twenty-digit number that either fails or reaches a stranger. It stops here
  * instead, where somebody at the desk can read why and fix the record.
  */
-function dialable(raw: string): { ok: true; to: string } | { ok: false; reason: 'missing' | 'unusable' } {
+export function dialable(raw: string): { ok: true; to: string } | { ok: false; reason: 'missing' | 'unusable' } {
   // Spaces, dots, dashes and brackets are how a number is written down, not
   // part of it; a leading + or 00 is the international prefix spelled two ways.
   const digits = raw.replace(/[\s().-]/g, '').replace(/^(?:\+|00)/, '')
@@ -77,7 +166,8 @@ function dialable(raw: string): { ok: true; to: string } | { ok: false; reason: 
 }
 
 export async function sendWhatsAppText(to: string, body: string, savedFor = 'this contact') {
-  if (!whatsappStatus().configured) {
+  const config = whatsappConfig()
+  if (!config) {
     return { ok: false as const, error: 'WhatsApp is not connected yet.' }
   }
 
@@ -92,15 +182,20 @@ export async function sendWhatsAppText(to: string, body: string, savedFor = 'thi
     }
   }
 
-  const response = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+  const response = await fetch(
+    `https://graph.facebook.com/${config.apiVersion}/${config.phoneNumberId}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', to: number.to, type: 'text', text: { body },
+      }),
+      cache: 'no-store',
     },
-    body: JSON.stringify({ messaging_product: 'whatsapp', to: number.to, type: 'text', text: { body } }),
-    cache: 'no-store',
-  })
+  )
   const payload = (await response.json()) as { messages?: { id: string }[]; error?: { message?: string } }
   if (!response.ok || !payload.messages?.[0]?.id) {
     return { ok: false as const, error: payload.error?.message ?? 'Meta did not accept the message.' }

@@ -2,6 +2,56 @@
 
 Internal reference. Decides §10 of `PLAN.md` and §4 of `PROPOSAL.md`.
 
+> **Current decision status, 17 September 2026:** owner-policy items 76–83 in
+> [`../OWNER_POLICY_REGISTER.md`](../OWNER_POLICY_REGISTER.md) now decide the
+> Slice 3 channel, schedule, consent, failure, recall, template, opt-out and
+> eligibility questions. Those approved policies supersede any recommendation
+> or example choice in this research note. This file remains the provider-risk
+> background and must still be revalidated before production release.
+>
+> **Implementation status, 18 September 2026:** Slice 3A built the durable
+> foundation and Slice 3B built the adapter and the webhook — see
+> [`../SCHEMA_AND_TYPES.md`](../SCHEMA_AND_TYPES.md) §15 and §16.
+> Rule 1 of §10 below (official Cloud API only), rule 2 (no opt-in row, no
+> send), rule 3 (the fact and a link, never the record), rule 4 (defensibly
+> utility) and rule 8 (every send is a row before it is a send) are now
+> enforced in the schema or the command layer rather than being intentions.
+> Rule 1 is now structural rather than a policy for the automated channel: the
+> outbox reaches Meta only through `_shared/whatsapp-cloud.ts`, which builds a
+> template send and has no branch that builds a free-text one, and no
+> unofficial library is a dependency of anything. The older staff composer in
+> `_shared/whatsapp.ts` still has its own direct call to the same official
+> endpoint — it is a person typing a sentence, not an automated clinic-initiated
+> message, and moving it onto per-purpose consent is named as deferred work in
+> [`../SCHEMA_AND_TYPES.md`](../SCHEMA_AND_TYPES.md) §16.8.
+>
+> **Still nothing has contacted Meta.** There is no credential, no approved
+> template and no scheduler, and no line of the adapter has been answered by
+> Meta. Rule 9 — monitoring the quality rating — has nothing to monitor yet,
+> and rule 10 stands: **re-verify this document before the contract is
+> signed.**
+>
+> Slice 3B's reading of Meta's own current documentation moved the §0 questions
+> as follows, and the detail is in
+> [`../operations/ROLLOUT.md`](../operations/ROLLOUT.md) §9.5:
+>
+> - **Question 2 is resolved.** The limit counts "the maximum number of unique
+>   WhatsApp user phone numbers your business can deliver messages to … within
+>   a moving 24-hour period", and "newly created business portfolios have a
+>   messaging limit of 250". Unique recipients, not messages. This clinic sees
+>   about 60 patients a day.
+> - **Question 1 is narrowed and still open.** Meta's messaging-limits page
+>   does not say explicitly whether an *unverified* account may send a template
+>   to a non-test recipient at all. A 250 tier existing for a new portfolio
+>   points that way and other official pages describe verification as *raising*
+>   the ceiling rather than unlocking sending — but that is an inference, and
+>   an inference is not good enough to switch a clinic's patient channel on.
+> - **Questions 3 and 4 are untouched.** Whether the privacy-policy URL gates
+>   template approval or template sending, and whether display-name approval
+>   needs business verification first.
+>
+> **So it remains a release blocker**, narrower than it was.
+
 **"Grey area" is not one thing.** It is six unrelated ambiguities that get
 lumped together, and they carry very different risk. Three are survivable design
 constraints, two are traps, one is not grey at all — it is simply against the
@@ -336,6 +386,19 @@ The dose-reminder template needs care: naming the drug in the message body is
 both a privacy leak into a forwardable chat log and a step towards the line.
 Reminder text says *"today's medicines"* and links out.
 
+A laboratory result is the same argument at full strength, and owner item 88
+settled it on 19 September 2026 in the direction this section argued for. The
+whole permitted message is:
+
+> Your investigation result has been reviewed and is ready. Please contact the
+> clinic.
+
+No value, no abnormal or critical status, no diagnosis, no medicine, no
+advice, no attachment — and not even a link, which is stricter than rule 3
+below requires. A critical result does not go down this path at all: item 88
+makes that a clinician's telephone call, and a check constraint on
+`investigation_results` refuses an automated authorization for one.
+
 ---
 
 ## 6. Grey area five: Cloud API messages are not end-to-end encrypted
@@ -383,6 +446,7 @@ The practical output of all of the above.
 | Bill ready | us | utility | registration consent | low | per msg |
 | Daily dose digest | us | utility | **per-prescription opt-in** | low–medium — unanswered by design | per msg |
 | Clinic closed today | us | utility | registration consent | low — genuinely wanted | per msg |
+| **"Your result is ready"** (added 19 Sep 2026) | us | utility | **purpose-specific opt-in** — owner item 88, and the registration flag is not it | low — one fixed sentence, no value, no status, no diagnosis, no attachment, no link | per msg |
 | **"Doctor has arrived"** | us | **likely marketing** | would need marketing consent | **high — reportable, 6× cost** | **not built** |
 | Low-stock digest to staff | us | utility | employer, trivially consented | none | per msg |
 | **Purchase order to supplier** | us | utility | **absent** | **highest in the build** | per msg |
@@ -398,6 +462,14 @@ Both have safe replacements that give him what he actually wants:
 ---
 
 ## 9. The supplier problem, in full
+
+> **Decided 26 October 2026: row 1.** Supplier orders go from the pharmacist's
+> own WhatsApp through a `wa.me` link the application fills in, and the clinic's
+> business number sends nothing to a supplier. `send_order` was removed;
+> `mark_order_sent` records that the person who sent the order says it went.
+> Owner policy register item 89 has the decision and what it closed. The rest
+> of this section is the analysis that led there, kept for the day somebody
+> wants row 2.
 
 The greyest thing in the build, so it gets stated plainly.
 

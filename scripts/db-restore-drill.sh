@@ -6,6 +6,28 @@ SCRATCH_DB="${SCRATCH_DB:-clinic_restore_drill}"
 BACKUP_FILE="${1:-}"
 COMPARE=1
 
+# The scratch name is interpolated straight into CREATE DATABASE and DROP
+# DATABASE below, which an identifier has to be — it cannot be a bind
+# parameter. So it is checked against the same allowlist
+# scripts/staging/guard.mjs applies to every other entry point, and the three
+# names that would be a catastrophe are refused by name first. Every existing
+# caller passes `clinic_restore_drill` and is unaffected.
+case "${SCRATCH_DB}" in
+  clinic|clinic_staging|postgres|template0|template1)
+    echo "refusing '${SCRATCH_DB}' as a restore target: that is the clinic, the ordinary staging database, or a system database" >&2
+    exit 1 ;;
+esac
+if ! [[ "${SCRATCH_DB}" =~ ^clinic_restore_drill(_[a-z0-9_]+)?$ ]]; then
+  echo "refusing '${SCRATCH_DB}' as a restore target: a drill may only build a database named clinic_restore_drill, optionally with a _suffix" >&2
+  exit 1
+fi
+
+# Unset by default, so the drill behaves exactly as it always has: it drops the
+# scratch database before it starts and again when it exits. A caller that
+# needs the restored database alive afterwards — scripts/db-restore-archive.sh
+# does, to validate it — sets this and owns dropping it.
+KEEP="${RESTORE_DRILL_KEEP:-}"
+
 if [ -z "${BACKUP_FILE}" ]; then
   "$(dirname "${BASH_SOURCE[0]}")/db-backup.sh" drill >/dev/null
   BACKUP_FILE="$(ls -1t "${REPO_ROOT}"/.backups/drill/*.sql.gz 2>/dev/null | head -1 || true)"
@@ -48,9 +70,11 @@ cleanup() {
   psql -q -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d postgres \
     -c "drop database if exists ${SCRATCH_DB} with (force)" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+if [ -z "${KEEP}" ]; then
+  trap cleanup EXIT
+  cleanup
+fi
 
-cleanup
 psql -q -v ON_ERROR_STOP=1 -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d postgres \
   -c "create database ${SCRATCH_DB}"
 

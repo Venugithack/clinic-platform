@@ -27,6 +27,7 @@ import {
   TR,
   clinicDayOf,
   clinicToday,
+  money,
 } from '@/components/ui'
 
 /**
@@ -52,19 +53,46 @@ export function DayBookPanel({
   const till = data.till
   const [counted, setCounted] = useState('')
 
-  // Both of these read a stored UTC instant, so the day has to be converted
-  // before it is compared. `paidAt.startsWith(today)` filed the night's takings
-  // under yesterday for the five and a half hours the two calendars disagree.
+  /*
+   * What actually arrived today, counted off the payments rather than the bills.
+   *
+   * Slice 4 made money an event. A bill no longer carries a method and a paid
+   * flag — it carries lines, and the payments sit beside it with their own
+   * receipt numbers — so the day is the sum of today's payment rows and not a
+   * scan of bills whose status happens to say `paid`. Three consequences the
+   * old arithmetic could not express:
+   *
+   *   A SPLIT lands in two buckets. Cash ₹200 and GPay ₹100 on one bill is two
+   *   rows, and the drawer should hold the ₹200 only.
+   *
+   *   A REFUND comes back off the day. It is stored as a positive amount with
+   *   `kind` refund, because a refund is money out and not a negative payment.
+   *
+   *   A REVERSED receipt counts for nothing at all. That is different from a
+   *   refund: one says the money came back, the other that it never arrived,
+   *   and a day book that treats them the same cannot be reconciled against a
+   *   card terminal.
+   *
+   * Both dates read a stored UTC instant, so the day is converted before it is
+   * compared. `receivedAt.startsWith(today)` filed the night's takings under
+   * yesterday for the five and a half hours the two calendars disagree.
+   */
   const today = clinicToday()
-  const paidToday = data.bills.filter(
-    (b) => b.status === 'paid' && b.paidAt !== undefined && clinicDayOf(b.paidAt) === today,
-  )
-  const salesToday = data.otcSales.filter((s) => clinicDayOf(s.createdAt) === today)
+  const paymentsToday = data.invoices
+    .flatMap((invoice) => invoice.payments)
+    .filter(
+      (payment) => payment.status === 'received' && clinicDayOf(payment.receivedAt) === today,
+    )
 
-  const byMethod = (method: string) =>
-    paidToday.filter((b) => b.paymentMethod === method).reduce((sum, b) => sum + b.amount, 0) +
-    salesToday.filter((s) => s.paymentMethod === method).reduce((sum, s) => sum + s.total, 0)
+  const byMethod = (method: 'cash' | 'upi' | 'card') =>
+    paymentsToday
+      .filter((payment) => payment.method === method)
+      .reduce(
+        (sum, payment) => sum + (payment.kind === 'refund' ? -payment.amount : payment.amount),
+        0,
+      )
 
+  const refundsToday = paymentsToday.filter((payment) => payment.kind === 'refund')
   const takings = byMethod('cash') + byMethod('upi') + byMethod('card')
 
   async function openTill(event: FormEvent<HTMLFormElement>) {
@@ -90,7 +118,7 @@ export function DayBookPanel({
       <PageHeader
         eyebrow="Collected at the clinic"
         title="Day book"
-        sub={`₹${takings.toFixed(2)} taken today across ${paidToday.length + salesToday.length} transactions`}
+        sub={`${money(takings)} taken today across ${paymentsToday.length} ${paymentsToday.length === 1 ? 'receipt' : 'receipts'}${refundsToday.length > 0 ? `, ${refundsToday.length} of them refunds` : ''}`}
         action={
           <Button onClick={() => window.print()} title="Opens this tablet's own print sheet">
             Print the day
@@ -99,10 +127,48 @@ export function DayBookPanel({
       />
 
       <div className="grid gap-4 md:grid-cols-3" data-print="hide">
-        <Money label="Cash" value={byMethod('cash')} note="Reaches the drawer" />
-        <Money label="UPI" value={byMethod('upi')} note="Does not reach the drawer" />
+        <Money label="Cash" value={byMethod('cash')} note="Reaches the drawer · refunds subtracted" />
+        <Money label="UPI / GPay" value={byMethod('upi')} note="Does not reach the drawer" />
         <Money label="Card" value={byMethod('card')} note="Does not reach the drawer" />
       </div>
+
+      {refundsToday.length > 0 ? (
+        <Card data-print="hide">
+          <CardHeader
+            title="Refunded today"
+            sub={`${refundsToday.length} ${refundsToday.length === 1 ? 'refund' : 'refunds'}, already subtracted above`}
+          />
+          <CardBody>
+            <Table>
+              <THead>
+                <TR>
+                  <TH num>Receipt</TH>
+                  <TH>Method</TH>
+                  <TH num>Amount</TH>
+                  <TH num>At</TH>
+                  <TH>By</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {refundsToday.map((payment) => (
+                  <TR key={payment.id}>
+                    <TD num>{payment.receiptNumber}</TD>
+                    <TD>{payment.method === 'upi' ? 'UPI / GPay' : payment.method === 'card' ? 'Card' : 'Cash'}</TD>
+                    <TD num>−{money(payment.amount)}</TD>
+                    <TD num>{payment.receivedAt.slice(11, 16)}</TD>
+                    <TD>{payment.receivedByName}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      <p className="text-[12px] text-ink-2" data-print="hide">
+        A reversed receipt is left out of these figures entirely — it says the money never arrived,
+        which is not the same as a refund saying it came back.
+      </p>
 
       {!till ? (
         <Card variant="record">

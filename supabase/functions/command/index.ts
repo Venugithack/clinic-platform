@@ -1,3 +1,4 @@
+import { CommandRefusal } from '../_shared/command-input.ts'
 import { runCommand } from '../_shared/commands.ts'
 import { currentRevision } from '../_shared/db.ts'
 import { readSnapshot } from '../_shared/snapshot.ts'
@@ -25,12 +26,37 @@ Deno.serve(async (request) => {
     // has just happened on this connection; reading it back here costs about
     // thirty milliseconds and saves a whole trip to Mumbai and back.
     const revision = await currentRevision()
+
+    // A command that declares itself `unchanged` is a read — asking whether a
+    // patient is already registered, say. Sending it the whole clinic back
+    // would be a full download for an answer nobody asked to be refreshed by,
+    // and `find_possible_duplicates` runs while a nurse is still typing a
+    // name. The revision still goes, so the tablet can tell whether it has
+    // fallen behind for some other reason.
+    if ((result as { unchanged?: boolean }).unchanged) {
+      return json({ ok: true, ...result, revision })
+    }
+
     return json({ ok: true, ...result, revision, snapshot: await readSnapshot(session) })
   } catch (error) {
     // A refusal the clinic needs to read — "Only medicines marked OTC can be
     // sold here" — arrives as an exception and must reach the screen intact.
     const message =
       error instanceof Error ? error.message : 'The request could not be completed.'
+
+    // A few refusals also need the tablet to DO something — rotate a stale
+    // reference, stop offering a retry — and deciding that by matching on the
+    // text of a message is how a reworded sentence becomes a silent behaviour
+    // change. Those carry a code. Every existing caller reads `message` and
+    // never looks for this, which is what makes adding it safe.
+    //
+    // Only a `CommandRefusal` is trusted to carry one. A Postgres error has a
+    // `code` of its own — `23505` for a duplicate key — and forwarding that
+    // would put an SQLSTATE in a field the contract says holds clinic
+    // vocabulary, where a tablet might one day switch on it.
+    if (error instanceof CommandRefusal) {
+      return json({ ok: false, message, code: error.code }, 400)
+    }
     return json({ ok: false, message }, 400)
   }
 })

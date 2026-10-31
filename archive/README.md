@@ -18,8 +18,11 @@ instructions.
 `local/` is intentionally absent from GitHub because it contains large,
 sensitive, or machine-specific material:
 
-- `previous-hospital-project/` — the earlier standalone project, including its
-  own Git history, dependencies, and build output.
+- `hospital-all-in-one-reference/` — the earlier standalone project formerly
+  kept at the repository root, including its own Git history, dependencies, and
+  build output.
+- `previous-hospital-project/` — an older, non-identical local copy retained
+  separately rather than destructively deduplicated.
 - `ui-concept/` — static HTML mockups.
 - `legacy-sqlite/` — the database used before PostgreSQL.
 - `database-backups/` — old local database dumps.

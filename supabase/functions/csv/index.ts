@@ -6,7 +6,7 @@ import { cors, json, preflight, sessionFrom } from '../_shared/http.ts'
 import type { SaleClass } from '../_shared/types.ts'
 
 const headers = [
-  'code', 'name', 'strength', 'dosage_form', 'unit', 'barcode', 'sale_class', 'reorder_level',
+  'code', 'name', 'generic_name', 'strength', 'dosage_form', 'route', 'unit', 'barcode', 'sale_class', 'reorder_level',
   'target_stock', 'supplier_code', 'batch_number', 'expiry', 'quantity', 'mrp', 'purchase_price', 'selling_price',
 ] as const
 
@@ -38,18 +38,18 @@ async function handleGet(request: Request) {
   if (new URL(request.url).searchParams.get('template') === '1') {
     return csvResponse([
       [...headers],
-      ['MED-100', 'Vitamin C', '500 mg', 'Tablet', 'tablets', '890100000100', 'otc', 20, 100,
+      ['MED-100', 'Vitamin C', 'Ascorbic acid', '500 mg', 'Tablet', 'Oral', 'tablets', '890100000100', 'otc', 20, 100,
         'SUP-001', 'VC2601', '2027-12-31', 50, 65, 42, 60],
     ], 'jayamurugan-inventory-template.csv')
   }
 
-  const rows = await db.prepare(`select m.code,m.name,m.strength,m.dosage_form,m.unit,m.barcode,m.sale_class,
+  const rows = await db.prepare(`select m.code,m.name,m.generic_name,m.strength,m.dosage_form,m.route,m.unit,m.barcode,m.sale_class,
       m.reorder_level,m.target_stock,s.code supplier_code,b.batch_number,b.expiry,b.available_quantity,
       b.mrp,b.purchase_price,b.selling_price
     from medicines m left join suppliers s on s.id=m.preferred_supplier_id
     left join batches b on b.medicine_id=m.id order by m.name,b.expiry`).all() as Array<Record<string, unknown>>
   const exported = rows.map((row) => [
-    row.code, row.name, row.strength, row.dosage_form, row.unit, row.barcode, row.sale_class,
+    row.code, row.name, row.generic_name, row.strength, row.dosage_form, row.route, row.unit, row.barcode, row.sale_class,
     row.reorder_level, row.target_stock, row.supplier_code, row.batch_number, row.expiry,
     row.available_quantity, row.mrp, row.purchase_price, row.selling_price,
   ])
@@ -116,16 +116,16 @@ async function handlePost(request: Request) {
         const existing = await db.prepare('select id from medicines where code=?').get(code) as { id: string } | undefined
         const medicineId = existing?.id ?? randomUUID()
         if (existing) {
-          await db.prepare(`update medicines set name=?,strength=?,dosage_form=?,unit=?,barcode=?,sale_class=?,
+          await db.prepare(`update medicines set name=?,generic_name=?,strength=?,dosage_form=?,route=?,unit=?,barcode=?,sale_class=?,
             reorder_level=?,target_stock=?,preferred_supplier_id=coalesce(?,preferred_supplier_id) where id=?`).run(
-              name, row.strength ?? '', row.dosage_form ?? '', unit, row.barcode ?? '', saleClass,
+              name, row.generic_name ?? '', row.strength ?? '', row.dosage_form ?? '', row.route ?? '', unit, row.barcode ?? '', saleClass,
               reorderLevel, targetStock, supplier?.id ?? null, medicineId,
             )
         } else {
           await db.prepare(`insert into medicines
-            (id,code,name,strength,dosage_form,unit,barcode,sale_class,reorder_level,target_stock,preferred_supplier_id,active,created_at)
-            values (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-              medicineId, code, name, row.strength ?? '', row.dosage_form ?? '', unit, row.barcode ?? '', saleClass,
+            (id,code,name,generic_name,strength,dosage_form,route,unit,barcode,sale_class,reorder_level,target_stock,preferred_supplier_id,active,created_at)
+            values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+              medicineId, code, name, row.generic_name ?? '', row.strength ?? '', row.dosage_form ?? '', row.route ?? '', unit, row.barcode ?? '', saleClass,
               reorderLevel, targetStock, supplier?.id ?? null, 1, isoNow(),
             )
         }

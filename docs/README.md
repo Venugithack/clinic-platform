@@ -6,12 +6,99 @@ Schedule H1 register, and a stock-take that does not tell you the answer before
 you count.
 
 **This document describes the application that is in this repository now.** It
-used to describe a different one — a Next server with RLS, plpgsql transitions,
-509 pgTAP assertions, Playwright gates and a bash dev-stack. That application
-was deleted. It is in the git history and nowhere else. If you are reading a
-sentence in `docs/` about `lib/db/`, `lib/offline/`, device tokens in
-localStorage or `pnpm test`, you are reading about the dead one; see
-[The rest of this folder](#the-rest-of-this-folder).
+is the first document for a person or AI agent to read. Use the map below to
+find the current decision source for the task instead of treating every plan as
+equally current.
+
+## Documentation map
+
+### Current core documents
+
+| Document | Use it for |
+|---|---|
+| **This file** | Current architecture, runtime, setup, deployment, tests, and known gaps |
+| [`UI_UX_PLAN.md`](UI_UX_PLAN.md) | Target role workspaces, prescription-counter flow, loading, completion feedback, windows, icons, themes, and UI acceptance gates |
+| [`OWNER_POLICY_REGISTER.md`](OWNER_POLICY_REGISTER.md) | Owner-approved clinic and product policy; this is authoritative when a workflow depends on an owner decision |
+| [`SCHEMA_AND_TYPES.md`](SCHEMA_AND_TYPES.md) | Current database, API, and shared type contract |
+| [`AGENT_IMPLEMENTATION_BRIEF.md`](AGENT_IMPLEMENTATION_BRIEF.md) | Implementation constraints, slice order, safety boundaries, invariants, and definition of done |
+
+Backend programme status: Slices 0–2 are complete and accepted; the bounded
+**Slice 3A** — the durable foundation for reminders, recalls and delivery truth
+— and **Slice 3B** — the provider adapter, the authenticated webhook and the
+protected worker contract — are implemented; and **Slice 4** — the outpatient
+diagnostics loop, against owner items 84–88 — is implemented. The bounded
+Slice 2 frontend safety cutover is also
+implemented locally: the consultation screen holds one attempt across visit
+changes and gives doctors the audited reconciliation workflow. So is the
+bounded **appointment-book cutover** (24 September 2026): an Appointments
+station for admin, doctor and nurse that shows one clinic-local day with its
+published hours, the Expected today and No-show review lists, booking a known
+patient, moving, cancelling, a manual no-show, check-in into the ordinary
+queue, and each patient's append-only appointment history —
+`reference/SLICE2_FRONTEND_CONTRACT.md` §11 is exactly what it covers.
+Appointment-type and availability editing have no screen, and **no screen
+renders any of Slice 3.** Slice 4's bounded doctor-review cutover IS implemented: the Review
+station now opens with the results waiting for a doctor, and the legacy
+prescription-line backlog sits beneath it unchanged. Ordering, the catalogue,
+report intake and everything patient-facing remain unbuilt.
+
+Slice 3A adds five tables, a provider-neutral state machine and the commands
+and on-demand reads around them, against owner items 76–83. Slice 3B adds one
+more table, the adapter that speaks to Meta, the signed statuses webhook, and
+the protected endpoint a scheduler will call.
+
+**Nothing has been sent, and no scheduler is provisioned.** There is no
+credential, no approved Meta template, no `pg_cron` job and no `pg_net` call,
+and no line of the adapter has ever been answered by Meta. With the clinic's
+connection unconfigured — which is its state — every due message is suppressed
+into the admin's queue with `channel_not_configured` against it, the webhook
+refuses every request, and the worker endpoint refuses every caller.
+`SCHEMA_AND_TYPES.md` §15 and §16 are the contract; §16.9 is what is still
+owed, and `operations/ROLLOUT.md` §9 is the procedure for switching it on.
+
+Slice 4 adds six tables, one sequence and a fifth messaging purpose against
+owner items 84–88: a versioned investigation and referral catalogue, a request
+form, the report as it arrived, its documents in private storage, and a
+doctor's clinical review. **Nothing in it contacts a laboratory** — a report
+arrives because a member of staff typed it in or attached the file the
+laboratory emailed — and the one patient-facing message it can authorize is
+one fixed sentence that carries no clinical detail and is, today, suppressed
+into the admin's queue like every other. `SCHEMA_AND_TYPES.md` §17 is the
+contract and `reference/SLICE4_FRONTEND_CONTRACT.md` is what the doctor's
+Review station is built against — §10 of it says which part of that contract
+has a screen and which part does not.
+
+### Read by task
+
+| Task | Read next |
+|---|---|
+| UI/UX or a doctor, nurse, pharmacy, or admin workspace | `UI_UX_PLAN.md`, then the relevant material in [`reference/`](reference/) and the interactive files in [`design/`](design/) |
+| Clinical vocabulary or medicine identity | [`reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md`](reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md) |
+| Packages, stock, FEFO, costing, or expiry | [`reference/INVENTORY.md`](reference/INVENTORY.md) plus the medicine-identity research |
+| Tablet hardware or touch interaction | [`reference/TABLET.md`](reference/TABLET.md); current interface decisions still come from `UI_UX_PLAN.md` |
+| WhatsApp | [`reference/WHATSAPP.md`](reference/WHATSAPP.md), with time-sensitive policy rechecked before release |
+| Competitor features, workflows, and market positioning | [`reference/COMPETITIVE_LANDSCAPE_2026.md`](reference/COMPETITIVE_LANDSCAPE_2026.md) |
+| Backend implementation of the competitive and workflow improvements | [`reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md`](reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md), then the current core documents it requires |
+| What that programme found, what it still has to decide, and in what order | [`reference/BACKEND_PROGRAMME_REGISTER.md`](reference/BACKEND_PROGRAMME_REGISTER.md) — the evidence baseline, work register, decision register and compatibility map |
+| Investigations, referrals, results, review, or telling a patient a result is ready | [`reference/SLICE4_FRONTEND_CONTRACT.md`](reference/SLICE4_FRONTEND_CONTRACT.md), then `SCHEMA_AND_TYPES.md` §17 and owner policy §N |
+| Building a screen on what the backend programme has already delivered | [`reference/SLICE1_FRONTEND_CONTRACT.md`](reference/SLICE1_FRONTEND_CONTRACT.md) — the `workspace` endpoint's fields, role matrix, states, retry rules and stated limits, then [`reference/SLICE2_FRONTEND_CONTRACT.md`](reference/SLICE2_FRONTEND_CONTRACT.md) — the accepted appointment-book, queue-convergence, and consultation-attempt reconciliation contract. The bounded consultation safety cutover and the bounded appointment-book station both exist; its §11 lists what the station leaves unbuilt. |
+| Staging, rollout, or PIN recovery | The applicable runbook in [`operations/`](operations/) |
+| Product rationale from the design sessions | [`reference/PRODUCT_UX_DISCOVERY.md`](reference/PRODUCT_UX_DISCOVERY.md); later core documents take precedence |
+| Why an earlier decision was raised | [`../archive/docs/current-programme/`](../archive/docs/current-programme/) |
+| Comparing the simpler earlier interface | `../archive/local/hospital-all-in-one-reference/`, when that ignored local reference folder is present |
+
+### When documents differ
+
+1. Source code, migrations, and tests show what the application does now.
+2. `OWNER_POLICY_REGISTER.md` records approved product policy.
+3. `UI_UX_PLAN.md` records the target interface and workflow.
+4. `SCHEMA_AND_TYPES.md` and `AGENT_IMPLEMENTATION_BRIEF.md` define the current
+   technical contract and delivery constraints.
+5. `reference/` explains specialist research and earlier discovery.
+6. `archive/` preserves tracked history and ignored local comparison material.
+
+If two current sources still conflict, record and resolve the conflict instead
+of silently choosing one.
 
 ---
 
@@ -22,7 +109,7 @@ The application is two programs that never share a process:
 | | | |
 |---|---|---|
 | **the page** | `app/`, `components/`, `lib/` | a **static export**. `next build` writes plain HTML, CSS and JavaScript to `out/`; Cloudflare serves those files. Nothing runs behind them |
-| **the backend** | `supabase/` | **Deno**. Nine Edge Functions deployed beside the database, talking to Postgres directly |
+| **the backend** | `supabase/` | **Deno**. Sixteen Edge Functions deployed beside the database, talking to Postgres directly |
 
 That split is not taste. Each half of it was forced, and each reason is a
 failure that already happened. The prose at the top of `next.config.ts`,
@@ -67,7 +154,9 @@ and dies on sign-out.
 ### How the halves talk
 
 Every request goes to `NEXT_PUBLIC_FUNCTIONS_URL` with
-`Authorization: Bearer <token>`. There are nine endpoints:
+`Authorization: Bearer <token>`. There are sixteen — fourteen driven by a
+member of staff holding a session, and two, added by Slice 3B, that are not
+driven by a person at all:
 
 | Function | |
 |---|---|
@@ -79,6 +168,13 @@ Every request goes to `NEXT_PUBLIC_FUNCTIONS_URL` with
 | `record` | one patient's history, fetched when somebody opens that patient |
 | `register` | the Schedule H1 register for a date range |
 | `csv` | the drug master, in and out |
+| `reports` | fifteen named reports, each with its own role gate |
+| `inventory` | the stock ledger, goods receipts, a barcode lookup, the formulary — read on demand rather than polled |
+| `images` | clinical image tickets, bytes and metadata. Pharmacy is refused outright |
+| `results` | Slice 4's laboratory reports: attach one, mint a sixty-second ticket, fetch the bytes. A separate endpoint from `images` because a photograph the clinic takes and a report the clinic receives are governed by different owner items. Pharmacy is refused outright, and an administrator may attach a report without being able to open one |
+| `whatsapp` | **not a person.** Meta's verification challenge and its signed statuses webhook. Verifies `X-Hub-Signature-256` over the raw request bytes before parsing anything, and is the only thing in this application that can say a message was delivered |
+| `worker` | **not a person.** One dispatch cycle, behind `CLINIC_WORKER_TOKEN`. A staff session is refused here exactly as an anonymous caller is; see `SCHEMA_AND_TYPES.md` §16.6 |
+| `workspace` | what a workspace opens with — patient search, the patient band, actionable counts and their drill-downs, visit progress, safe-exit obligations, what an idempotency key committed, proven-equivalent products, and the Slice 2 views: the appointment calendar, a patient's own appointments, what one appointment reference did (for the person who sent it), and the reconciliation of an unresolved consultation attempt. Read on demand; its roles come from one capability table |
 
 Two properties are worth knowing before you change either half.
 
@@ -100,23 +196,44 @@ to Mumbai and back with the button busy through both.
 ```
 app/                    layout, one page, the web manifest — the whole route tree
 components/             ClinicApp (the chrome and the ten workspaces) and ui/
+  result-review.tsx     the doctor's Slice 4 station, inside Review
+  appointment-book.tsx  the Slice 2 appointment station, and the expected-today
+                        pointer on Today and Due now
 lib/
   api.ts                the ONLY thing that talks to the backend; token handling
-  order-status.ts       delivery state and reorder quantity — pure, and tested
-  types.ts              the snapshot's shape, mirrored from the backend by hand
+  appointment-attempt.ts  one reference per appointment act, held until the
+                        clinic confirms it; the reload note holds ids only
+  appointment-book.ts   clinic-time, published-hours and replay arithmetic
+  attempt-key.ts        the consultation attempt's browser-storage lifecycle
+  consultation-attempt.ts  client handling for attempt refusal and recovery
+  consultation-reconciliation.ts  coded recovery and retry policy
+  result-decisions.ts   is follow-up owed, and did a lost act commit — pure,
+                        and unit-tested because both were once wrong
+  result-recovery.ts    the opaque note a tablet leaves itself about
+                        unfinished result follow-up
+  types.ts              the frontend door to the backend's shared type contract
 public/
   _headers              the four security headers, applied by Cloudflare —
                         a static export has no server to set them
 supabase/
   functions/
-    _shared/            auth · commands (the large one) · db · http · password ·
-                        snapshot · types · whatsapp · order-status
-    <nine dirs>/        index.ts each, one Deno.serve per endpoint
+    _shared/            auth · commands (the large one) · counter · inventory ·
+                        snapshot · types · db · http · password · money ·
+                        packages · images · storage · whatsapp · order-status ·
+                        capabilities · idempotency · workspace ·
+                        appointments · clinic-policy · command-input ·
+                        messaging · messaging-transport · whatsapp-cloud ·
+                        internal-auth · diagnostics
+    <sixteen dirs>/     index.ts each, one Deno.serve per endpoint
   migrations/           forward-only SQL, named by timestamp. Creates `jmc`
 scripts/
   set-db-url.mjs        writes DATABASE_URL into .env.local without it passing
                         through a shell whose quoting rules you have to guess
-tests/                  two files. This is the entire automated suite
+tests/
+  *.test.ts/.mjs        five files of pure unit tests — `npm test`
+  characterization/     the database suite — `npm run test:db`, §6
+  browser/              real-Chrome journeys — `npm run test:browser`, §6
+  support/              the bridge that points both suites at guarded staging
 archive/                material excluded from the build and runtime; see its README
 next.config.ts          output: 'export'
 wrangler.jsonc          no `main`, no Worker — an assets directory and a domain
@@ -141,23 +258,28 @@ npm run dev          # http://localhost:3000, and on the LAN — it binds 0.0.0.
 
 ```bash
 npm run typecheck    # tsc --noEmit. Covers the page. NOT the backend — see §5
-npm test             # node --test, the two files in tests/
+npm test             # node --test, the four unit files in tests/
 npm run build        # writes out/
 ```
 
 `npm run preview` (or `npm start`) serves the built `out/` directory through
 Wrangler on `http://localhost:3000`. Run `npm run build` first.
 
-### The trap: there is no local backend
+### The trap: `npm run dev` is not the sandbox
 
 This repository has no `supabase/config.toml` — it was deleted with the retired
 application — so `supabase start` and `supabase functions serve` are not set up
-here, and there is no local Postgres, no seed and no offline stack of any kind.
+here. What replaced them is `npm run staging:up`: a disposable PostgreSQL 17 in
+Docker with the real migrations and synthetic fixtures, and
+`scripts/staging/functions-server.mjs`, which runs all sixteen real Edge
+Functions under Node. That is a complete offline stack and
+[`operations/STAGING.md`](operations/STAGING.md) is how to drive the application
+against it.
 
-What that means in practice is worth being blunt about: **`npm run dev` points
-at whatever `NEXT_PUBLIC_FUNCTIONS_URL` says, and today that is the deployed
-functions, which are in front of the clinic's live database.** Local development
-is not a sandbox. A command you send from `localhost:3000` while trying
+What it is not is the default. **`npm run dev` points at whatever
+`NEXT_PUBLIC_FUNCTIONS_URL` says, and today that is the deployed functions,
+which are in front of the clinic's live database.** Plain `npm run dev` is not
+a sandbox. A command you send from `localhost:3000` while trying
 something out registers a real patient, moves real stock, or takes a real
 batch off the shelf.
 
@@ -189,7 +311,9 @@ What the functions actually read, all through `Deno.env`:
 |---|---|
 | `SUPABASE_DB_URL` | injected by Supabase. Nothing to set |
 | `CLINIC_SESSION_SECRET` | **required.** `auth.ts` refuses to start without it — unconditionally, with no development fallback, because the previous guard was `NODE_ENV === 'production'` and an Edge Function never sets that, so every deployment hashed its session tokens with a secret published in the source. Set it on the deployed functions: `npx supabase secrets set CLINIC_SESSION_SECRET=...` |
-| `WHATSAPP_*` | five values. Until all of them exist the application keeps real send controls disabled and never reports a message as sent. Drafting still works |
+| `WHATSAPP_*` | five values, four of them required together. Until all four exist the adapter is fully disabled, the `whatsapp` webhook refuses every request including a correctly signed one, and every automatically scheduled message is suppressed into the admin's queue with `channel_not_configured` against it rather than silently dropped. There is no partial mode and no development default. `WHATSAPP_API_VERSION` is the optional fifth and defaults to `v23.0` |
+| `CLINIC_WORKER_TOKEN` | **required by the `worker` endpoint, and by nothing else.** One long random string, held by the scheduler. Unset means the endpoint refuses everybody, including a correct caller — an unset secret must never mean "no check". It is not a staff credential and never goes on a tablet |
+| `CLINIC_PUBLIC_PAGE_URL` | optional. The one destination a Slice 3A template may link to. A template that interpolates `{{link}}` is suppressed with `link_destination_unavailable` while this is unset |
 
 ---
 
@@ -209,8 +333,10 @@ pinned copy. Remember §4: the `NEXT_PUBLIC_FUNCTIONS_URL` in the environment at
 project to act on until you link one (`npx supabase link --project-ref <ref>`)
 or pass `--project-ref` to each command. Migrations go up with
 `npx supabase db push`; each function with
-`npx supabase functions deploy <name>`. Secrets with
-`npx supabase secrets set`.
+`npx supabase functions deploy <name> --no-verify-jwt` — the flag is required,
+because the tablets send the clinic's own session token rather than a Supabase
+JWT and the gateway would otherwise refuse every request
+(`operations/ROLLOUT.md` §3). Secrets with `npx supabase secrets set`.
 
 Those Supabase commands are written from the CLI's documented interface and
 from what the repository requires. **They have not been run from a clean
@@ -219,29 +345,32 @@ likely to bite. Treat them as the right shape rather than as a script.
 
 ---
 
-## 6. What is not covered
+## 6. What is covered, and what is not
 
-The honest list, because the previous version of this file claimed a test suite
-that no longer exists and sent people looking for it.
+This section has been wrong twice in opposite directions — once claiming a test
+suite that had been deleted, then once denying suites that had since been built.
+It is rewritten here against what `npm run` actually does today.
 
-**There is no database test suite.** No pgTAP, no fixtures, no seed. Nothing
-anywhere applies a migration or asserts that a query names a column that exists.
-The SQL in `supabase/migrations/` is checked by running it.
+### What runs
 
-**There is no end-to-end test.** No Playwright, no browser automation, no gate.
-Nothing proves a tablet can sign in, that a prescription reaches the counter, or
-that a bill prints. Every claim in §1 about how the halves talk is a claim about
-code that has been read, not code that has been exercised by a test.
+| Command | What it is |
+|---|---|
+| `npm run typecheck` | `tsc --noEmit` over the page. Does **not** see `supabase/` — `tsconfig.json` excludes it. |
+| `npm test` | **106 tests** over ten files, no database, no network. Passwords, order status, money, supplier-order packs and the WhatsApp link, the consultation attempt key, what counts as a database being ready, the result station's recovery note and decisions, and the appointment station's reference lifecycle and clinic-time arithmetic — that a reference is held until the clinic confirms, that the reload note carries identifiers only, and that a `datetime-local` value is never read in the tablet's zone. |
+| `npm run build` | The static export. |
+| `deno check` | The backend's types. The command is below; it is not covered by `typecheck`. |
+| `npm run test:db` | **1014 tests** over 187 suites in thirty-three files, against a real PostgreSQL 17 with the real migrations applied. Sign-in, roles, the queue, consultation, the unreadable-history resolutions, packages, receiving, the ledger, dispensing, fees, invoices, payments, images, the Slice 6 security sweep, the counter authorization matrix, the consultation idempotency key, which visit a consultation belongs to through every way the two can part, the workspace read models with their role matrix, the appointment book against owner items 65–71, the consultation/visit reconciliation against items 72–75, the appointment station's outcome read — actor-scoped, in flight observed by lock, a refusal leaving the reference unspent — Slice 3A's message templates, consent, schedules, outbox and delivery attempts against items 76–83, Slice 3B's provider adapter, dispatch worker and authenticated webhook, supplier orders against owner item 89 — whole packs, nothing ordered twice, marked sent once — and Slice 4's diagnostics loop against owner items 84–88 — the catalogue's two-tier authority, the two flag origins and the generated effective flag, wrong-patient attachment refused by composite key, corrections invalidating a stale review and a stale authorization, owner item 87's escalation clock, and owner item 88's rule that acceptance is not delivery — plus concurrency tests that open separate connections and race them, including two tablets signing one queued patient under one reference, two tablets checking one booking in, two bookings for one slot, two doctors reconciling one attempt, three workers dispatching one message, a consent withdrawal racing a worker that is already preparing it, two doctors reviewing one result, a review racing a correction, two authorizations of one result, two drafts for one low medicine and two people marking one order sent. **No test here makes an external provider request**: the messaging channel is injected, the test adapter refuses at construction to address anything but loopback, and the Slice 3B suite replaces `fetch` itself with a stub that throws and records, then asserts at the end that nothing was ever attempted. |
+| `npm run test:browser` | **119 journeys** through a real Chrome against the built export. `docs/operations/STAGING.md` §5 lists them. |
+| `npm run staging:rehearse` | Twenty-five checks. Applies every migration from Slice 2 onwards to a database that already has history — including five legacy arrivals, two of them sharing a token — then applies them a second time to prove the backfills are idempotent. It had been dead since `20260915` was written — see `reference/BACKEND_PROGRAMME_REGISTER.md` §4 — and was repaired on 14 September 2026. |
+| `npm run staging:drill` | The backup and restore, rehearsed on a scratch database. A **fresh dump**, out and back. |
+| `npm run staging:archive-drill` | **85 checks.** The stored-object restore proof, rehearsed against a directory standing in for the bucket: the real `scripts/db-restore-archive.sh` selects an object out of a retention prefix, downloads it, compares sizes, decrypts it with a throwaway age identity, verifies the gzip stream, restores it into a generated loopback scratch database and counts it. The rest of the checks are the refusals — traversal, cross-prefix, an unencrypted object, a zero-byte object, a short transfer, corrupted ciphertext, a wrong identity, a broken gzip stream, unloadable SQL, a non-loopback target, the live and staging database names, an existing database, the backup writer's own credentials — plus that no rclone write ever runs, that nothing secret or identifying reaches the output, and that the temporary files and the scratch database are gone afterwards on every path. It reaches no network. |
 
-**`tests/` is two files and four tests** — `password.test.ts` and
-`order-status.test.ts`. `password.test.ts` is the interesting one: it runs the
-backend's *own* `_shared/password.ts` under Node, which works only because that
-file uses nothing but `node:crypto`, and it asserts that hashing does not block
-the event loop — the exact property whose absence killed sign-in on Cloudflare.
+`test:db`, `test:browser`, `staging:rehearse`, `staging:drill` and
+`staging:archive-drill` all refuse any
+database that is not a loopback scratch database — `scripts/staging/guard.mjs`,
+and `docs/operations/STAGING.md` §2 explains why that guard is not optional here.
 
-**`npm run typecheck` does not see the backend.** `tsconfig.json`'s `exclude`
-list contains `"supabase"`, so `tsc` never opens an Edge Function. CI covers
-this with a separate step; to run it yourself:
+The backend typecheck, which CI runs and `npm run typecheck` does not:
 
 ```bash
 shopt -s globstar
@@ -252,40 +381,184 @@ deno check --node-modules-dir=none supabase/functions/**/*.ts
 root's `package.json` and `node_modules` — the page's, not the functions' — and
 tries to resolve `npm:postgres` and `npm:csv-parse` out of a tree that has never
 held either, failing before it typechecks a line. Deno is not a dependency here;
-install it separately.
+`npm exec --yes -- deno@2.9.6` fetches the pinned version on demand.
 
-**CI checks four things and nothing else**: the page's types, the two unit
-tests, that the export builds, and the backend's types. See the comment at the
-top of `.github/workflows/ci.yml`, which says the same thing at the point where
-somebody might otherwise assume more.
+### What is still not covered
 
-**Automated off-site backups are not configured.** The retired workflow called
-`scripts/ci-pgdg.sh`, `scripts/db-backup.sh`, `scripts/db-start.sh` and
-`scripts/db-restore-drill.sh`, none of which exist any more. It has been disabled
-and preserved at `archive/github-workflows/backup.yml`. Therefore **the off-site
-encrypted backups described in `../archive/docs/HOSTING.md` §5 are not
-happening**, and neither is the restore drill.
+**The two bounded Slice 2 cutovers are not the whole Slice 2 UI programme.**
+The consultation screen implements attempt recovery and reconciliation, and
+the Appointments station implements one day's book from booking through
+check-in. Appointment types, publishing and retiring availability, a
+multi-day calendar, urgent queue priority and cross-device recovery of a lost
+appointment reply have no screen; `reference/SLICE2_FRONTEND_CONTRACT.md` §11.4
+says why each was left.
+
+**Slice 3B built the adapter and the webhook, and still nothing has been
+sent.** No message has ever gone out, no provider has ever answered a line of
+this code, no credential exists, no Meta template has been approved, no
+scheduler is provisioned, and no screen renders any of the read models. The
+adapter is disabled without its four `WHATSAPP_*` values and the worker refuses
+every caller without `CLINIC_WORKER_TOKEN`; both are unset.
+
+What that means precisely: the *logic* of sending is now tested — the payload,
+the acceptance-is-not-delivery rule, the retry ceiling, the signature check, the
+deduplication, the out-of-order rules — against a transport that cannot leave
+the machine. The *integration* is untested, because there is nothing to
+integrate with yet. Two constants and the named-parameter payload shape are
+marked provisional in the code for exactly that reason, and
+`SCHEMA_AND_TYPES.md` §16.9 and `operations/ROLLOUT.md` §9 list what has to be
+true before any of it is switched on.
+
+**Retrospective finished-visit linking is not discoverable in this bounded
+screen.** The accepted command can link Same attendance to a visit already
+marked `done`, but the reconciliation read returns only `openVisits`. The screen
+therefore cannot offer a finished visit identifier it was never given. The
+backend contract was not changed in this frontend cutover.
+
+**CI runs two of those and reports a third.** `.github/workflows/ci.yml` has
+`check` (types, unit tests, build, backend types), `database` (migrations,
+`test:db`, the restore drill) and `browser`. **The `browser` job has run
+once**, green, on pull request #38 on 27 October 2026; it is a job that
+reports, not a gate, until it has been green twice. The same run is also the
+first time `database` met a runner, and it was stopped at its old 15-minute
+limit partway through a suite that takes about 22; the limit is now 40.
+`docs/operations/STAGING.md` §6 says the same at more length.
+
+**No test has ever touched the clinic's data.** The fixtures are synthetic and
+small. Nothing here proves a migration behaves against two years of real rows;
+`staging:rehearse` proves it against a *representative* history this repository
+made up. `docs/operations/ROLLOUT.md` §2 is the set of count-only queries that ask the real
+database the same questions, and they have not been run either.
+
+**Nothing here tests hardware.** No printer, no tablet, no clinic Wi-Fi. Print
+layout is checked in a browser at A4 and 80 mm, which proves the CSS and
+nothing about paper.
+
+**Nothing here tests Supabase's own policies.** Clinical images are stored
+through `storage.ts`, which writes to a directory in staging and to Supabase
+Storage in the clinic. Every rule *this application* enforces is exercised;
+that the bucket is private and refuses an anonymous read is a deployment check,
+in `docs/operations/STAGING.md` §7.2.
+
+**Backups run. The tooling to restore one now exists and is tested. No
+object in R2 has been restored from.** Those are three different things and
+this section has to keep them apart, because two of them are green and the
+third is the one that matters.
+
+1. **The dump-and-restore path is proven.** `.github/workflows/backup.yml`
+   dumps five times a day plus a nightly and a monthly, encrypts with `age` and
+   uploads to R2; its nightly `restore-drill` job takes a *fresh* dump from the
+   live database and restores it onto plain PostgreSQL 17. `npm run
+   staging:drill` is the same two scripts against staging. This proves
+   `pg_dump` output can be put back. It says nothing about the bucket.
+2. **The stored-object restore path is now built and tested — against a
+   directory.** `scripts/db-restore-archive.sh` selects an object from a
+   retention prefix, downloads it, checks it against the remote's size and
+   whatever checksum the remote offers, decrypts it with the age identity,
+   verifies the gzip stream, restores it into a generated loopback scratch
+   database, validates it by structure and counts only, and removes both the
+   scratch database and every temporary file. `npm run staging:archive-drill`
+   rehearses it end to end with synthetic fixtures, a generated throwaway
+   identity and a local directory acting as the bucket — 85 checks, no network.
+   This proves the tooling. It does not prove the clinic's archive.
+3. **No object in R2 has ever been fetched, decrypted or restored.** That is
+   still true, it is still W9, and it is still the gap worth closing first,
+   because it is the one that only shows up on the day it matters. Closing it
+   needs a read-only R2 token and the age identity on a protected GitHub
+   environment, and one approved run of `.github/workflows/archive-restore.yml`.
+   `docs/operations/ROLLOUT.md` §8.1 is the procedure and the exact owner
+   actions. **Production must not go live before it has been done once.**
+
+**There is still no branch protection.** Nothing forces a green CI before a
+merge to `main`.
 
 ---
 
-## 7. The rest of this folder
+## 7. Documentation and history
 
-The retired application's documents now live under `../archive/docs/`. Some are
-still valuable because the design reasoning did not stop being true when the
-code changed, but they are historical context rather than operating
-instructions.
+The top of `docs/` contains only the five current core documents in the map
+above. Supporting material is grouped by purpose:
 
-| File | State |
-|---|---|
-| `../archive/docs/PLAN.md` · `../archive/docs/PROPOSAL.md` | pre-build design and the client proposal. The *product* reasoning still holds. The architecture (RLS, plpgsql transitions, Supabase Realtime) describes the retired application |
-| `INVENTORY.md` | the unit model, FEFO, costing, the expiry return window. **Still the reference.** Almost entirely design, almost nothing implementation |
-| `WHATSAPP.md` | Meta policy and the deep-link route. Still applies, and independent of either architecture. Verify the policy dates against Meta rather than this file |
-| `TABLET.md` | the interaction brief. Still useful; its auth section describes device tokens, which are gone |
-| `../archive/docs/HOSTING.md` | the ₹0 argument. The conclusion held; the route changed completely (Workers, then the split in §1). **§5's backups are described as running and are not** — see §6 |
-| `../archive/docs/BUILD.md` | 85 KB of milestone-by-milestone build log for the retired application. Every command, path and gate in it is dead. History, not instructions |
-| `../archive/docs/GO_LIVE.md` | a cutover runbook whose first step is `pnpm test:go-live`, a script that does not exist |
-| `../archive/docs/REVIEW.md` | a consistency review of documents that have since been superseded twice |
-| `../archive/docs/NEXT.md` | a session handover from 29 Aug 2026. Accurate about that morning; overtaken by the rewrite |
+```text
+docs/
+  README.md                     current system and documentation index
+  UI_UX_PLAN.md                 target interface and role workflows
+  OWNER_POLICY_REGISTER.md      approved owner decisions
+  SCHEMA_AND_TYPES.md           current data and API contract
+  AGENT_IMPLEMENTATION_BRIEF.md implementation constraints and sequence
+  reference/                    specialist research and discovery
+  operations/                   staging, rollout, and recovery runbooks
+  design/                       interactive UI concepts
+```
 
-The root `README.md` is now the short entry point for setup, commands, project
-structure, and deployment. This document remains the detailed source of truth.
+`../archive/docs/current-programme/` contains superseded decision and milestone
+documents from this programme. The other files under `../archive/docs/`
+describe a retired application. The ignored local
+`../archive/local/hospital-all-in-one-reference/` folder preserves the earlier,
+simpler interface for comparison when it is available. None of these
+historical sources is an operating instruction.
+
+### Complete documentation inventory
+
+There are **22 active Markdown documents** and two HTML design references. The
+11 tracked historical Markdown documents are listed separately; ignored local
+archives, generated files, and dependency documentation are deliberately not
+expanded here.
+
+```text
+Repository entry documents
+  AGENTS.md
+  CLAUDE.md
+  README.md
+
+Current core documents
+  docs/README.md
+  docs/UI_UX_PLAN.md
+  docs/OWNER_POLICY_REGISTER.md
+  docs/SCHEMA_AND_TYPES.md
+  docs/AGENT_IMPLEMENTATION_BRIEF.md
+
+Current specialist references
+  docs/reference/BACKEND_PROGRAMME_REGISTER.md
+  docs/reference/CLAUDE_BACKEND_IMPLEMENTATION_PROGRAMME.md
+  docs/reference/SLICE1_FRONTEND_CONTRACT.md
+  docs/reference/SLICE2_FRONTEND_CONTRACT.md
+  docs/reference/SLICE4_FRONTEND_CONTRACT.md
+  docs/reference/COMPETITIVE_LANDSCAPE_2026.md
+  docs/reference/PRODUCT_UX_DISCOVERY.md
+  docs/reference/CLINICAL_TERMINOLOGY_AND_MEDICINE_DATA_RESEARCH.md
+  docs/reference/INVENTORY.md
+  docs/reference/TABLET.md
+  docs/reference/WHATSAPP.md
+
+Current operations
+  docs/operations/STAGING.md
+  docs/operations/ROLLOUT.md
+  docs/operations/PIN_RESET_RUNBOOK.md
+
+Current interactive design references
+  docs/design/clinic-visual-workflow.html
+  docs/design/clinic-workspace.html
+
+Superseded documents from the current programme
+  archive/docs/current-programme/OWNER_DECISIONS.md
+  archive/docs/current-programme/SLICE3_CLINIC_APPROVAL_PACK.md
+
+Retired-application history
+  archive/README.md
+  archive/docs/README.md
+  archive/docs/BUILD.md
+  archive/docs/GO_LIVE.md
+  archive/docs/HOSTING.md
+  archive/docs/NEXT.md
+  archive/docs/PLAN.md
+  archive/docs/PROPOSAL.md
+  archive/docs/REVIEW.md
+
+Local-only comparison material (not tracked or counted above)
+  archive/local/hospital-all-in-one-reference/
+```
+
+The root `README.md` is the short entry point for setup, commands, project
+structure, and deployment. This document remains the detailed technical source
+and the index for all other documentation.

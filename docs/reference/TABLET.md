@@ -1,5 +1,9 @@
 # Tablet-first — the UI/UX brief
 
+> **Reference status:** use this for tablet hardware and touch constraints. Use
+> [`../UI_UX_PLAN.md`](../UI_UX_PLAN.md) for current role-workspace and
+> interaction decisions; the older authentication design below is historical.
+
 Venu's instruction: this runs on tablets. That is not a responsive-design note,
 it changes the interaction model. Two tablets, in two rooms, used all day by two
 people who are looking at a patient more than at a screen.
@@ -209,7 +213,7 @@ Used in the prescription composer and at the counter, dozens of times a day.
 - Results render **above** the keyboard, in the top half of the screen.
 - Matches on brand, salt and common misspellings; 3 characters is enough.
 - Each row carries the live stock badge inline — `18 in stock · Mar 2027`,
-  `OUT — 2 alternatives` (`PLAN.md` §11.2, `INVENTORY.md` §7).
+  `OUT — 2 alternatives` (`PLAN.md` §11.2, `docs/reference/INVENTORY.md` §7).
 - Recent and frequent drugs before any typing at all. In a single-doctor
   general practice the top 40 drugs are most of the prescriptions, and this
   turns most searches into one tap.
@@ -219,7 +223,7 @@ Used in the prescription composer and at the counter, dozens of times a day.
 
 A custom numpad, laid out large, with the units the pharmacy actually uses
 beside it — `tablets` / `strips` / `boxes`, converting live against the batch
-pack config (`INVENTORY.md` §1) and showing the resulting base units under the
+pack config (`docs/reference/INVENTORY.md` §1) and showing the resulting base units under the
 field. The OS keyboard never appears for a number in this app.
 
 Above it, quick chips for what gets typed most: `1 strip`, `10`, `15`, `1 box`.
@@ -242,7 +246,7 @@ is designed around instead:
 | | Design |
 |---|---|
 | Device | Registered once by Venu, marked `is_clinic_device` (`PLAN.md` §13.2). A long-lived session lives on the device |
-| Person | **6-digit staff PIN** to unlock, per staff member |
+| Person | **4-digit staff PIN** to unlock, per staff member |
 | Idle | Locks after 3 minutes on the counter, 10 in the cabin |
 | Attribution | Every write carries the staff id from the PIN, so the audit log names a person, not a tablet |
 | Lost tablet | Session revoked from the admin screen. A PIN alone is useless on any other device |
@@ -250,6 +254,13 @@ is designed around instead:
 The device holds the session; the PIN holds the identity. Attribution stays
 exact — which the H1 register legally requires — and nobody types a password
 forty times a day.
+
+The four-digit length is an owner-confirmed speed decision. Because it provides
+only 10,000 combinations, it is acceptable only with one PIN per staff member,
+server-side wrong-attempt throttling and temporary lockout, weak-pattern
+rejection, salted slow hashing, short idle expiry, session revocation after a
+reset, and audit logging. Existing six-digit hashes must be replaced through a
+verified staff PIN reset; they must never be truncated.
 
 ---
 
@@ -283,10 +294,10 @@ which is a real failure mode on a shared tablet.
 | **Consult** | Context pane = patient history. Work pane = the form. Rail = Sign Rx. Sections collapse; nothing is more than one scroll |
 | **Rx composer** | The §4 search, then a compact line list. Each line shows stock inline. Long-press a line to edit, swipe to remove, both with undo |
 | **Pharmacy queue** | Newest prescription at the top, arriving live. Colour-coded: fully in stock / partial / out |
-| **Dispense** | Line-by-line with scan-to-verify. Substitution request goes to the doctor from here (`INVENTORY.md` §7) |
+| **Dispense** | Line-by-line with scan-to-verify. Substitution request goes to the doctor from here (`docs/reference/INVENTORY.md` §7) |
 | **Counter sale** | Scan-driven basket, running total large enough to read from the customer's side, numpad for anything manual |
 | **Goods receipt** | The heaviest data-entry screen — scan first, keyboard second. Batch, expiry, MRP, cost per line |
-| **Stock-take** | Blind entry (`INVENTORY.md` §5). Scan, count, next. Optimised for someone standing at a shelf holding the tablet |
+| **Stock-take** | Blind entry (`docs/reference/INVENTORY.md` §5). Scan, count, next. Optimised for someone standing at a shelf holding the tablet |
 | **Reports / registers** | Read-mostly, print to A4. The one place a desktop-ish density is acceptable |
 | **`/now` status page** | Public, phone-first, 3 seconds to load on 3G. This one is not a tablet screen |
 

@@ -3,18 +3,22 @@
 import { callApi } from '@/lib/api'
 import { useMemo, useState, type FormEvent } from 'react'
 import type {
+  BatchView,
   ClinicSnapshot,
   CommandResponse,
   MedicineView,
   PurchaseOrderView,
   SupplierView,
 } from '@/lib/types'
+import { reorderRows, whatsAppLink } from '@/lib/supplier-orders'
 import { useBusy, type ActionRunner } from './clinic-context'
+import { BatchActions, mrpWithBasis, plural } from './formulary-workspace'
 import { Stack } from './shared-panels'
 import {
   ActionButton,
   Badge,
   Button,
+  ButtonLink,
   Card,
   CardBody,
   CardHeader,
@@ -37,7 +41,6 @@ import {
   TR,
   Table,
   Textarea,
-  Token,
   formatDate,
   formatExpiry,
   money,
@@ -59,16 +62,18 @@ const SALE_CLASS_TONE = {
   unknown: 'plain',
 } as const
 
-type OtcRow = { key: string; medicineId: string; quantity: number }
-type Receipt = {
-  receiptNumber: string
-  total: number
-  paymentMethod: string
-  lines: { name: string; quantity: number }[]
-  at: string
-}
+/**
+ * The counter itself.
+ *
+ * Slice 4 moved it to `checkout-workspace.tsx`: handing a prescription over,
+ * selling across the counter and taking money are one desk's work and three
+ * substantial screens, and they no longer belong in the same file as receiving
+ * a delivery. It is re-exported here so the workspace router keeps addressing
+ * it where it has always been.
+ */
+export { CounterPanel } from './checkout-workspace'
 
-/* ------------------------------------------------------------------ counter */
+/* ---------------------------------------------------------------- csv files */
 
 /**
  * Fetch a CSV and hand it to the browser as a file.
@@ -120,359 +125,6 @@ async function downloadCsv(path: string, filename: string): Promise<string | nul
   return null
 }
 
-export function CounterPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
-  const busy = useBusy()
-  const otcMedicines = data.medicines.filter(
-    (medicine) => medicine.active && medicine.saleClass === 'otc',
-  )
-  const [rows, setRows] = useState<OtcRow[]>([])
-  const [paymentMethod, setPaymentMethod] = useState('cash')
-  const [receipt, setReceipt] = useState<Receipt | null>(null)
-
-  const waiting = data.prescriptions.filter((rx) => !rx.dispensedAt)
-
-  function nameOf(id: string) {
-    const medicine = data.medicines.find((item) => item.id === id)
-    return medicine ? `${medicine.name} ${medicine.strength}`.trim() : id
-  }
-
-  function stockOf(id: string) {
-    return data.medicines.find((item) => item.id === id)?.totalAvailable ?? 0
-  }
-
-  /** What the basket comes to, priced off the shelf figures on the snapshot. */
-  const basketProblem = useMemo(() => {
-    for (const row of rows) {
-      if (!row.medicineId) return 'Choose a medicine on every line.'
-      if (!Number.isFinite(row.quantity) || row.quantity < 1) return 'Every line needs a quantity of at least one.'
-      if (row.quantity > stockOf(row.medicineId)) {
-        return `Only ${stockOf(row.medicineId)} of ${nameOf(row.medicineId)} is on the shelf.`
-      }
-    }
-    return undefined
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, data.medicines])
-
-  function addLine() {
-    const first = otcMedicines[0]
-    if (first) {
-      setRows((current) => [
-        ...current,
-        { key: crypto.randomUUID(), medicineId: first.id, quantity: 1 },
-      ])
-    }
-  }
-
-  async function completeSale() {
-    const sold = rows.map((row) => ({ name: nameOf(row.medicineId), quantity: row.quantity }))
-    const result = await run('otc_sale', { lines: rows, paymentMethod })
-    if (result.ok) {
-      const info = result.data as { receiptNumber: string; total: number }
-      setRows([])
-      setReceipt({
-        receiptNumber: info.receiptNumber,
-        total: info.total,
-        paymentMethod,
-        lines: sold,
-        at: new Date().toISOString(),
-      })
-    }
-  }
-
-  return (
-    <Stack>
-      <PageHeader
-        eyebrow="Pharmacy counter"
-        title="Dispensing & OTC sales"
-        sub={`${waiting.length} prescriptions waiting · ${otcMedicines.length} medicines sellable over the counter`}
-      />
-
-      {receipt ? <OtcReceipt receipt={receipt} onClose={() => setReceipt(null)} /> : null}
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-4">
-          {/* --------------------------------------------------- OTC basket */}
-          <Card variant="record" data-print="hide">
-            <CardHeader
-              title="New OTC sale"
-              sub={`${rows.length} ${rows.length === 1 ? 'line' : 'lines'}`}
-              action={<Badge tone="plain">No patient required</Badge>}
-            />
-            <CardBody className="space-y-3">
-              {rows.length === 0 ? (
-                <EmptyState
-                  title="The basket is empty"
-                  direction="Only medicines marked OTC can be sold here. Anything prescription-only must go through a signed prescription."
-                  action={
-                    <Button
-                      variant="primary"
-                      onClick={addLine}
-                      disabled={otcMedicines.length === 0}
-                      title={
-                        otcMedicines.length === 0
-                          ? 'No medicine on the shelf is marked OTC.'
-                          : undefined
-                      }
-                    >
-                      Add first item
-                    </Button>
-                  }
-                />
-              ) : (
-                <>
-                  {rows.map((row, index) => (
-                    <div
-                      key={row.key}
-                      className="grid grid-cols-1 gap-3 border-l-2 border-ink bg-paper/40 p-3 sm:grid-cols-[minmax(0,2fr)_110px_auto] sm:items-end"
-                    >
-                      <Field label={`Item ${index + 1}`}>
-                        <Select
-                          value={row.medicineId}
-                          onChange={(event) =>
-                            setRows((current) =>
-                              current.map((item) =>
-                                item.key === row.key
-                                  ? { ...item, medicineId: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                        >
-                          {otcMedicines.map((medicine) => (
-                            <option value={medicine.id} key={medicine.id}>
-                              {medicine.name} {medicine.strength} · {medicine.totalAvailable} in stock
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field label="Quantity" unit={data.medicines.find((m) => m.id === row.medicineId)?.unit}>
-                        <Input
-                          type="number"
-                          inputMode="numeric"
-                          min="1"
-                          max={stockOf(row.medicineId)}
-                          value={row.quantity}
-                          onChange={(event) =>
-                            setRows((current) =>
-                              current.map((item) =>
-                                item.key === row.key
-                                  ? { ...item, quantity: Number(event.target.value) }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                      <Button
-                        variant="danger"
-                        aria-label={`Remove ${nameOf(row.medicineId)}`}
-                        onClick={() =>
-                          setRows((current) => current.filter((item) => item.key !== row.key))
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  ))}
-
-                  <Button onClick={addLine}>Add another item</Button>
-                </>
-              )}
-
-              {basketProblem ? <Notice tone="bad">{basketProblem}</Notice> : null}
-
-              <div className="flex flex-wrap items-end justify-end gap-3 border-t border-rule pt-3">
-                <Field label="Payment" className="w-[160px]">
-                  <Select
-                    value={paymentMethod}
-                    onChange={(event) => setPaymentMethod(event.target.value)}
-                  >
-                    <option value="cash">Cash</option>
-                    <option value="upi">UPI</option>
-                    <option value="card">Card</option>
-                  </Select>
-                </Field>
-                <ConfirmButton
-                  variant="primary"
-                  busy={busy}
-                  busyLabel="Completing…"
-                  disabled={rows.length === 0 || Boolean(basketProblem)}
-                  disabledReason={basketProblem ?? 'Add at least one item to the basket.'}
-                  title="Complete OTC sale"
-                  question={
-                    <>
-                      Take payment by {paymentMethod} and hand over{' '}
-                      <span className="font-semibold">{rows.length}</span>{' '}
-                      {rows.length === 1 ? 'item' : 'items'}? Stock leaves the shelf and the receipt
-                      is numbered — neither can be undone here.
-                    </>
-                  }
-                  confirmLabel="Complete sale"
-                  onConfirm={completeSale}
-                >
-                  Collect & complete
-                </ConfirmButton>
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* --------------------------------------------- Rx dispensing */}
-          <Card data-print="hide">
-            <CardHeader title="Prescriptions ready to dispense" sub={`${waiting.length} waiting`} />
-            <CardBody className="space-y-3">
-              {waiting.length === 0 ? (
-                <EmptyState
-                  title="No prescriptions waiting"
-                  direction="A doctor signs a consultation with medicines on it, and it arrives here for the counter."
-                />
-              ) : (
-                waiting.map((rx) => (
-                  <div key={rx.id} className="border-l-2 border-ink bg-paper/40 p-3">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <p className="text-[15px] font-semibold">{rx.patientName}</p>
-                      <p className="font-mono text-[12px] text-ink-2">
-                        {rx.doctorName} · {formatDate(rx.signedAt)}
-                      </p>
-                    </div>
-                    <ul className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                      {rx.items.map((item) => (
-                        <li
-                          key={`${rx.id}-${item.medicineId}`}
-                          className="border border-rule bg-sheet px-2.5 py-2 text-[13px]"
-                        >
-                          <span className="block font-semibold">{item.medicineName}</span>
-                          <span className="mt-0.5 block font-mono text-[12px] text-ink-2">
-                            {item.dosage} · {item.instructions} · qty {item.quantity}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <ConfirmButton
-                        variant="primary"
-                        busy={busy}
-                        busyLabel="Dispensing…"
-                        title="Dispense prescription"
-                        question={
-                          <>
-                            Hand over every line of{' '}
-                            <span className="font-semibold">{rx.patientName}</span>&apos;s
-                            prescription? Stock is allocated first-expiry-first and leaves the shelf
-                            for good.
-                          </>
-                        }
-                        confirmLabel="Dispense"
-                        onConfirm={() => run('dispense_rx', { prescriptionId: rx.id })}
-                      >
-                        Dispense Rx
-                      </ConfirmButton>
-                      <Button onClick={() => window.print()}>Print</Button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* ------------------------------------------------- receipt ledger */}
-        <aside className="xl:sticky xl:top-5 xl:self-start" data-print="hide">
-          <Card>
-            <CardHeader title="Recent OTC receipts" sub={`${data.otcSales.length} today`} />
-            <CardBody className="space-y-2">
-              {data.otcSales.length === 0 ? (
-                <p className="text-[13px] text-ink-2">
-                  No OTC sale has been rung up yet. Completed sales are listed here with their
-                  receipt number.
-                </p>
-              ) : (
-                data.otcSales.map((sale) => (
-                  <div
-                    key={sale.id}
-                    className="flex items-baseline justify-between gap-3 border-b border-rule pb-2 last:border-b-0"
-                  >
-                    <span className="min-w-0">
-                      <Token code={sale.receiptNumber} />
-                      <span className="mt-1 block font-mono text-[11px] text-ink-2">
-                        {formatDate(sale.createdAt)} · {sale.lineCount}{' '}
-                        {sale.lineCount === 1 ? 'item' : 'items'}
-                      </span>
-                    </span>
-                    <span className="shrink-0 font-mono text-[14px] tabular-nums">
-                      {money(sale.total)}
-                    </span>
-                  </div>
-                ))
-              )}
-            </CardBody>
-          </Card>
-        </aside>
-      </div>
-    </Stack>
-  )
-}
-
-/**
- * The receipt the customer walks out holding.
- *
- * A record-weight document that becomes the whole page when printed: the app
- * chrome, the basket and the ledger all carry `data-print="hide"`, and this
- * carries `data-print="sheet"`. Printing is the tablet's own dialog.
- */
-function OtcReceipt({ receipt, onClose }: { receipt: Receipt; onClose: () => void }) {
-  return (
-    <Card variant="record" data-print="sheet">
-      <CardHeader
-        title="OTC receipt"
-        sub={receipt.receiptNumber}
-        action={
-          <span className="flex gap-2" data-print="hide">
-            <Button variant="primary" onClick={() => window.print()}>
-              Print receipt
-            </Button>
-            <Button variant="ghost" onClick={onClose}>
-              Done
-            </Button>
-          </span>
-        }
-      />
-      <CardBody>
-        <p className="text-[18px] font-semibold tracking-tight">Jayamurugan Clinic</p>
-        <p className="mt-0.5 font-mono text-[12px] text-ink-2">
-          {formatDate(receipt.at)} · paid by {receipt.paymentMethod}
-        </p>
-
-        <Table>
-          <THead>
-            <TR>
-              <TH>Item</TH>
-              <TH num>Quantity</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {receipt.lines.map((line, index) => (
-              <TR key={`${line.name}-${index}`}>
-                <TD>{line.name}</TD>
-                <TD num>{line.quantity}</TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
-
-        <div className="mt-3 flex items-baseline justify-between border-t-2 border-ink pt-3">
-          <span className="eyebrow">Total paid</span>
-          <span className="font-mono text-[20px] font-medium tabular-nums">
-            {money(receipt.total)}
-          </span>
-        </div>
-        <p className="mt-3 text-[11px] text-ink-2">
-          Over-the-counter sale. No patient record is attached to this receipt.
-        </p>
-      </CardBody>
-    </Card>
-  )
-}
-
 /* ---------------------------------------------------------------- inventory */
 
 export function InventoryPanel({
@@ -487,6 +139,11 @@ export function InventoryPanel({
   const busy = useBusy()
   const [query, setQuery] = useState('')
   const [batchesFor, setBatchesFor] = useState<MedicineView | null>(null)
+
+  // The one batch being corrected or flagged, inside the same modal rather
+  // than a second one on top of it: a pharmacist who has just found a box that
+  // should not be sold is already looking at this list.
+  const [managing, setManaging] = useState<BatchView | null>(null)
 
   // The export is the one thing on this screen that does not go through `run`,
   // so it has no share of the shell's notice strip and has to say what went
@@ -575,11 +232,17 @@ export function InventoryPanel({
                 <Field label="Medicine name" required>
                   <Input name="name" required />
                 </Field>
+                <Field label="Generic name" hint="Used by the doctor’s medicine search.">
+                  <Input name="genericName" />
+                </Field>
                 <Field label="Strength">
                   <Input name="strength" placeholder="500mg" />
                 </Field>
                 <Field label="Dosage form">
                   <Input name="dosageForm" placeholder="Tablet" />
+                </Field>
+                <Field label="Usual route" hint="For example oral, topical, inhaled.">
+                  <Input name="route" placeholder="Oral" />
                 </Field>
                 <Field label="Stock unit" required hint="What one of it is called: tablets, bottles.">
                   <Input name="unit" placeholder="tablets" required />
@@ -738,6 +401,8 @@ export function InventoryPanel({
                       <span className="mt-0.5 block font-mono text-[12px] text-ink-2">
                         {medicine.code}
                         {medicine.dosageForm ? ` · ${medicine.dosageForm}` : ''}
+                        {medicine.genericName ? ` · ${medicine.genericName}` : ''}
+                        {medicine.route ? ` · ${medicine.route}` : ''}
                       </span>
                     </TD>
                     <TD>
@@ -772,45 +437,136 @@ export function InventoryPanel({
 
       <Modal
         open={batchesFor !== null}
-        onClose={() => setBatchesFor(null)}
-        title="Batches on the shelf"
-        sub={batchesFor ? `${batchesFor.name} ${batchesFor.strength}`.trim() : undefined}
+        onClose={() => {
+          setBatchesFor(null)
+          setManaging(null)
+        }}
+        title={managing ? 'Correct this batch' : 'Batches on the shelf'}
+        sub={
+          managing
+            ? `${managing.medicineName} · batch ${managing.batchNumber}`
+            : batchesFor
+              ? `${batchesFor.name} ${batchesFor.strength}`.trim()
+              : undefined
+        }
       >
-        {(() => {
-          const batches = data.batches.filter((batch) => batch.medicineId === batchesFor?.id)
-          if (batches.length === 0) {
+        {managing ? (
+          <div className="space-y-4">
+            <Button variant="ghost" onClick={() => setManaging(null)}>
+              Back to the batches
+            </Button>
+            <BatchActions
+              key={managing.id}
+              batch={managing}
+              roles={data.session.roles}
+              run={run}
+              onDone={() => setManaging(null)}
+            />
+          </div>
+        ) : (
+          (() => {
+            const batches = data.batches.filter((batch) => batch.medicineId === batchesFor?.id)
+            if (batches.length === 0) {
+              return (
+                <EmptyState
+                  title="No stock on the shelf"
+                  direction="Receiving a supplier delivery, or importing a CSV, creates the first batch."
+                />
+              )
+            }
             return (
-              <EmptyState
-                title="No stock on the shelf"
-                direction="Receiving a supplier delivery, or importing a CSV, creates the first batch."
-              />
-            )
-          }
-          return (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Batch</TH>
-                  <TH>Expiry</TH>
-                  <TH num>Available</TH>
-                  <TH num>MRP</TH>
-                  <TH>From</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {batches.map((batch) => (
-                  <TR key={batch.id}>
-                    <TD num>{batch.batchNumber}</TD>
-                    <TD num>{formatExpiry(batch.expiry)}</TD>
-                    <TD num>{batch.availableQuantity}</TD>
-                    <TD num>{money(batch.mrp)}</TD>
-                    <TD className="text-ink-2">{batch.receivedFromSupplierName ?? '—'}</TD>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Batch</TH>
+                    <TH>Expiry</TH>
+                    <TH>Status</TH>
+                    <TH num>Available</TH>
+                    <TH num>Held back</TH>
+                    <TH>In packages</TH>
+                    <TH num>MRP</TH>
+                    <TH>From</TH>
+                    <TH>Correct</TH>
                   </TR>
-                ))}
-              </TBody>
-            </Table>
-          )
-        })()}
+                </THead>
+                <TBody>
+                  {batches.map((batch) => (
+                    <TR key={batch.id} muted={!batch.pickable}>
+                      <TD num>{batch.batchNumber}</TD>
+                      <TD num>
+                        {formatExpiry(batch.expiry)}
+                        {batch.expired ? (
+                          <span className="mt-0.5 block text-[11px] font-semibold text-stop">
+                            Expired
+                          </span>
+                        ) : null}
+                      </TD>
+                      <TD>
+                        <Badge
+                          tone={
+                            batch.status === 'active'
+                              ? batch.pickable
+                                ? 'free'
+                                : 'attn'
+                              : 'stop'
+                          }
+                        >
+                          {batch.status === 'active'
+                            ? batch.pickable
+                              ? 'Active'
+                              : 'Active but not pickable'
+                            : words(batch.status)}
+                        </Badge>
+                        {batch.statusReason ? (
+                          <span className="mt-0.5 block text-[12px] text-ink-2">
+                            {batch.statusReason}
+                          </span>
+                        ) : null}
+                      </TD>
+                      <TD num>
+                        {batch.availableQuantity}
+                        <span className="ml-1 text-[11px] text-ink-2">
+                          {plural(batch.baseUnit || 'unit', batch.availableQuantity)}
+                        </span>
+                      </TD>
+                      <TD num>
+                        {batch.quarantinedQuantity === 0 && batch.blockedQuantity === 0 ? (
+                          '—'
+                        ) : (
+                          <>
+                            {batch.quarantinedQuantity > 0 ? (
+                              <span className="block text-attn">
+                                {batch.quarantinedQuantity} quarantined
+                              </span>
+                            ) : null}
+                            {batch.blockedQuantity > 0 ? (
+                              <span className="block text-stop">
+                                {batch.blockedQuantity} blocked
+                              </span>
+                            ) : null}
+                          </>
+                        )}
+                      </TD>
+                      <TD className="text-ink-2">{batch.packageBreakdown || '—'}</TD>
+                      <TD num>{mrpWithBasis(batch)}</TD>
+                      <TD className="text-ink-2">{batch.receivedFromSupplierName ?? '—'}</TD>
+                      <TD>
+                        <Button
+                          size="sm"
+                          data-print="hide"
+                          disabled={busy}
+                          onClick={() => setManaging(batch)}
+                        >
+                          Correct
+                        </Button>
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )
+          })()
+        )}
       </Modal>
     </Stack>
   )
@@ -1057,9 +813,8 @@ function SupplierLinks({
 
 export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRunner }) {
   const busy = useBusy()
-  const low = data.medicines.filter(
-    (medicine) => medicine.totalAvailable <= medicine.reorderLevel && medicine.active,
-  )
+  const low = reorderRows(data.medicines, data.orders)
+  const needing = low.filter((row) => row.needsOrder)
   const [supplierId, setSupplierId] = useState(data.suppliers[0]?.id ?? '')
   const [receiving, setReceiving] = useState<PurchaseOrderView | null>(null)
 
@@ -1068,12 +823,15 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
       <PageHeader
         eyebrow="Purchase orders"
         title="Supplier orders"
-        sub={`${low.length} medicines need reordering · ${data.orders.length} orders on file`}
+        sub={`${needing.length} ${needing.length === 1 ? 'medicine needs' : 'medicines need'} an order · ${data.orders.length} orders on file`}
       />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-print="hide">
         <Card>
-          <CardHeader title="Needs reordering" sub={`${low.length} medicines`} />
+          <CardHeader
+            title="Needs reordering"
+            sub={`${low.length} at or below reorder level · ${low.length - needing.length} already on order`}
+          />
           {low.length === 0 ? (
             <CardBody>
               <EmptyState
@@ -1087,19 +845,27 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
                 <TR>
                   <TH>Medicine</TH>
                   <TH num>On shelf</TH>
+                  <TH num>On order</TH>
                   <TH num>Target</TH>
                   <TH>Preferred supplier</TH>
                 </TR>
               </THead>
               <TBody>
-                {low.map((medicine) => (
+                {low.map(({ medicine, onOrder, needsOrder }) => (
                   <TR key={medicine.id}>
-                    <TD className="font-semibold">
-                      {medicine.name} {medicine.strength}
+                    <TD>
+                      <span className="block font-semibold">
+                        {medicine.name} {medicine.strength}
+                      </span>
+                      <Badge tone={needsOrder ? 'attn' : 'plain'}>
+                        {needsOrder ? 'Needs an order' : 'Covered by an order'}
+                      </Badge>
                     </TD>
                     <TD num>
-                      <span className="font-semibold text-stop">{medicine.totalAvailable}</span>
+                      <span className="font-semibold text-stop">{medicine.totalAvailable}</span>{' '}
+                      <span className="text-ink-2">{plural(medicine.baseUnit, medicine.totalAvailable)}</span>
                     </TD>
+                    <TD num>{onOrder > 0 ? onOrder : '—'}</TD>
                     <TD num>{medicine.targetStock}</TD>
                     <TD>
                       {medicine.preferredSupplierName ?? (
@@ -1117,9 +883,9 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
           <CardHeader title="Draft an order" />
           <CardBody className="space-y-4">
             <p className="text-[13px] leading-relaxed text-ink-2">
-              The clinic groups every linked low-stock medicine for one supplier and works out how
-              many packs bring each back up to its target. The draft is yours to edit before it goes
-              anywhere.
+              The clinic groups every low medicine linked to one supplier, leaves out what is
+              already on order, and rounds each up to whole packs that bring it back to its target.
+              The message is yours to edit, and it goes from your own WhatsApp.
             </p>
             <Field label="Supplier" required>
               <Select value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
@@ -1162,8 +928,6 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
             <OrderCard
               key={order.id}
               order={order}
-              connected={data.whatsapp.configured}
-              connectionNote={data.whatsapp.note}
               run={run}
               onReceive={() => setReceiving(order)}
             />
@@ -1181,28 +945,30 @@ export function OrdersPanel({ data, run }: { data: ClinicSnapshot; run: ActionRu
   )
 }
 
+/**
+ * One supplier order, from draft to delivery.
+ *
+ * The order goes from the pharmacist's own WhatsApp: "Open in WhatsApp" hands
+ * the message over, and the clinic sends nothing. So the app cannot know the
+ * message went — the person who sent it says so with "Mark as sent", and only
+ * that makes the order placed. Opening WhatsApp is never treated as sending.
+ */
 function OrderCard({
   order,
-  connected,
-  connectionNote,
   run,
   onReceive,
 }: {
   order: PurchaseOrderView
-  connected: boolean
-  connectionNote: string
   run: ActionRunner
   onReceive: () => void
 }) {
   const busy = useBusy()
   const [draft, setDraft] = useState(order.messageDraft)
+  const [opened, setOpened] = useState(false)
   const editable = order.status === 'pending'
   const receivable = order.status === 'placed' || order.status === 'partially_delivered'
-  const blocked = !connected
-    ? connectionNote || 'WhatsApp is not connected, so no order can be sent.'
-    : draft.trim() === ''
-      ? 'The message is empty.'
-      : undefined
+  const empty = draft.trim() === ''
+  const link = order.supplierWhatsApp && !empty ? whatsAppLink(order.supplierWhatsApp, draft) : undefined
 
   return (
     <Card variant="record" data-print="sheet">
@@ -1223,7 +989,7 @@ function OrderCard({
       <CardBody className="space-y-4">
         <p className="font-mono text-[12px] text-ink-2">
           Created {formatDate(order.createdAt)}
-          {order.placedAt ? ` · placed ${formatDate(order.placedAt)}` : ''}
+          {order.placedAt ? ` · sent ${formatDate(order.placedAt)}` : ''}
         </p>
 
         <Table>
@@ -1241,12 +1007,16 @@ function OrderCard({
               return (
                 <TR key={line.id}>
                   <TD className="font-semibold">{line.medicineName}</TD>
-                  <TD num>{line.orderedQuantity}</TD>
-                  <TD num>{line.receivedQuantity}</TD>
+                  <TD num>{line.orderedDescription}</TD>
+                  <TD num>
+                    {line.receivedQuantity}{' '}
+                    <span className="text-ink-2">{plural(line.baseUnit, line.receivedQuantity)}</span>
+                  </TD>
                   <TD num>
                     <span className={outstanding > 0 ? 'text-attn' : 'text-free'}>
                       {outstanding}
-                    </span>
+                    </span>{' '}
+                    <span className="text-ink-2">{plural(line.baseUnit, outstanding)}</span>
                   </TD>
                 </TR>
               )
@@ -1259,8 +1029,8 @@ function OrderCard({
             label="WhatsApp message to the supplier"
             hint={
               editable
-                ? 'Edit freely before it is sent. Nothing goes out until you place the order.'
-                : 'This order has been placed — the message is kept as it was sent.'
+                ? 'Edit freely. It goes from your own WhatsApp — the clinic sends nothing itself.'
+                : 'This order has been sent — the message is kept as it was sent.'
             }
           >
             <Textarea
@@ -1284,24 +1054,64 @@ function OrderCard({
               >
                 Save draft
               </ActionButton>
+              {link ? (
+                <ButtonLink
+                  variant={opened ? 'secondary' : 'primary'}
+                  href={link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  icon="arrow-right"
+                  data-testid="open-order-in-whatsapp"
+                  onClick={() => setOpened(true)}
+                >
+                  Open in WhatsApp
+                </ButtonLink>
+              ) : (
+                <ActionButton
+                  disabled
+                  disabledReason={
+                    empty ? 'The message is empty.' : order.supplierWhatsAppProblem
+                  }
+                >
+                  Open in WhatsApp
+                </ActionButton>
+              )}
               <ConfirmButton
-                variant="primary"
+                variant={opened || !link ? 'primary' : 'secondary'}
                 busy={busy}
-                busyLabel="Sending…"
-                disabled={Boolean(blocked)}
-                disabledReason={blocked}
-                title="Place this order"
+                busyLabel="Marking sent…"
+                disabled={empty}
+                disabledReason="The message is empty."
+                title="Mark this order sent"
                 question={
                   <>
-                    Send this message to{' '}
-                    <span className="font-semibold">{order.supplierName}</span> on WhatsApp and mark
-                    the order placed? A sent message cannot be recalled.
+                    Has this order gone to{' '}
+                    <span className="font-semibold">{order.supplierName}</span> — from your
+                    WhatsApp, by phone or on paper? This records it as placed and waiting for
+                    delivery.
                   </>
                 }
-                confirmLabel="Send & place"
-                onConfirm={() => run('send_order', { orderId: order.id, messageDraft: draft })}
+                confirmLabel="Yes, it has gone"
+                onConfirm={() => run('mark_order_sent', { orderId: order.id, messageDraft: draft })}
               >
-                {connected ? 'Send & place order' : 'Connect WhatsApp to send'}
+                Mark as sent
+              </ConfirmButton>
+              <ConfirmButton
+                variant="ghost"
+                busy={busy}
+                busyLabel="Discarding…"
+                title="Discard this draft"
+                question={
+                  <>
+                    Discard <span className="font-semibold">{order.orderNumber}</span>? Nothing has
+                    been sent, and its medicines go back on the reordering list.
+                  </>
+                }
+                confirmLabel="Discard draft"
+                confirmVariant="danger"
+                onConfirm={() => run('cancel_order', { orderId: order.id })}
+              >
+                Discard draft
               </ConfirmButton>
             </>
           ) : null}
@@ -1315,10 +1125,16 @@ function OrderCard({
           <Button onClick={() => window.print()}>Print order</Button>
         </div>
 
-        {!connected && editable ? (
-          <Notice tone="bad">
-            {connectionNote ||
-              'WhatsApp is not connected. Orders can be drafted and printed, but nothing is sent until real Meta credentials exist.'}
+        {editable && opened ? (
+          <Notice tone="pending">
+            WhatsApp was opened with this order. Once the message has gone, mark the order sent —
+            until then it is still a draft.
+          </Notice>
+        ) : null}
+        {editable && order.supplierWhatsAppProblem ? (
+          <Notice tone="pending">
+            {order.supplierWhatsAppProblem} Save one WhatsApp can dial under Suppliers, or phone
+            the order in or print it, then mark it sent.
           </Notice>
         ) : null}
       </CardBody>

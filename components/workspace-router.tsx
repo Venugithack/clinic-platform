@@ -1,10 +1,16 @@
 import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
-import { ConsultationPanel, QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
+import { AppointmentBookPanel } from './appointment-book'
+import { QueuePanel, RecordsPanel, VitalsPanel } from './care-workspaces'
+import { DueNowPanel } from './due-now'
+import { ConsultationPanel } from './consultation-workspace'
 import type { ActionRunner } from './clinic-context'
 import { DayBookPanel } from './day-book-panel'
 import { ExpiringPanel } from './expiring-panel'
+import { FormularyPanel, OpeningCountPanel, ReceivingPanel } from './formulary-workspace'
 import type { View } from './navigation'
 import { CounterPanel, InventoryPanel, OrdersPanel, SuppliersPanel } from './pharmacy-workspace'
+import { ReportsPanel } from './reports-workspace'
+import { ReviewQueuePanel } from './review-queue-panel'
 import {
   AuditPanel,
   BedsPanel,
@@ -34,17 +40,57 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
         <PatientsPanel
           data={data}
           run={run}
-          canRegister={!roles.includes('doctor') || roles.includes('admin') || roles.includes('nurse')}
+          /*
+           * Admin, doctor and nurse may register; the pharmacy counter may
+           * not. That is exactly what `create_patient` enforces, and saying
+           * it the same way here means the button is present when the command
+           * would succeed.
+           *
+           * The expression this replaces read
+           * `!roles.includes('doctor') || roles.includes('admin') || roles.includes('nurse')`,
+           * which is false for a doctor-only account — so the one person the
+           * clinic most needs to be able to register a walk-in when the nurse
+           * is away was the one person shown no button. The backend had always
+           * allowed it; only the screen said no.
+           */
+          canRegister={roles.some((role) => role === 'admin' || role === 'doctor' || role === 'nurse')}
         />
       )
     case 'queue':
       return <QueuePanel data={data} run={run} />
+    /*
+     * The appointment book. Its commands and reads refuse pharmacy at the
+     * server; the panel also declines to draw for a session holding none of
+     * the three roles, so a station reached by some other route is a sentence
+     * rather than a screen of controls that can only fail.
+     */
+    case 'appointments':
+      return <AppointmentBookPanel data={data} run={run} />
+    /*
+     * The nurse's landing screen: the queue, the missing readings and the bed
+     * board joined back together under the patient each of them is about.
+     * It reads the snapshot and writes nothing, so it needs no `run`.
+     */
+    case 'due':
+      return <DueNowPanel data={data} />
     case 'vitals':
       return <VitalsPanel data={data} run={run} />
     case 'consultation':
       return <ConsultationPanel data={data} run={run} />
     case 'records':
       return <RecordsPanel data={data} />
+    /*
+     * The doctor's queue of legacy lines nobody can read.
+     *
+     * Not gated here: `resolve_prescription_line` requires the doctor role and
+     * refuses anybody else in its own words, and the rail offers this station
+     * to a doctor alone. A hidden button is not a security boundary and this
+     * screen does not pretend to be one.
+     */
+    case 'review':
+      return <ReviewQueuePanel data={data} run={run} />
+    case 'reports':
+      return <ReportsPanel />
     case 'beds':
       return <BedsPanel data={data} run={run} />
     case 'billing':
@@ -65,6 +111,12 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
       return <CounterPanel data={data} run={run} />
     case 'inventory':
       return <InventoryPanel data={data} run={run} uploadCsv={uploadCsv} />
+    case 'formulary':
+      return <FormularyPanel data={data} run={run} />
+    case 'receiving':
+      return <ReceivingPanel data={data} run={run} />
+    case 'opening':
+      return <OpeningCountPanel data={data} run={run} />
     case 'suppliers':
       return <SuppliersPanel data={data} run={run} />
     case 'orders':
@@ -74,6 +126,6 @@ export function WorkspaceRouter({ view, data, run, uploadCsv, roles }: Workspace
     case 'audit':
       return <AuditPanel data={data} />
     default:
-      return <OverviewPanel data={data} />
+      return <OverviewPanel data={data} run={run} />
   }
 }

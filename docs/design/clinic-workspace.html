@@ -1,0 +1,299 @@
+<style>
+  #clinic-design {
+    --jmc-page: light-dark(#f0f5f3, #14221e);
+    --jmc-surface: light-dark(#ffffff, #1c2d27);
+    --jmc-ink: light-dark(#213b32, #e6f1eb);
+    --jmc-muted: light-dark(#586e63, #b2c6ba);
+    --jmc-line: light-dark(#d6e2db, #3d5649);
+    --jmc-accent: light-dark(#176751, #9bd3b9);
+    --jmc-on-accent: light-dark(#ffffff, #102a1d);
+    --jmc-tint: light-dark(#e6f2eb, #294737);
+    --jmc-warning: light-dark(#815817, #f1cd89);
+    --jmc-warning-bg: light-dark(#fff4dc, #41341c);
+    --jmc-danger: light-dark(#a62d42, #ffb5c3);
+    --jmc-danger-bg: light-dark(#fff0f3, #452530);
+    font: 400 15px/1.5 'Archivo', 'Segoe UI', sans-serif;
+    color: var(--jmc-ink);
+    width: 100%;
+    container-type: inline-size;
+  }
+  #clinic-design * { box-sizing: border-box; }
+  #clinic-design [hidden] { display: none !important; }
+  #clinic-design h2, #clinic-design h3, #clinic-design p { margin: 0; }
+  #clinic-design h2 { font: 600 23px/1.25 'Archivo', 'Segoe UI', sans-serif; letter-spacing: -.035em; }
+  #clinic-design h3 { font: 600 16px/1.35 'Archivo', 'Segoe UI', sans-serif; }
+  #clinic-design button, #clinic-design input, #clinic-design select, #clinic-design textarea { font-family: inherit; }
+  #clinic-design button { cursor: pointer; }
+  #clinic-design .jmc-study { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; color: var(--jmc-muted); font-size: 12px; }
+  #clinic-design .jmc-window { background: var(--jmc-page); border: 1px solid var(--jmc-line); border-radius: 12px; overflow: clip; }
+  #clinic-design .jmc-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 17px 22px; background: var(--jmc-surface); }
+  #clinic-design .jmc-brand { display: flex; align-items: center; gap: 10px; }
+  #clinic-design .jmc-mark { display: grid; place-items: center; width: 36px; height: 36px; background: var(--jmc-accent); color: var(--jmc-on-accent); border-radius: 10px; font-weight: 600; font-size: 17px; }
+  #clinic-design .jmc-brand strong { display: block; font-size: 15px; font-weight: 600; }
+  #clinic-design .jmc-muted { color: var(--jmc-muted); }
+  #clinic-design .jmc-small { font-size: 12px; }
+  #clinic-design .jmc-role { display: flex; align-items: center; gap: 8px; color: var(--jmc-muted); font-size: 13px; }
+  #clinic-design select { min-height: 44px; max-width: 100%; border: 1px solid var(--jmc-line); border-radius: 7px; background: var(--jmc-surface); color: var(--jmc-ink); padding: 8px; font-size: 16px; }
+  #clinic-design .jmc-nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 18px; background: var(--jmc-surface); border-bottom: 1px solid var(--jmc-line); }
+  #clinic-design .jmc-nav button { min-height: 48px; padding: 10px 12px; background: transparent; color: var(--jmc-muted); border: 0; border-bottom: 3px solid transparent; font-size: 14px; font-weight: 600; }
+  #clinic-design .jmc-nav button[aria-current='page'] { border-bottom-color: var(--jmc-accent); color: var(--jmc-accent); }
+  #clinic-design .jmc-nav .jmc-more { margin-left: auto; }
+  #clinic-design .jmc-more-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 22px; background: var(--jmc-surface); border-bottom: 1px solid var(--jmc-line); }
+  #clinic-design .jmc-content { padding: 22px; }
+  #clinic-design .jmc-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+  #clinic-design .jmc-heading p { margin-top: 5px; color: var(--jmc-muted); font-size: 13px; }
+  #clinic-design .jmc-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 10px 14px; border: 1px solid var(--jmc-line); border-radius: 7px; background: var(--jmc-surface); color: var(--jmc-ink); font-size: 14px; font-weight: 600; text-align: center; }
+  #clinic-design .jmc-btn-primary { background: var(--jmc-accent); border-color: var(--jmc-accent); color: var(--jmc-on-accent); }
+  #clinic-design .jmc-btn-subtle { background: transparent; border-color: transparent; color: var(--jmc-accent); }
+  #clinic-design .jmc-badge { display: inline-flex; align-items: center; min-height: 25px; padding: 3px 9px; border-radius: 5px; background: var(--jmc-tint); color: var(--jmc-accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  #clinic-design .jmc-badge-wait { background: var(--jmc-warning-bg); color: var(--jmc-warning); }
+  #clinic-design .jmc-badge-alert { background: var(--jmc-danger-bg); color: var(--jmc-danger); white-space: normal; }
+  #clinic-design .jmc-identity { background: var(--jmc-surface); border: 1px solid var(--jmc-line); border-left: 4px solid var(--jmc-accent); border-radius: 8px; margin-bottom: 18px; }
+  #clinic-design .jmc-patient { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 15px 16px; }
+  #clinic-design .jmc-token { display: grid; place-content: center; text-align: center; width: 49px; min-height: 52px; flex-shrink: 0; background: var(--jmc-tint); border-radius: 7px; color: var(--jmc-accent); font-size: 23px; line-height: 1.05; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #clinic-design .jmc-token small { font-size: 11px; line-height: 1.6; font-weight: 400; }
+  #clinic-design .jmc-person { flex: 1; min-width: 125px; }
+  #clinic-design .jmc-person strong { display: block; font-size: 18px; font-weight: 600; }
+  #clinic-design .jmc-person p { color: var(--jmc-muted); font-size: 12px; margin-top: 3px; }
+  #clinic-design .jmc-vital-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; border-top: 1px solid var(--jmc-line); padding: 12px 16px; }
+  #clinic-design .jmc-vital-bar span { color: var(--jmc-muted); font-size: 12px; }
+  #clinic-design .jmc-vital-bar strong { display: block; color: var(--jmc-ink); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #clinic-design .jmc-vital-bar small { color: var(--jmc-muted); font-size: 11px; font-weight: 400; }
+  #clinic-design .jmc-work { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 18px; align-items: start; }
+  #clinic-design .jmc-sheet { background: var(--jmc-surface); border: 1px solid var(--jmc-line); border-radius: 8px; min-width: 0; }
+  #clinic-design .jmc-section { padding: 18px; }
+  #clinic-design .jmc-section + .jmc-section { border-top: 1px solid var(--jmc-line); }
+  #clinic-design .jmc-section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 13px; }
+  #clinic-design .jmc-field { display: block; min-width: 0; color: var(--jmc-muted); font-size: 13px; margin-bottom: 13px; }
+  #clinic-design .jmc-field:last-child { margin-bottom: 0; }
+  #clinic-design .jmc-field input, #clinic-design .jmc-field textarea { display: block; width: 100%; min-height: 44px; margin-top: 5px; padding: 10px 11px; border: 1px solid var(--jmc-line); border-radius: 6px; background: var(--jmc-surface); color: var(--jmc-ink); font-size: 16px; line-height: 1.4; }
+  #clinic-design .jmc-field textarea { resize: vertical; }
+  #clinic-design .jmc-field input::placeholder, #clinic-design .jmc-field textarea::placeholder { color: var(--jmc-muted); opacity: 1; }
+  #clinic-design .jmc-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  #clinic-design .jmc-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  #clinic-design .jmc-chips button { min-height: 44px; padding: 7px 10px; border: 1px solid var(--jmc-line); border-radius: 6px; background: var(--jmc-surface); color: var(--jmc-accent); font-size: 13px; }
+  #clinic-design .jmc-chips button[aria-pressed='true'] { background: var(--jmc-tint); border-color: var(--jmc-accent); }
+  #clinic-design .jmc-empty { color: var(--jmc-muted); font-size: 13px; margin-bottom: 10px; }
+  #clinic-design .jmc-context { min-width: 0; }
+  #clinic-design .jmc-context > section { padding: 4px 0 17px; margin-bottom: 16px; border-bottom: 1px solid var(--jmc-line); }
+  #clinic-design .jmc-context h3 { font-size: 14px; margin-bottom: 9px; }
+  #clinic-design .jmc-context p { font-size: 13px; margin-top: 6px; }
+  #clinic-design .jmc-context details { font-size: 13px; }
+  #clinic-design summary { min-height: 44px; display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--jmc-accent); font-weight: 600; }
+  #clinic-design summary::before { content: '+'; font-size: 18px; }
+  #clinic-design details[open] > summary::before { content: '−'; }
+  #clinic-design .jmc-footer { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 12px; border-top: 1px solid var(--jmc-line); padding: 14px 22px; background: var(--jmc-surface); }
+  #clinic-design .jmc-footer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  #clinic-design .jmc-footer .jmc-btn-primary { min-height: 48px; }
+  #clinic-design .jmc-status { font-size: 12px; color: var(--jmc-muted); max-width: 30ch; }
+  #clinic-design .jmc-notice { padding: 12px 14px; margin-bottom: 15px; background: var(--jmc-tint); color: var(--jmc-accent); border-radius: 7px; font-size: 14px; }
+  #clinic-design .jmc-queue-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 16px; border-bottom: 1px solid var(--jmc-line); }
+  #clinic-design .jmc-queue-row:last-child { border-bottom: 0; }
+  #clinic-design .jmc-queue-row .jmc-token { width: 42px; min-height: 47px; font-size: 20px; }
+  #clinic-design .jmc-queue-row strong { font-size: 15px; font-weight: 600; }
+  #clinic-design .jmc-queue-row p { font-size: 12px; color: var(--jmc-muted); margin: 3px 0; }
+  #clinic-design .jmc-queue-row button { padding: 9px 11px; }
+  #clinic-design .jmc-meter-line { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--jmc-line); font-size: 14px; }
+  #clinic-design .jmc-meter-line strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #clinic-design .jmc-total { font-size: 18px; border: 0; padding-top: 17px; }
+  #clinic-design .jmc-quantity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; color: var(--jmc-muted); font-size: 13px; }
+  #clinic-design .jmc-quantity input { min-height: 44px; width: 76px; padding: 8px; border: 1px solid var(--jmc-line); border-radius: 6px; background: var(--jmc-surface); color: var(--jmc-ink); font-size: 16px; }
+  #clinic-design .jmc-rx-line { padding: 12px; border: 1px solid var(--jmc-line); border-radius: 7px; font-size: 14px; margin: 10px 0; }
+  #clinic-design .jmc-rx-line p { color: var(--jmc-muted); font-size: 12px; margin-top: 4px; }
+  #clinic-design .jmc-reading-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  #clinic-design .jmc-reading-grid .jmc-field { margin: 0; }
+  #clinic-design .jmc-bed { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 18px; border-bottom: 1px solid var(--jmc-line); }
+  #clinic-design .jmc-bed:last-child { border-bottom: 0; }
+  @container (max-width: 610px) {
+    #clinic-design .jmc-work { grid-template-columns: 1fr; }
+    #clinic-design .jmc-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    #clinic-design .jmc-context > section { margin: 0; }
+    #clinic-design .jmc-content { padding: 17px; }
+    #clinic-design .jmc-top { padding: 14px 17px; }
+    #clinic-design .jmc-footer { padding: 14px 17px; }
+  }
+  @container (max-width: 420px) {
+    #clinic-design .jmc-content { padding: 12px; }
+    #clinic-design .jmc-top { gap: 10px; padding: 13px; }
+    #clinic-design .jmc-role { width: 100%; justify-content: space-between; }
+    #clinic-design .jmc-role select { flex: 1; }
+    #clinic-design .jmc-nav { padding: 0 7px; gap: 0; }
+    #clinic-design .jmc-nav button { padding: 10px 9px; font-size: 13px; }
+    #clinic-design .jmc-nav .jmc-more { margin-left: 0; }
+    #clinic-design .jmc-section { padding: 14px; }
+    #clinic-design .jmc-pair, #clinic-design .jmc-context { grid-template-columns: 1fr; }
+    #clinic-design .jmc-vital-bar { grid-template-columns: repeat(2, 1fr); }
+    #clinic-design .jmc-queue-row { grid-template-columns: 38px minmax(0, 1fr); gap: 10px; padding: 13px; }
+    #clinic-design .jmc-queue-row button { grid-column: 2; justify-self: start; }
+    #clinic-design .jmc-footer-actions { width: 100%; }
+    #clinic-design .jmc-footer-actions button { flex: 1; }
+  }
+</style>
+<div id="clinic-design">
+  <div class="jmc-study"><span>Design concept</span><span>Example patients and values</span></div>
+  <div class="jmc-window">
+    <header class="jmc-top">
+      <div class="jmc-brand"><span class="jmc-mark" aria-hidden="true">Jm</span><div><strong>Jayamurugan Clinic</strong><p class="jmc-small jmc-muted">Saturday, 12 September</p></div></div>
+      <label class="jmc-role">View as <select aria-label="Preview staff workspace"><option value="doctor">Doctor</option><option value="nurse">Nurse</option><option value="pharmacy">Pharmacy</option></select></label>
+    </header>
+    <nav class="jmc-nav" aria-label="Daily workspace"></nav>
+    <div class="jmc-more-list" hidden></div>
+    <div class="jmc-content"></div>
+    <footer class="jmc-footer"></footer>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('clinic-design');
+  const nav = root.querySelector('.jmc-nav');
+  const content = root.querySelector('.jmc-content');
+  const footer = root.querySelector('.jmc-footer');
+  const more = root.querySelector('.jmc-more-list');
+  const roleSelect = root.querySelector('.jmc-role select');
+  const patients = [
+    { name: 'Kavitha R.', age: 42, sex: 'Female', token: 12, flag: 'Penicillin allergy', visit: 'Follow-up', wait: 'Waiting 8 min', ready: true },
+    { name: 'Senthil K.', age: 35, sex: 'Male', token: 13, flag: 'Allergy status not recorded', visit: 'First visit', wait: 'Waiting 5 min', ready: false },
+    { name: 'Meena S.', age: 58, sex: 'Female', token: 14, flag: 'No known allergies recorded', visit: 'Follow-up', wait: 'Waiting 3 min', ready: true }
+  ];
+  let role = 'doctor';
+  let view = 'Consult';
+  let patientIndex = 0;
+  let moreOpen = false;
+  const drafts = patients.map(() => ({ complaint: 'Follow-up visit', diagnosis: '', note: '', medicine: false, followUp: '7 days', saved: false }));
+  const nurseVitals = patients.map(() => ({ bp: '', temperature: '', pulse: '', spo2: '' }));
+  let supplied = 10;
+  let paymentMethod = 'Cash';
+  const navigation = { doctor: ['Today', 'Consult', 'Patients'], nurse: ['Queue', 'Vitals', 'Observation'], pharmacy: ['Prescriptions', 'Counter', 'Stock'] };
+  const occasional = { doctor: ['Review requests', 'Templates', 'Reports'], nurse: ['Patients', 'Reports'], pharmacy: ['Receiving', 'Suppliers', 'Stock counts', 'Day book', 'Reports'] };
+  const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const button = (label, action, primary = false, extra = '') => `<button type="button" class="jmc-btn ${primary ? 'jmc-btn-primary' : ''}" data-action="${action}" ${extra}>${label}</button>`;
+  const badge = (label, kind = '') => `<span class="jmc-badge ${kind ? 'jmc-badge-' + kind : ''}">${label}</span>`;
+  const heading = (title, sub, action = '') => `<div class="jmc-heading"><div><h2>${title}</h2><p>${sub}</p></div>${action}</div>`;
+  function identity(showVitals = true) {
+    const p = patients[patientIndex];
+    return `<section class="jmc-identity" aria-label="Current patient"><div class="jmc-patient"><div class="jmc-token"><small>Token</small>${p.token}</div><div class="jmc-person"><strong>${p.name}</strong><p>${p.age} years / ${p.sex} / ${p.visit}</p></div>${badge(p.flag, patientIndex === 0 ? 'alert' : 'wait')}</div>${showVitals ? '<div class="jmc-vital-bar"><span>Blood pressure<strong>124/80 <small>mmHg</small></strong></span><span>Temperature<strong>36.8 <small>°C</small></strong></span><span>Pulse<strong>76 <small>/min</small></strong></span><span>SpO₂<strong>98 <small>%</small></strong></span></div>' : ''}</section>`;
+  }
+  function context() {
+    return `<aside class="jmc-context" aria-label="Patient context"><section><h3>Previous visit</h3><p class="jmc-muted">5 September 2026</p><p>Follow-up requested in one week.</p><details><summary>Visit summary</summary><p>Advice and a prescription were recorded. Review the signed visit before reusing a medicine.</p></details></section><section><h3>Patient record</h3><details><summary>Clinical images</summary><p class="jmc-muted">No images in this example.</p></details><details><summary>Allergies &amp; alerts</summary><p>${patients[patientIndex].flag}</p></details></section></aside>`;
+  }
+  function consultation() {
+    const draft = drafts[patientIndex];
+    const selectedFollowUp = draft.followUp;
+    content.innerHTML = heading('Consultation', 'Keep the patient in view, from notes to prescription.', badge('Draft')) + identity() +
+      `<div class="jmc-work"><div class="jmc-sheet"><section class="jmc-section"><div class="jmc-section-head"><h3>Today’s visit</h3></div><label class="jmc-field">Complaint<input data-field="complaint" value="${escape(draft.complaint)}" placeholder="Search or describe the complaint"></label><label class="jmc-field">Diagnosis<input data-field="diagnosis" value="${escape(draft.diagnosis)}" placeholder="Search or enter a diagnosis"></label><details><summary>Examination &amp; notes</summary><label class="jmc-field">Clinical note<textarea rows="2" data-field="note" placeholder="Add findings from this visit">${escape(draft.note)}</textarea></label></details></section><section class="jmc-section"><div class="jmc-section-head"><h3>Prescription</h3><span class="jmc-small jmc-muted">${draft.medicine ? '1 draft medicine' : 'No medicines added'}</span></div>${draft.medicine ? '<div class="jmc-rx-line"><strong>Paracetamol 500 mg tablet</strong><p>Draft line. Dose, frequency and duration need doctor review.</p></div>' : '<p class="jmc-empty">Find medicines by brand, ingredient or strength.</p>'}${button(draft.medicine ? 'Remove draft medicine' : 'Add medicine', 'medicine')}<div data-medicine-picker hidden style="margin-top:12px"><label class="jmc-field">Medicine search<input data-medicine-search placeholder="Try paracetamol"></label><div data-medicine-result>${button('Paracetamol 500 mg tablet', 'choose-medicine')}</div></div></section><section class="jmc-section"><h3>Follow-up</h3><div class="jmc-chips" aria-label="Follow-up interval">${['3 days','7 days','14 days','No follow-up'].map(value => `<button type="button" data-followup="${value}" aria-pressed="${selectedFollowUp === value}">${value}</button>`).join('')}</div></section></div>${context()}</div>`;
+    footer.innerHTML = `<p class="jmc-status" role="status">${draft.saved ? 'Draft saved in this preview' : 'Draft changes need saving'}</p><div class="jmc-footer-actions">${button('Save draft', 'save-draft')}${button('Review prescription', 'review-rx', true)}</div>`;
+  }
+  function queue() {
+    const pharmacy = role === 'pharmacy';
+    const directory = view === 'Patients';
+    content.innerHTML = heading(directory ? 'Patients' : pharmacy ? 'Prescriptions' : 'Today’s queue', directory ? 'Open a record or continue a visit.' : pharmacy ? 'Signed prescriptions ready at the counter.' : '3 patients waiting. The next action is beside each patient.') +
+      `<div class="jmc-sheet">${patients.map((p, i) => `<div class="jmc-queue-row"><div class="jmc-token">${p.token}</div><div><strong>${p.name}</strong><p>${p.age} years / ${p.sex} / ${pharmacy ? 'Signed prescription' : p.wait}</p>${badge(pharmacy ? 'Ready to supply' : p.ready ? 'Vitals recorded' : 'Vitals needed', !pharmacy && !p.ready ? 'wait' : '')}</div>${button(directory ? 'Open record' : pharmacy ? 'Open counter' : role === 'nurse' ? 'Record vitals' : 'Open consult', 'open-patient', i === 0, `data-patient="${i}"`)}</div>`).join('')}</div>`;
+    footer.innerHTML = `<p class="jmc-status">Example queue</p><span class="jmc-small jmc-muted">Patient selection carries into the next screen.</span>`;
+  }
+  function vitals() {
+    const values = nurseVitals[patientIndex];
+    const readingFields = [['bp','Blood pressure (mmHg)','e.g. 120/80'],['temperature','Temperature (°C)','Not measured'],['pulse','Pulse (/min)','Not measured'],['spo2','SpO₂ (%)','Not measured']];
+    content.innerHTML = heading('Record vitals', 'Measurements belong to the selected patient.', badge('Triage', 'wait')) + identity(false) + `<div class="jmc-sheet"><section class="jmc-section"><div class="jmc-reading-grid">${readingFields.map(([key, label, placeholder]) => `<label class="jmc-field">${label}<input data-vital="${key}" inputmode="${key === 'bp' ? 'text' : 'decimal'}" value="${escape(values[key])}" placeholder="${placeholder}"></label>`).join('')}</div><p class="jmc-small jmc-muted" style="margin-top:16px">Unfilled readings stay “Not measured”.</p><details style="margin-top:8px"><summary>Reason for missing readings</summary><label class="jmc-field">Optional note<textarea rows="2" placeholder="Record why a measurement was not taken"></textarea></label></details></section></div>`;
+    footer.innerHTML = `<p class="jmc-status" role="status">Ready for today’s readings</p><div class="jmc-footer-actions">${button('Back to queue', 'back-queue')}${button('Save & hand to doctor', 'save-vitals', true)}</div>`;
+  }
+  function observation() {
+    content.innerHTML = heading('Observation', 'Patient, elapsed time and next check at a glance.') + `<div class="jmc-sheet"><div class="jmc-bed"><div><h3>Bed 1</h3><p class="jmc-small jmc-muted">Meena S. / 58 years</p><p class="jmc-small">Observation started 20 minutes ago</p></div>${badge('Check due in 10 min', 'wait')}</div>${[2,3,4].map(bed => `<div class="jmc-bed"><h3>Bed ${bed}</h3><span class="jmc-muted">Available</span></div>`).join('')}</div>`;
+    footer.innerHTML = `<p class="jmc-status">Example observation board</p>${button('Back to queue', 'back-queue')}`;
+  }
+  function counter() {
+    const medicineTotal = supplied * 2;
+    content.innerHTML = heading('Counter', 'Supply, consultation fee and payment in one workspace.', badge('Signed prescription')) + identity(false) + `<div class="jmc-work"><div class="jmc-sheet"><section class="jmc-section"><div class="jmc-section-head"><h3>Give medicines</h3><span class="jmc-small jmc-muted">1 prescribed line</span></div><strong>Paracetamol 500 mg tablet</strong><p class="jmc-small jmc-muted">Prescribed: 10 tablets</p><label class="jmc-quantity">Give now <input aria-label="Tablets to give now" data-supply type="number" inputmode="numeric" min="0" max="10" step="1" value="${supplied}"> tablets</label><p class="jmc-small jmc-muted" data-remaining style="margin-top:8px">${10 - supplied} tablets remaining</p><details style="margin-top:8px"><summary>Batch &amp; expiry</summary><p class="jmc-small">Batch EX-001 / Expires March 2027</p><p class="jmc-small jmc-muted">Earliest available expiry shown first.</p></details></section><section class="jmc-section"><h3>Payment method</h3><div class="jmc-chips">${['Cash','UPI','Split','Pay later'].map(method => `<button type="button" data-method="${method}" aria-pressed="${paymentMethod === method}">${method}</button>`).join('')}</div><p class="jmc-small jmc-muted" data-payment-note style="margin-top:10px">${paymentNote()}</p></section></div><aside class="jmc-context"><section><h3>Patient’s bill</h3><div class="jmc-meter-line"><span>Consultation</span><strong>₹200</strong></div><div class="jmc-meter-line"><span>Medicines</span><strong data-medicine-total>₹${medicineTotal}</strong></div><div class="jmc-meter-line jmc-total"><span>Total due</span><strong data-total>₹${200 + medicineTotal}</strong></div><p class="jmc-muted">The consultation fee stays on the bill even when no medicine is supplied.</p></section></aside></div>`;
+    footer.innerHTML = `<p class="jmc-status" role="status">Amounts are illustrative</p><div class="jmc-footer-actions">${button('Prescriptions', 'back-queue')}${button('Review checkout', 'review-payment', true)}</div>`;
+  }
+  function paymentNote() {
+    return paymentMethod === 'Pay later' ? 'The amount stays due. No payment is recorded.' : paymentMethod === 'Split' ? 'The next step separates cash and UPI amounts.' : `Review the amount received by ${paymentMethod} before recording it.`;
+  }
+  function stock() {
+    content.innerHTML = heading('Stock attention', 'Only items that need action today.') + `<div class="jmc-sheet"><section class="jmc-section"><div class="jmc-section-head"><h3>Low stock</h3>${badge('1 item', 'wait')}</div><p>Paracetamol 500 mg tablet</p><p class="jmc-small jmc-muted">18 tablets available / Reorder level: 30</p></section><section class="jmc-section"><h3>Expiry</h3><p class="jmc-muted jmc-small" style="margin-top:8px">No example batches expire in the next 30 days.</p></section></div>`;
+    footer.innerHTML = `<p class="jmc-status">Example inventory</p>${button('Back to prescriptions', 'back-queue')}`;
+  }
+  function render() {
+    nav.innerHTML = navigation[role].map(label => `<button type="button" data-view="${label}" ${view === label ? 'aria-current="page"' : ''}>${label}</button>`).join('') + `<button type="button" class="jmc-more" data-action="more" aria-expanded="${moreOpen}">More</button>`;
+    more.hidden = !moreOpen;
+    more.innerHTML = occasional[role].map(label => button(label, 'occasional', false, `data-label="${label}"`)).join('');
+    if (view === 'Consult') consultation();
+    else if (view === 'Vitals') vitals();
+    else if (view === 'Observation') observation();
+    else if (view === 'Counter') counter();
+    else if (view === 'Stock') stock();
+    else queue();
+  }
+  function message(text) {
+    let notice = content.querySelector('[data-feedback]');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.className = 'jmc-notice';
+      notice.dataset.feedback = '';
+      notice.setAttribute('role', 'status');
+      content.prepend(notice);
+    }
+    notice.textContent = text;
+  }
+  roleSelect.addEventListener('change', () => { role = roleSelect.value; view = role === 'doctor' ? 'Consult' : role === 'nurse' ? 'Queue' : 'Counter'; moreOpen = false; render(); });
+  root.addEventListener('input', event => {
+    const input = event.target;
+    if (input.dataset.field) {
+      drafts[patientIndex][input.dataset.field] = input.value;
+      drafts[patientIndex].saved = false;
+      footer.querySelector('.jmc-status').textContent = 'Draft changes need saving';
+    }
+    if (input.dataset.vital) nurseVitals[patientIndex][input.dataset.vital] = input.value;
+    if (input.hasAttribute('data-medicine-search')) root.querySelector('[data-medicine-result]').innerHTML = !input.value || 'paracetamol 500 mg tablet'.includes(input.value.toLowerCase()) ? button('Paracetamol 500 mg tablet', 'choose-medicine') : '<p class="jmc-small jmc-muted">No matching medicine in this example.</p>';
+    if (input.hasAttribute('data-supply')) {
+      const quantity = Number(input.value);
+      if (!Number.isInteger(quantity) || quantity < 0 || quantity > 10 || input.value === '') {
+        input.setCustomValidity('Enter a whole number from 0 to 10.');
+        input.reportValidity();
+        return;
+      }
+      input.setCustomValidity('');
+      supplied = quantity;
+      root.querySelector('[data-remaining]').textContent = `${10 - supplied} tablets remaining`;
+      root.querySelector('[data-medicine-total]').textContent = `₹${supplied * 2}`;
+      root.querySelector('[data-total]').textContent = `₹${200 + supplied * 2}`;
+    }
+  });
+  root.addEventListener('click', event => {
+    const target = event.target.closest('button');
+    if (!target || !root.contains(target)) return;
+    if (target.dataset.view) { view = target.dataset.view; moreOpen = false; render(); return; }
+    if (target.dataset.followup) {
+      drafts[patientIndex].followUp = target.dataset.followup;
+      root.querySelectorAll('[data-followup]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.followup === drafts[patientIndex].followUp)));
+      drafts[patientIndex].saved = false;
+      footer.querySelector('.jmc-status').textContent = 'Draft changes need saving';
+      return;
+    }
+    if (target.dataset.method) {
+      paymentMethod = target.dataset.method;
+      root.querySelectorAll('[data-method]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.method === paymentMethod)));
+      root.querySelector('[data-payment-note]').textContent = paymentNote();
+      return;
+    }
+    const action = target.dataset.action;
+    if (action === 'more') { moreOpen = !moreOpen; more.hidden = !moreOpen; target.setAttribute('aria-expanded', String(moreOpen)); }
+    if (action === 'occasional') message(`${target.dataset.label} belongs in the secondary menu. This concept concentrates on the daily patient workflow.`);
+    if (action === 'open-patient') { patientIndex = Number(target.dataset.patient); view = role === 'doctor' ? 'Consult' : role === 'nurse' ? 'Vitals' : 'Counter'; render(); }
+    if (action === 'back-queue') { view = navigation[role][0]; render(); }
+    if (action === 'save-draft') { drafts[patientIndex].saved = true; footer.querySelector('.jmc-status').textContent = 'Draft saved in this preview'; }
+    if (action === 'review-rx') message(drafts[patientIndex].medicine ? 'Doctor review: complete and verify the diagnosis, medicine, dose, frequency and duration before signing. Nothing is signed in this concept.' : 'Doctor review: no medicines added. A consultation can finish without a prescription. Nothing is signed in this concept.');
+    if (action === 'medicine') {
+      if (drafts[patientIndex].medicine) { drafts[patientIndex].medicine = false; drafts[patientIndex].saved = false; consultation(); }
+      else { const picker = content.querySelector('[data-medicine-picker]'); picker.hidden = !picker.hidden; if (!picker.hidden) picker.querySelector('input').focus(); }
+    }
+    if (action === 'choose-medicine') { drafts[patientIndex].medicine = true; drafts[patientIndex].saved = false; consultation(); }
+    if (action === 'save-vitals') { footer.querySelector('.jmc-status').textContent = 'Handoff preview only'; message('The doctor would see these measurements on the selected patient. This preview does not save clinical data.'); }
+    if (action === 'review-payment') {
+      const quantityInput = content.querySelector('[data-supply]');
+      if (!quantityInput.reportValidity()) return;
+      message(`Checkout preview: ₹200 consultation + ₹${supplied * 2} medicines = ₹${200 + supplied * 2}. ${paymentMethod === 'Pay later' ? 'The full balance remains due.' : `Payment method: ${paymentMethod}.`} Nothing is dispensed or charged in this concept.`);
+    }
+  });
+  render();
+})();
+</script>

@@ -13,16 +13,21 @@ name: CI
 #   the backend   Deno. The Edge Functions in supabase/functions/, deployed
 #                 beside the database and talking to Postgres directly.
 #
-# So this job checks the four things that can be checked without a database —
-# the page's types, the unit tests, that the export builds, and the backend's
-# types — and deliberately claims nothing about the rest.
+# The `check` job below checks the four things that can be checked without a
+# database — the page's types, the unit tests, that the export builds, and the
+# backend's types.
 #
-# What that leaves uncovered is worth saying plainly, because it is most of the
-# clinic. There is no database test suite in this repository and no end-to-end
-# test: nothing here applies a migration, proves a query names a column that
-# exists, or signs a tablet in. The two files in tests/ are the entire automated
-# suite. A CI that pretends to cover the data layer is worse than one that
-# admits it does not.
+# It used to be the whole file, and the paragraph here used to say so: no
+# database suite, no end-to-end test, the two files in tests/ are everything.
+# That is no longer true and the comment outlived it. There are now two more
+# jobs below — `database` applies every migration to a real PostgreSQL 17 and
+# runs the characterization suite and the restore drill, and `browser` drives
+# the built export through a real Chrome.
+#
+# What is still worth saying plainly is which of them has ever run. `browser`
+# ran for the first time on 27 October 2026, on pull request #38, and was
+# green: 119 journeys. A job that reports is not a gate until it has been
+# green twice.
 
 on:
   push:
@@ -131,3 +136,170 @@ jobs:
             echo
             exit 1
           fi
+
+  # ── THE DATABASE, WHICH NOTHING ABOVE TOUCHES EITHER ──────────────────────
+  #
+  # The job above deliberately claims nothing about the data layer, and until
+  # Slice 0 that was the only honest position available: there was no way to
+  # apply a migration or run a query without pointing at the clinic's live
+  # database. There is now. This job builds the schema from
+  # supabase/migrations/ into a throwaway PostgreSQL 17 and runs the
+  # characterization suite against it — the real Edge Function code, the real
+  # SQL, no mocks.
+  #
+  # It is a separate job rather than more steps on the one above because it is
+  # the slower half and because a database failure and a typecheck failure are
+  # different news. Both must pass.
+  database:
+    name: migrations · characterization suite
+    runs-on: ubuntu-24.04
+    # 15 was set when the suite was a few hundred tests. At 1014 it takes about
+    # 22 minutes, and its first run here, on 27 October 2026, was stopped at
+    # 15 in the middle of a green suite — which GitHub reports as "cancelled".
+    timeout-minutes: 40
+
+    services:
+      # Named and ported to match what scripts/staging/guard.mjs will accept.
+      # The guard is an allowlist of loopback hosts and scratch database names,
+      # and it applies here exactly as it does on a developer's machine — CI is
+      # not a reason to have a second, weaker rule.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: staging
+          POSTGRES_DB: clinic_staging
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clinic_staging"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      STAGING_DB_URL: postgresql://postgres:staging@127.0.0.1:55432/clinic_staging
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Applies every migration inside a transaction and then checks that the
+      # tables landed in `jmc`. Both halves matter: `set local search_path` at
+      # the top of each migration file is a no-op outside a transaction, and a
+      # run without one silently builds the whole clinic in `public` — where,
+      # on the shared production database, the retired application lives and
+      # eight table names collide exactly.
+      - name: Build the schema from supabase/migrations/
+        run: node scripts/staging/apply-migrations.mjs
+
+      # The suite loads supabase/functions/_shared/*.ts under Node and runs it
+      # against that schema. Files run one at a time: they share one database
+      # and each resets it.
+      - name: Characterization suite
+        run: npm run test:db
+
+      # The backup this clinic depends on, rehearsed against the scratch
+      # database rather than the live one. It runs the same two scripts the
+      # nightly Backup workflow runs, so a break in them is caught here on a
+      # pull request instead of at 22:00 IST against production.
+      - name: Install the PostgreSQL 17 client
+        run: |
+          ./scripts/ci-pgdg.sh
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Restore drill
+        env:
+          BACKUP_DB_URL: postgresql://postgres:staging@127.0.0.1:55432/clinic_staging
+          PGPASSWORD: staging
+          PGHOST: 127.0.0.1
+          PGPORT: '55432'
+          PGUSER: postgres
+          PGDATABASE: clinic_staging
+          SCRATCH_DB: clinic_restore_drill
+        run: ./scripts/db-restore-drill.sh
+
+  # ── THE SCREENS, WHICH NEITHER JOB ABOVE CLICKS ───────────────────────────
+  #
+  # `database` runs the clinic's logic; this runs its screens. Slices 1 to 5
+  # each found at least one defect that only a browser could see — a
+  # doctor-only account shown no register button, a rail with no Vitals
+  # station, a counter with no arithmetic on it, a consultation fee that agreed
+  # with the configured fee by coincidence — and none of those had a failing
+  # test until somebody opened the page.
+  #
+  # ── WHY THE BROWSER IS PINNED, AND WHY THAT MATTERS MORE THAN USUAL ───────
+  #
+  # `ubuntu-24.04` ships a Chrome whose version moves without anybody asking.
+  # A suite that clicks real controls and measures real layout is a suite whose
+  # verdict can change on a morning nobody touched the code, and the brief is
+  # explicit: do not add a knowingly flaky required check. So Chrome is
+  # installed at a fixed version and handed to the driver by path, the same way
+  # `deno-version` is pinned above for the same reason.
+  #
+  # ── WHAT HAS NOT BEEN VERIFIED ───────────────────────────────────────────
+  #
+  # This job first ran on 27 October 2026, on pull request #38, and was green.
+  # One green run answers the question this block used to ask — whether Chrome
+  # headless on a GitHub runner, with its sandbox flags, fonts and
+  # shared-memory size, drives the export at all — but it is one run. Make it
+  # a required check on the branch only after it has been green twice; until
+  # then it is a job that reports, not a gate.
+  browser:
+    name: browser journeys
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    # No `services: postgres` here, unlike the job above, and the difference is
+    # not an oversight. `npm run test:browser` runs scripts/staging/up.mjs,
+    # which creates its OWN `jmc-staging` container on port 55432 — that is how
+    # a developer runs it and running the same thing in CI is the point. A
+    # service container bound to the same host port would collide, and
+    # `docker run` would fail before a single migration was applied. Docker is
+    # present on `ubuntu-24.04`, so up.mjs has what it needs.
+    #
+    # STAGING_DB_URL is not set here for the same reason: up.mjs builds the URL
+    # and hands it to every child process, and a second, differently-spelled
+    # copy in this file is a copy that goes stale.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Pinned exactly. `stable` would be a moving target and this job's whole
+      # value is that a red run means the code changed.
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          chrome-version: '131.0.6778.85'
+
+      - name: Browser journeys
+        # The driver takes the browser by path rather than discovering one, so
+        # the pin above is load-bearing rather than decorative.
+        env:
+          AGENT_BROWSER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: npm run test:browser
+
+      # The screenshots and the page it was looking at when something failed.
+      # A browser failure with no artifact is a bug report that says "it did
+      # not work", which nobody can act on.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure
+          path: |
+            out/
+            /tmp/agent-browser-*
+          retention-days: 7
+          if-no-files-found: ignore

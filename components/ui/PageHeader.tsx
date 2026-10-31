@@ -26,7 +26,17 @@ export function PageHeader({
       <div className="min-w-0">
         <p className="eyebrow">{eyebrow}</p>
         <h1 className="mt-1 text-[22px] leading-tight font-semibold tracking-tight">{title}</h1>
-        {sub ? <div className="mt-1 font-mono text-[13px] text-ink-2">{sub}</div> : null}
+        {/*
+         * Sans, with tabular figures rather than a mono face.
+         *
+         * This line is nearly always a count in a sentence — "4 waiting · 7
+         * today", "2 prescriptions waiting · ₹800.00 due". The system's rule is
+         * that mono carries values somebody might transcribe wrongly, and
+         * "patients" is not one of those; setting the whole line in it made the
+         * words harder to read to no purpose. `tabular` keeps the figures
+         * aligned, which is the half of it that was actually earning its place.
+         */}
+        {sub ? <div className="tabular mt-1 text-[14px] text-ink-2">{sub}</div> : null}
       </div>
       {action ? <div className="flex flex-wrap items-center gap-2">{action}</div> : null}
     </header>

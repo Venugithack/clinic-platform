@@ -91,12 +91,16 @@ Never commit `.env.local` or anything under `archive/local/`.
 
 ## Documentation status
 
-- `docs/README.md` describes the application currently in this repository.
-- `docs/INVENTORY.md`, `docs/TABLET.md`, and `docs/WHATSAPP.md` remain useful
-  domain references, but policy-sensitive details should be revalidated.
-- `archive/docs/` contains earlier build plans, proposals, reviews, hosting
-  notes, and handovers. Treat them as historical context, not setup
-  instructions.
+- [`docs/README.md`](docs/README.md) is the single documentation index and
+  describes the application currently in this repository.
+- [`docs/UI_UX_PLAN.md`](docs/UI_UX_PLAN.md) holds the organized UI/UX direction
+  for doctor, nurse, pharmacy, and admin workflows.
+- The other core documents at the top of `docs/` cover owner policy, schema and
+  types, and implementation constraints. Specialist material is in
+  `docs/reference/`; runbooks are in `docs/operations/`.
+- `archive/docs/` is tracked history. The earlier hospital all-in-one prototype
+  is local-only under `archive/local/hospital-all-in-one-reference/`. Neither is a
+  current setup or implementation source.
 
 ## Deployment
 

@@ -4,7 +4,3 @@ export function deliveredOrderStatus(ordered: number, received: number): Purchas
   if (received <= 0) return 'placed'
   return received >= ordered ? 'delivered' : 'partially_delivered'
 }
-
-export function reorderQuantity(available: number, targetStock: number) {
-  return Math.max(Math.floor(targetStock) - Math.floor(available), 1)
-}

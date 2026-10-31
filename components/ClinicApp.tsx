@@ -1,10 +1,39 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ClinicSnapshot, CommandResponse, Role } from '@/lib/types'
-import { BusyContext, type ActionRunner } from './clinic-context'
-import { callApi, readToken, writeToken } from '@/lib/api'
-import { navigationFor, ROLE_LABEL, type View } from './navigation'
+import type { ClinicSnapshot, CommandResponse, LockScreenStaffView, Role } from '@/lib/types'
+import {
+  BusyContext,
+  ConnectionContext,
+  SelectedPatientContext,
+  type ActionResult,
+  type ActionRunner,
+} from './clinic-context'
+import { NoAnswer, callApi, readToken, writeToken } from '@/lib/api'
+import { clearResultRecovery } from '@/lib/result-recovery'
+import {
+  landingFor,
+  moreFor,
+  navigationGroupsFor,
+  primaryFor,
+  ROLE_LABEL,
+  type NavGroup,
+  type View,
+} from './navigation'
+import { THEMES, useTheme, type ThemeChoice } from './theme'
+
+/**
+ * How many digits a PIN chosen from here has.
+ *
+ * Four, matching `requirePin` in the backend. It is a constant rather than a
+ * literal because the number appears in six places on the first-start screen
+ * — the dots, the two prompts, the confirm comparison, the ready check — and
+ * five of those agreeing with the server while the sixth does not is an
+ * administrator account on a clinic with no other staff that nobody can sign
+ * into. The rule this must agree with is in
+ * supabase/functions/bootstrap/index.ts.
+ */
+const NEW_PIN_LENGTH = 4
 import { WorkspaceRouter } from './workspace-router'
 import {
   ActionButton,
@@ -12,21 +41,31 @@ import {
   Button,
   Card,
   CardBody,
+  Drawer,
   Field,
+  Icon,
   Input,
   Notice,
   Numpad,
+  Popover,
 } from '@/components/ui'
 
 /**
- * The application chrome: an ink rail of stations, a header, and the workspace.
+ * The application chrome: an identity header, the stations this role works out
+ * of, and the workspace.
  *
- * Adapted from the hospital application's `Shell`. There the rail is 44px wide
- * and carries one rotated word, because that demo has one screen per role. A
- * clinic tablet has ten screens behind one login, so the rail widens into a
- * list — same ink ground, same tracked caps, same rule weights. Below 1024px
- * it slides away and returns as a drawer, so a 768px tablet in portrait gets
- * the full width for the register it is showing.
+ * Two shapes, for two jobs. A doctor, nurse or pharmacist repeats one job all
+ * day and gets a short horizontal bar — three stations and **More** — so the
+ * full width of the tablet belongs to the patient in front of them. An
+ * administrator investigates exceptions across the whole clinic and keeps the
+ * grouped rail, because twenty-one destinations is a building you navigate
+ * rather than a job you repeat.
+ *
+ * Below 1024px the rail is not moved offscreen — it is not rendered. The
+ * version this replaces translated it out of view with `-translate-x-full`,
+ * where it stayed in the accessibility tree and the tab order, so a keyboard
+ * user on a 768px tablet tabbed from the Menu button into twenty invisible
+ * buttons. `hidden lg:flex` plus a real focus-trapping drawer is the whole fix.
  */
 
 export function ClinicApp() {
@@ -34,65 +73,125 @@ export function ClinicApp() {
   const [initializing, setInitializing] = useState(true)
   const [hasSession, setHasSession] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<{ tone: 'good' | 'bad'; message: string } | null>(null)
+  const [notice, setNotice] = useState<{
+    tone: 'good' | 'bad' | 'unknown'
+    message: string
+  } | null>(null)
   const [view, setView] = useState<View>('overview')
   const [menuOpen, setMenuOpen] = useState(false)
+
+  /**
+   * How fresh the clinic on this screen is — kept apart from `notice`.
+   *
+   * These used to share one slot, so a background poll that failed on the
+   * clinic Wi-Fi arrived in the same red strip, in the same voice, as a
+   * hand-over the server had just refused; and a poll landing on the next tick
+   * could overwrite the confirmation of something somebody had just done. A
+   * stale queue and a refused command are not the same news.
+   */
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [stale, setStale] = useState(false)
+
+  /**
+   * The patient the clinic is currently working on, held above the
+   * workspaces rather than inside each of them.
+   *
+   * Queue, Vitals and Consult each used to keep their own copy, so the same
+   * patient was chosen from the same all-patient dropdown three times in one
+   * visit. The plan's first principle is that work follows the patient; this
+   * is where that stops being a principle.
+   *
+   * It lives beside `view` because the two move together — `Call in` selects
+   * a patient and opens Consult, and either half alone is useless.
+   */
+  const [selectedPatientId, setSelectedPatientId] = useState('')
 
   // The revision the screen is showing. A ref rather than state because it
   // must not re-create the poll on every tick.
   const revision = useRef<number | null>(null)
 
-  const loadSnapshot = useCallback(async (silent = false) => {
-    try {
-      // Telling the server what we already have lets it answer "nothing new" in
-      // one query instead of rebuilding the whole clinic in sixteen. Most polls
-      // in a clinic day are that answer.
-      const since = revision.current
-      const query = silent && since !== null ? `?since=${since}` : ''
-
-      const response = await callApi(`snapshot${query}`)
-      if (response.status === 401) {
-        writeToken(null)
-        setHasSession(false)
-        revision.current = null
-        setData(null)
-        return
-      }
-
-      const result = (await response.json()) as {
-        ok: boolean
-        message?: string
-        revision?: number
-        unchanged?: boolean
-        doctorPresent?: boolean
-        snapshot?: ClinicSnapshot
-      }
-
-      if (!result.ok) {
-        setNotice({
-          tone: 'bad',
-          message: result.message ?? 'The clinic could not be refreshed.',
-        })
-        return
-      }
-      if (typeof result.revision === 'number') revision.current = result.revision
-      if (result.unchanged) {
-        if (typeof result.doctorPresent === 'boolean') {
-          setData((current) =>
-            current && current.doctorPresent !== result.doctorPresent
-              ? { ...current, doctorPresent: result.doctorPresent! }
-              : current,
-          )
-        }
-        return
-      }
-      if (result.snapshot) setData(result.snapshot)
-    } catch {
-      setNotice({ tone: 'bad', message: 'The clinic server is not reachable.' })
-    } finally {
-      if (!silent) setInitializing(false)
-    }
+  /**
+   * Everything a lost session has to forget.
+   *
+   * The selected patient is in here, and it is the reason this is a function
+   * rather than four lines repeated twice. The 401 paths used to clear the
+   * token, the session and the snapshot and leave `selectedPatientId` set; the
+   * component never unmounts, so after the thirty-minute idle lock the next
+   * person to pick that tablet up signed in and found the previous staff
+   * member's patient already open, ready to have somebody else's vitals filed
+   * against them.
+   */
+  const dropSession = useCallback(() => {
+    writeToken(null)
+    // The result station leaves itself a note about unfinished follow-up. It is
+    // per-tablet and four people share these tablets, so it goes when the
+    // session does — sign-out and the idle lock both arrive here.
+    clearResultRecovery()
+    setHasSession(false)
+    revision.current = null
+    setData(null)
+    setSelectedPatientId('')
+    setLastUpdated(null)
+    setStale(false)
   }, [])
+
+  const loadSnapshot = useCallback(
+    async (silent = false) => {
+      setRefreshing(true)
+      try {
+        // Telling the server what we already have lets it answer "nothing new" in
+        // one query instead of rebuilding the whole clinic in sixteen. Most polls
+        // in a clinic day are that answer.
+        const since = revision.current
+        const query = silent && since !== null ? `?since=${since}` : ''
+
+        const response = await callApi(`snapshot${query}`)
+        if (response.status === 401) {
+          dropSession()
+          return
+        }
+
+        const result = (await response.json()) as {
+          ok: boolean
+          message?: string
+          revision?: number
+          unchanged?: boolean
+          doctorPresent?: boolean
+          snapshot?: ClinicSnapshot
+        }
+
+        if (!result.ok) {
+          setStale(true)
+          return
+        }
+
+        setStale(false)
+        setLastUpdated(Date.now())
+        if (typeof result.revision === 'number') revision.current = result.revision
+        if (result.unchanged) {
+          if (typeof result.doctorPresent === 'boolean') {
+            setData((current) =>
+              current && current.doctorPresent !== result.doctorPresent
+                ? { ...current, doctorPresent: result.doctorPresent! }
+                : current,
+            )
+          }
+          return
+        }
+        if (result.snapshot) setData(result.snapshot)
+      } catch {
+        // A read that does not come back changed nothing. It is a connection
+        // problem and it belongs in the connection indicator, not in the strip
+        // where the results of somebody's actions appear.
+        setStale(true)
+      } finally {
+        setRefreshing(false)
+        if (!silent) setInitializing(false)
+      }
+    },
+    [dropSession],
+  )
 
   // localStorage is a browser API, so discover a saved tablet session only
   // after hydration. The nullable state keeps the opening screen stable until
@@ -124,44 +223,86 @@ export function ClinicApp() {
           method: 'POST',
           body: JSON.stringify({ action, payload }),
         })
-        const result = (await response.json()) as CommandResponse & {
-          revision?: number
-          snapshot?: ClinicSnapshot
+
+        let result: ActionResult & { revision?: number; snapshot?: ClinicSnapshot; unchanged?: boolean }
+        try {
+          result = await response.json()
+        } catch {
+          // The clinic was reached and did not answer in a language this
+          // understands. Whether the transaction committed before it went wrong
+          // is not knowable from here, so it is an unknown outcome and not a
+          // refusal. Re-read the clinic so the screen at least shows the truth.
+          void loadSnapshot(true)
+          const unknown: ActionResult = {
+            ok: false,
+            unconfirmed: true,
+            message: 'The clinic did not confirm this. Check the record before doing it again.',
+          }
+          setNotice({ tone: 'unknown', message: unknown.message })
+          return unknown
         }
+
         setNotice({ tone: result.ok ? 'good' : 'bad', message: result.message })
 
         // A 401 is the thirty-minute idle lock, not a refusal to argue with:
         // the session is gone and every control on the workspace behind this
-        // notice is now dead. `loadSnapshot` already drops the clinic on a 401;
-        // without the same thing here the user reads "Sign in required." on a
-        // screen that still looks alive and goes on tapping it until the
+        // notice is now dead. Without this the user reads "Sign in required."
+        // on a screen that still looks alive and goes on tapping it until the
         // fifteen-second poll happens to notice.
         if (response.status === 401) {
-          writeToken(null)
-          setHasSession(false)
-          revision.current = null
-          setData(null)
+          dropSession()
           return result
         }
 
         // The command already carries the clinic as it now stands. Fetching it
         // again would double the wait on every action for no new information.
+        //
+        // Unless the command changed nothing — asking whether a patient is
+        // already registered, say. Those answer without a snapshot on purpose,
+        // and the `else` below would then go and fetch the whole clinic to
+        // replace it with itself, which is the exact download the server just
+        // took care to avoid.
         if (result.ok && result.snapshot) {
           if (typeof result.revision === 'number') revision.current = result.revision
           setData(result.snapshot)
-        } else if (result.ok) {
+          setLastUpdated(Date.now())
+          setStale(false)
+        } else if (result.ok && !result.unchanged) {
           await loadSnapshot(true)
         }
         return result
-      } catch {
-        const result = { ok: false, message: 'The clinic server is not reachable.' }
-        setNotice({ tone: 'bad', message: result.message })
+      } catch (error) {
+        /*
+         * The request did not come back.
+         *
+         * This is the case the application could not previously express. A
+         * fetch that throws looks identical whether it never left the tablet or
+         * reached Mumbai, moved the stock and lost the reply on the way home —
+         * and reporting the second one as "the clinic server is not reachable"
+         * tells a pharmacist nothing happened when something may well have.
+         *
+         * So a command that does not answer is an UNKNOWN outcome. The screens
+         * that care keep the operator's typed work, say the outcome is not
+         * confirmed, and re-check the record before letting the action run
+         * again; the commands that move stock or money already carry an
+         * idempotency key, so the retry that follows a check is safe.
+         */
+        const unconfirmed = !(error instanceof NoAnswer) || error.mutating
+        const result: ActionResult = unconfirmed
+          ? {
+              ok: false,
+              unconfirmed: true,
+              message: 'The clinic did not confirm this. Check the record before doing it again.',
+            }
+          : { ok: false, message: 'The clinic server is not reachable.' }
+        setNotice({ tone: unconfirmed ? 'unknown' : 'bad', message: result.message })
+        if (unconfirmed) void loadSnapshot(true)
         return result
       } finally {
         setBusy(false)
       }
     },
-    [loadSnapshot],
+    [dropSession, loadSnapshot],
   )
 
   const uploadCsv = useCallback(
@@ -177,8 +318,12 @@ export function ClinicApp() {
         if (result.ok) await loadSnapshot(true)
         return result
       } catch {
-        const result = { ok: false, message: 'CSV upload could not reach the clinic server.' }
-        setNotice({ tone: 'bad', message: result.message })
+        const result = {
+          ok: false,
+          message: 'The drug master upload was not confirmed. Check the formulary before sending it again.',
+        }
+        setNotice({ tone: 'unknown', message: result.message })
+        void loadSnapshot(true)
         return result
       } finally {
         setBusy(false)
@@ -207,13 +352,18 @@ export function ClinicApp() {
           writeToken(result.token)
           setHasSession(true)
         }
-        setView('overview')
+        // Nobody arrives at work to read a summary of the clinic they are
+        // about to work in. The doctor opens on the queue, the nurse on what
+        // is due, the pharmacist on a counter ready to sell.
+        if (result.snapshot) setView(landingFor(result.snapshot.session.roles))
 
         // The clinic came back with the PIN. Asking for it again would put a
-        // second wait between tapping six digits and seeing the queue.
+        // second wait between the last digit and seeing the queue.
         if (result.snapshot) {
           if (typeof result.revision === 'number') revision.current = result.revision
           setData(result.snapshot)
+          setLastUpdated(Date.now())
+          setStale(false)
         } else {
           await loadSnapshot(true)
         }
@@ -230,20 +380,21 @@ export function ClinicApp() {
     await callApi('logout', { method: 'POST' }).catch(() => {})
     // Dropped locally whatever the server said: a sign-out that leaves the
     // token on a shared tablet because the network hiccuped is not a sign-out.
-    writeToken(null)
-    setHasSession(false)
-    revision.current = null
-    setData(null)
+    dropSession()
     setBusy(false)
     setNotice(null)
     setView('overview')
+    setMenuOpen(false)
   }
 
   if (initializing) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-2 bg-paper">
-        <p className="eyebrow">Jayamurugan Clinic</p>
-        <p className="font-mono text-[13px] text-ink-2">Opening the clinic workspace…</p>
+      <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-paper px-5">
+        <ClinicMark className="h-16 w-auto" />
+        <p className="flex items-center gap-2 font-mono text-[14px] text-ink-2">
+          <Icon name="ring" size={18} className="jmc-spin" />
+          Opening the clinic workspace…
+        </p>
       </main>
     )
   }
@@ -251,156 +402,437 @@ export function ClinicApp() {
   if (!data) return <LoginScreen onSignIn={login} busy={busy} notice={notice} />
 
   const roles = data.session.roles
-  const items = navigationFor(roles)
+  const railed = roles.includes('admin')
+  const groups = navigationGroupsFor(roles)
+  const primary = primaryFor(roles)
+  const more = moreFor(roles)
+  const items = groups.flatMap((group) => group.items)
   const current = items.find((item) => item.id === view) ?? items[0]
-  const roleName = roles.map((role) => ROLE_LABEL[role]).join(' · ')
+
+  const selectedPatient = {
+    patientId: selectedPatientId,
+    select: setSelectedPatientId,
+    goTo: (next: string) => setView(next as View),
+  }
+
+  function open(next: View) {
+    setView(next)
+    setMenuOpen(false)
+  }
 
   return (
     <BusyContext value={busy}>
-      <div className="flex min-h-screen">
-        {/* The rail. Ink ground, because this is the spine of the building. */}
-        <nav
-          data-print="hide"
-          aria-label="Clinic stations"
-          className={`fixed inset-y-0 left-0 z-40 flex w-[240px] shrink-0 flex-col bg-ink transition-transform duration-150 lg:static lg:w-[212px] lg:translate-x-0 ${
-            menuOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2 border-b border-paper/15 px-4 py-3.5">
-            <div className="flex min-w-0 items-center gap-2.5">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/icon-192.png"
-                alt=""
-                className="h-8 w-8 shrink-0 rounded-[3px]"
-              />
-              <div className="min-w-0">
-                <p className="truncate text-[15px] font-semibold tracking-[0.1em] text-paper uppercase">
-                  Jayamurugan
-                </p>
-                <p className="eyebrow mt-0.5 text-paper/55">Clinic</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setMenuOpen(false)}
-              aria-label="Close menu"
-              className="-mr-2 inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center font-mono text-[18px] text-paper/70 hover:text-paper lg:hidden"
-            >
-              ×
-            </button>
-          </div>
+      <ConnectionContext value={{ lastUpdated, refreshing, stale }}>
+        <SelectedPatientContext value={selectedPatient}>
+          <div className={railed ? 'flex min-h-screen' : 'flex min-h-screen flex-col'}>
+            {railed ? (
+              // Not moved offscreen — not rendered. `hidden` takes it out of
+              // the accessibility tree and the tab order at the same time,
+              // which is what a translated-away rail never did.
+              <nav
+                data-print="hide"
+                data-ground="dark"
+                aria-label="Clinic stations"
+                className="hidden w-[212px] shrink-0 flex-col bg-ink lg:flex"
+              >
+                <RailIdentity name={data.session.name} roles={roles} />
+                <RailStations groups={groups} current={current?.id} onOpen={open} />
+                <RailFooter busy={busy} onSignOut={logout} />
+              </nav>
+            ) : null}
 
-          <div className="flex-1 overflow-y-auto px-2 py-2">
-            {items.map((item) => {
-              const on = current?.id === item.id
+            <div className="flex min-w-0 flex-1 flex-col">
+              <header
+                data-print="hide"
+                className="flex items-center justify-between gap-3 border-b border-rule bg-sheet px-4 py-2.5 lg:px-5"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  {railed ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon="menu"
+                      className="lg:hidden"
+                      onClick={() => setMenuOpen(true)}
+                    >
+                      Stations
+                    </Button>
+                  ) : null}
+                  <ClinicMark className="h-9 w-auto shrink-0" />
+                  {/* Not an <h1>: every workspace states its own heading in
+                      `PageHeader`, and two h1s on one screen is one too many
+                      for anyone navigating by headings. The shell carries the
+                      clinic's identity and who is holding the tablet — the
+                      station name it used to repeat is already below. */}
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] leading-tight font-semibold">
+                      {data.session.name}
+                    </p>
+                    <p className="truncate text-[13px] text-ink-2">
+                      {roles.map((role) => ROLE_LABEL[role]).join(' · ')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="hidden sm:inline">
+                    <Badge tone={data.doctorPresent ? 'live' : 'plain'} icon="stethoscope">
+                      {data.doctorPresent ? 'Doctor in' : 'Doctor out'}
+                    </Badge>
+                  </span>
+                  <ConnectionMark
+                    lastUpdated={lastUpdated}
+                    refreshing={refreshing}
+                    stale={stale}
+                    onRefresh={() => void loadSnapshot()}
+                  />
+                  <ThemeChoice account={data.session.theme} run={run} />
+                  {railed ? null : (
+                    <ActionButton
+                      size="sm"
+                      variant="ghost"
+                      busy={busy}
+                      busyLabel="…"
+                      onClick={logout}
+                    >
+                      Sign out
+                    </ActionButton>
+                  )}
+                </div>
+              </header>
+
+              {railed ? null : (
+                <nav
+                  data-print="hide"
+                  aria-label="Clinic stations"
+                  className="flex items-stretch gap-1 border-b border-rule bg-sheet px-2 lg:px-3"
+                >
+                  {primary.map((item) => {
+                    const on = current?.id === item.id
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        aria-current={on ? 'page' : undefined}
+                        onClick={() => open(item.id)}
+                        className={`flex min-h-[52px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 border-b-2 px-2 py-1.5 text-[13px] font-semibold transition-colors sm:flex-row sm:gap-2 ${
+                          on
+                            ? 'border-active text-active'
+                            : 'border-transparent text-ink-2 hover:text-ink'
+                        }`}
+                      >
+                        <Icon name={item.icon} size={21} />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen(true)}
+                    aria-expanded={menuOpen}
+                    className="flex min-h-[52px] min-w-0 flex-col items-center justify-center gap-0.5 border-b-2 border-transparent px-3 py-1.5 text-[13px] font-semibold text-ink-2 transition-colors hover:text-ink sm:flex-row sm:gap-2"
+                  >
+                    <Icon name="more" size={21} />
+                    <span>More</span>
+                  </button>
+                </nav>
+              )}
+
+              {notice ? (
+                <div data-print="hide" className="px-4 pt-3 lg:px-5">
+                  <Notice
+                    tone={notice.tone === 'good' ? 'good' : notice.tone === 'unknown' ? 'unknown' : 'bad'}
+                    onDismiss={() => setNotice(null)}
+                  >
+                    {notice.message}
+                  </Notice>
+                </div>
+              ) : null}
+
+              <main className="mx-auto w-full min-w-0 max-w-[1400px] flex-1 px-4 py-5 lg:px-5">
+                <WorkspaceRouter view={view} data={data} run={run} uploadCsv={uploadCsv} roles={roles} />
+              </main>
+            </div>
+
+            {/*
+             * Everything else this session is authorized for. Nothing has been
+             * taken away to make the bar short — `moreFor` is defined as the
+             * rail minus the bar, so a station can only move, never vanish.
+             */}
+            <Drawer
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              title={railed ? 'Clinic stations' : 'More'}
+              sub={railed ? undefined : 'Everything else you are authorized for'}
+              footer={
+                <Button variant="secondary" icon="close" onClick={logout} disabled={busy}>
+                  Sign out
+                </Button>
+              }
+            >
+              <div className="grid gap-4">
+                {(railed ? groups : more).map((group, index) => (
+                  <div key={group.heading ?? `more-${index}`}>
+                    {group.heading ? <p className="eyebrow mb-1.5">{group.heading}</p> : null}
+                    <div className="grid gap-1">
+                      {group.items.map((item) => {
+                        const on = current?.id === item.id
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            aria-current={on ? 'page' : undefined}
+                            onClick={() => open(item.id)}
+                            className={`flex min-h-[48px] w-full items-center gap-3 rounded-box px-3 text-left text-[15px] font-medium transition-colors ${
+                              on ? 'bg-active-wash text-active' : 'hover:bg-paper'
+                            }`}
+                          >
+                            <Icon name={item.icon} size={20} className="text-ink-2" />
+                            <span className="min-w-0">
+                              <span className="block truncate">{item.label}</span>
+                              <span className="block truncate text-[12px] text-ink-2">
+                                {item.eyebrow}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Drawer>
+          </div>
+        </SelectedPatientContext>
+      </ConnectionContext>
+    </BusyContext>
+  )
+}
+
+/**
+ * The clinic's mark.
+ *
+ * One component so the asset, its alt text and its size discipline live in one
+ * place. The plan puts it on sign-in, in the identity area, and on anything
+ * that prints — and nowhere else, because a logo repeated on every panel stops
+ * being an identity and becomes furniture.
+ */
+function ClinicMark({ className = '' }: { className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/logo-mark.png" alt="Jayamurugan Clinic" className={className} />
+  )
+}
+
+function RailIdentity({ name, roles }: { name: string; roles: Role[] }) {
+  return (
+    <div className="flex items-center gap-2.5 border-b border-paper/15 px-4 py-3.5">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/icon-192.png" alt="" className="h-8 w-8 shrink-0 rounded-[3px]" />
+      <div className="min-w-0">
+        <p className="truncate text-[15px] font-semibold text-paper">{name}</p>
+        <p className="truncate text-[13px] text-paper/60">
+          {roles.map((role) => ROLE_LABEL[role]).join(' · ')}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function RailStations({
+  groups,
+  current,
+  onOpen,
+}: {
+  groups: NavGroup[]
+  current: View | undefined
+  onOpen: (view: View) => void
+}) {
+  return (
+    <div className="flex-1 overflow-y-auto px-2 py-2">
+      {groups.map((group, index) => {
+        const headingId = group.heading
+          ? `rail-${group.heading.toLowerCase().replaceAll(' ', '-')}`
+          : undefined
+
+        // A named group rather than a heading: a screen reader announces
+        // "People and access, group" on entering it, and the page's heading
+        // outline stays the workspace's own — the rail is not four headings in
+        // front of the h1 every screen already sets.
+        return (
+          <div
+            key={group.heading ?? `rail-top-${index}`}
+            role={group.heading ? 'group' : undefined}
+            aria-labelledby={headingId}
+            className={index > 0 ? 'mt-3' : undefined}
+          >
+            {group.heading ? (
+              <p id={headingId} className="eyebrow px-3 pt-1 pb-1.5 text-paper/60">
+                {group.heading}
+              </p>
+            ) : null}
+            {group.items.map((item) => {
+              const on = current === item.id
               return (
                 <button
                   key={item.id}
                   type="button"
                   aria-current={on ? 'page' : undefined}
-                  onClick={() => {
-                    setView(item.id)
-                    setMenuOpen(false)
-                  }}
-                  className={`flex min-h-[48px] w-full items-center rounded-box px-3 py-2 text-left text-[13px] font-semibold tracking-[0.1em] uppercase transition-colors ${
-                    on ? 'bg-paper text-ink' : 'text-paper/70 hover:bg-paper/10 hover:text-paper'
+                  onClick={() => onOpen(item.id)}
+                  className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-box px-3 py-1.5 text-left text-[14px] font-medium transition-colors ${
+                    on ? 'bg-paper text-ink' : 'text-paper/75 hover:bg-paper/10 hover:text-paper'
                   }`}
                 >
-                  {item.label}
+                  <Icon name={item.icon} size={19} />
+                  <span className="truncate">{item.label}</span>
                 </button>
               )
             })}
           </div>
+        )
+      })}
+    </div>
+  )
+}
 
-          <div className="border-t border-paper/15 px-4 py-3">
-            <p className="truncate text-[14px] font-semibold text-paper">{data.session.name}</p>
-            <p className="eyebrow mt-0.5 truncate text-paper/55">{roleName}</p>
+function RailFooter({ busy, onSignOut }: { busy: boolean; onSignOut: () => void }) {
+  return (
+    <div className="border-t border-paper/15 px-3 py-3">
+      <button
+        type="button"
+        onClick={onSignOut}
+        disabled={busy}
+        className="inline-flex min-h-[44px] w-full items-center gap-2.5 rounded-box border border-paper/30 px-3 text-[14px] font-semibold text-paper/85 transition-colors hover:bg-paper/10 hover:text-paper disabled:opacity-40"
+      >
+        <Icon name="close" size={18} />
+        Sign out
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Whether what is on this screen is current.
+ *
+ * Four tablets poll the same clinic every fifteen seconds, and the one thing a
+ * nurse cannot tell by looking is whether the queue in front of her is a minute
+ * old or twenty because the Wi-Fi dropped in the corridor. This says which, in
+ * words, and it is the only place a connection problem is ever reported — a
+ * failed refresh has nothing to do with the result of anything anybody did.
+ */
+function ConnectionMark({
+  lastUpdated,
+  refreshing,
+  stale,
+  onRefresh,
+}: {
+  lastUpdated: number | null
+  refreshing: boolean
+  stale: boolean
+  onRefresh: () => void
+}) {
+  const [, tick] = useState(0)
+
+  // The label is a duration, so it has to change without anything else doing.
+  useEffect(() => {
+    const timer = window.setInterval(() => tick((n) => n + 1), 20_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const age = lastUpdated === null ? null : Math.floor((Date.now() - lastUpdated) / 1000)
+  const when =
+    age === null
+      ? 'not yet updated'
+      : age < 45
+        ? 'up to date'
+        : age < 5400
+          ? `${Math.max(1, Math.round(age / 60))} min old`
+          : `${Math.round(age / 3600)} h old`
+
+  const label = refreshing ? 'Refreshing…' : stale ? `Not updating · ${when}` : when
+
+  return (
+    <button
+      type="button"
+      onClick={onRefresh}
+      // Polite, not assertive: this changes on its own every fifteen seconds
+      // and must never interrupt somebody mid-sentence in a consultation.
+      aria-live="polite"
+      title="Refresh now — the workspace also refreshes every 15 seconds"
+      className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-box px-2 text-[13px] font-medium transition-colors hover:bg-paper ${
+        stale ? 'text-attn' : 'text-ink-2'
+      }`}
+    >
+      <Icon
+        name={stale ? 'signal-off' : refreshing ? 'ring' : 'signal'}
+        size={18}
+        className={refreshing ? 'jmc-spin' : undefined}
+      />
+      <span className="hidden md:inline">{label}</span>
+      <span className="sr-only md:hidden">Refresh. {label}</span>
+    </button>
+  )
+}
+
+/** Paper and ink, Night shift or High contrast, anchored to its own control. */
+/**
+ * Paper and ink, Night shift or High contrast, anchored to its own control.
+ *
+ * The choice is saved to the staff account rather than to this browser, so it
+ * follows the person onto whichever tablet they pick up next — which on four
+ * shared tablets is the difference between a preference and a nuisance. The
+ * colour changes the instant it is tapped; the clinic is told immediately
+ * afterwards, and if it refuses, the screen goes back to what the account
+ * actually holds.
+ */
+function ThemeChoice({ account, run }: { account: ThemeChoice; run: ActionRunner }) {
+  const { choice, setChoice, saving } = useTheme({
+    account,
+    save: (theme) => run('set_theme', { theme }),
+  })
+
+  return (
+    <Popover
+      title="Appearance"
+      trigger={(props) => (
+        <button
+          {...props}
+          type="button"
+          title="Appearance"
+          className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-box text-ink-2 transition-colors hover:bg-paper hover:text-ink"
+        >
+          <Icon name={saving ? 'ring' : 'settings'} size={19} className={saving ? 'jmc-spin' : undefined} />
+          <span className="sr-only">Appearance</span>
+        </button>
+      )}
+    >
+      {(close) =>
+        THEMES.map((theme) => {
+          const on = choice === theme.id
+          return (
             <button
+              key={theme.id}
               type="button"
-              onClick={logout}
-              disabled={busy}
-              className="mt-2 inline-flex min-h-[44px] w-full items-center rounded-box border border-paper/30 px-3 text-[12px] font-semibold tracking-[0.08em] text-paper/80 uppercase transition-colors hover:bg-paper/10 hover:text-paper disabled:opacity-40"
+              role="menuitemradio"
+              aria-checked={on}
+              onClick={() => {
+                setChoice(theme.id)
+                close()
+              }}
+              className={`flex min-h-[48px] w-full items-center gap-2.5 px-3 text-left text-[14px] transition-colors ${
+                on ? 'bg-active-wash text-active' : 'hover:bg-paper'
+              }`}
             >
-              Sign out
+              <Icon name={on ? 'check-circle' : 'ring'} size={18} />
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{theme.label}</span>
+                <span className="block truncate text-[12px] text-ink-2">{theme.hint}</span>
+              </span>
             </button>
-          </div>
-        </nav>
-
-        {menuOpen ? (
-          <button
-            type="button"
-            aria-label="Close menu"
-            data-print="hide"
-            onClick={() => setMenuOpen(false)}
-            className="fixed inset-0 z-30 bg-ink/35 lg:hidden"
-          />
-        ) : null}
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header
-            data-print="hide"
-            className="flex items-center justify-between gap-3 border-b-2 border-ink px-4 py-2.5 lg:px-5"
-          >
-            <div className="flex min-w-0 items-center gap-3">
-              <Button
-                size="sm"
-                variant="secondary"
-                className="lg:hidden"
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen(true)}
-              >
-                Menu
-              </Button>
-              {/* Not an <h1>: every workspace states its own heading in
-                  `PageHeader`, and two h1s on one screen is one too many for
-                  anyone navigating by headings. */}
-              <div className="min-w-0">
-                <p className="eyebrow truncate">{current?.eyebrow ?? 'Clinic'}</p>
-                <p className="truncate text-[15px] font-semibold tracking-[0.1em] uppercase">
-                  {current?.label ?? 'Overview'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="hidden sm:inline">
-                <Badge tone={data.doctorPresent ? 'live' : 'plain'}>
-                  {data.doctorPresent ? 'Doctor in' : 'Doctor out'}
-                </Badge>
-              </span>
-              <span className="hidden md:inline">
-                <Badge tone={data.whatsapp.configured ? 'free' : 'attn'}>
-                  {data.whatsapp.configured ? 'WhatsApp live' : 'WhatsApp pending'}
-                </Badge>
-              </span>
-              <ActionButton
-                size="sm"
-                variant="ghost"
-                busy={busy}
-                busyLabel="…"
-                onClick={() => void loadSnapshot()}
-                title="Refresh now — the workspace also refreshes every 15 seconds"
-              >
-                Refresh
-              </ActionButton>
-            </div>
-          </header>
-
-          {notice ? (
-            <div data-print="hide" className="px-4 pt-3 lg:px-5">
-              <Notice tone={notice.tone === 'good' ? 'good' : 'bad'} onDismiss={() => setNotice(null)}>
-                {notice.message}
-              </Notice>
-            </div>
-          ) : null}
-
-          <main className="mx-auto w-full min-w-0 max-w-[1400px] flex-1 px-4 py-5 lg:px-5">
-            <WorkspaceRouter view={view} data={data} run={run} uploadCsv={uploadCsv} roles={roles} />
-          </main>
-        </div>
-      </div>
-    </BusyContext>
+          )
+        })
+      }
+    </Popover>
   )
 }
 
@@ -409,13 +841,23 @@ export function ClinicApp() {
  *
  * A username and a password is a desk-and-chair idea. This is a tablet on a
  * counter that four people share and hand to each other twenty times a day, and
- * on that device a name you tap and six digits you know is both faster and more
+ * on that device a name you tap and a PIN you know is both faster and more
  * honest about what is happening — nobody is "logging into an account", they
  * are saying which of the people standing here is about to do something.
  *
  * The staff list is fetched unauthenticated, because you cannot ask somebody to
  * identify themselves and also require them to be identified first. It carries
- * names and roles and nothing else.
+ * names, roles, and how many digits that person's PIN is.
+ *
+ * ── WHY THE PAD'S LENGTH COMES FROM THE SERVER ─────────────────────────────
+ *
+ * The clinic is moving from six digits to four, and a stored hash cannot be
+ * shortened, so for the length of the rollout both are live — one per staff
+ * member, recorded on their row. The pad submits on the last digit rather than
+ * making everyone tap a confirm button hundreds of times a day, so it has to
+ * know which. Hardcoding four would submit early for everybody not yet reset
+ * and lock them out of their own clinic; hardcoding six would never fire for
+ * anybody who had been.
  */
 function LoginScreen({
   onSignIn,
@@ -424,13 +866,20 @@ function LoginScreen({
 }: {
   onSignIn: (staffId: string, pin: string) => void | Promise<void>
   busy: boolean
-  notice: { tone: 'good' | 'bad'; message: string } | null
+  notice: { tone: 'good' | 'bad' | 'unknown'; message: string } | null
 }) {
-  const [staff, setStaff] = useState<Array<{ id: string; name: string; roles: Role[] }>>([])
+  const [staff, setStaff] = useState<LockScreenStaffView[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<{ id: string; name: string; roles: Role[] } | null>(null)
+  const [selected, setSelected] = useState<LockScreenStaffView | null>(null)
   const [pin, setPin] = useState('')
+
+  // How many dots this person's pad draws, and when it fires. Four for anybody
+  // already reset, six for anybody still waiting. It falls back to six only if
+  // an older deployment of the staff endpoint omits the field, which is the
+  // safe direction: a pad that fires late asks for one more digit, while a pad
+  // that fires early refuses a PIN that was correct.
+  const pinLength = selected?.pinLength ?? 6
 
   // First start only: everything below exists for a database that has never
   // had a staff row in it. On every other day it is unreachable.
@@ -444,6 +893,11 @@ function LoginScreen({
   // ClinicApp runs; this carries what opening the clinic said, which has to
   // survive the jump to the PIN pad that follows it.
   const [said, setSaid] = useState<{ tone: 'good' | 'bad'; message: string } | null>(null)
+
+  // The tablet's own appearance, before anybody is known. Signing in adopts
+  // that person's account choice; until then the device's setting is all there
+  // is to go on, which is exactly the fallback the plan specifies.
+  useTheme()
 
   useEffect(() => {
     let cancelled = false
@@ -459,13 +913,13 @@ function LoginScreen({
     return () => { cancelled = true }
   }, [])
 
-  // Six digits and it goes. A confirm button would be a tap every staff member
-  // pays hundreds of times a day for nothing.
+  // The last digit and it goes. A confirm button would be a tap every staff
+  // member pays hundreds of times a day for nothing.
   useEffect(() => {
-    if (pin.length !== 6 || !selected || busy) return
+    if (!selected || pin.length !== pinLength || busy) return
     void onSignIn(selected.id, pin)
     setPin('')
-  }, [pin, selected, busy, onSignIn])
+  }, [pin, pinLength, selected, busy, onSignIn])
 
   // One message at a time: whatever the last sign-in attempt said, or — before
   // there has been one — whatever opening the clinic said.
@@ -479,15 +933,15 @@ function LoginScreen({
   // account nobody can ever sign into on a clinic that has no other staff.
   function pushPinDigit(digit: string) {
     setSaid(null)
-    if (newPin.length < 6) {
+    if (newPin.length < NEW_PIN_LENGTH) {
       setNewPin(newPin + digit)
       return
     }
-    const typedAgain = (confirmPin + digit).slice(0, 6)
-    if (typedAgain.length === 6 && typedAgain !== newPin) {
+    const typedAgain = (confirmPin + digit).slice(0, NEW_PIN_LENGTH)
+    if (typedAgain.length === NEW_PIN_LENGTH && typedAgain !== newPin) {
       setNewPin('')
       setConfirmPin('')
-      setSaid({ tone: 'bad', message: 'Those two PINs were not the same. Start the six digits again.' })
+      setSaid({ tone: 'bad', message: 'Those two PINs were not the same. Start the four digits again.' })
       return
     }
     setConfirmPin(typedAgain)
@@ -500,7 +954,8 @@ function LoginScreen({
   }
 
   const readyToOpen =
-    newName.trim() !== '' && newUsername.trim() !== '' && newPin.length === 6 && confirmPin === newPin
+    newName.trim() !== '' && newUsername.trim() !== '' &&
+    newPin.length === NEW_PIN_LENGTH && confirmPin === newPin
 
   async function openTheClinic() {
     setSaving(true)
@@ -529,8 +984,14 @@ function LoginScreen({
       // now; the next thing that has to happen is that PIN being typed against
       // the hash that was actually stored, while getting it wrong still costs
       // nothing but typing it again.
-      setStaff([result.staff])
-      setSelected(result.staff)
+      //
+      // pinLength is supplied here rather than taken from the response,
+      // because bootstrap answers with the staff record it created and not
+      // with a lock-screen row. It is NEW_PIN_LENGTH by construction: this
+      // account was made a moment ago, by the pad above, at that length.
+      const opened: LockScreenStaffView = { ...result.staff, pinLength: NEW_PIN_LENGTH }
+      setStaff([opened])
+      setSelected(opened)
       setOpening(false)
       setNewPin('')
       setConfirmPin('')
@@ -543,17 +1004,16 @@ function LoginScreen({
   }
 
   if (opening) {
-    const step = newPin.length < 6 ? newPin : confirmPin
+    const step = newPin.length < NEW_PIN_LENGTH ? newPin : confirmPin
     return (
-      <main className="mx-auto min-h-screen w-full max-w-lg px-5 py-10">
+      <main className="mx-auto min-h-screen w-full max-w-lg px-4 py-10 sm:px-5">
         <header className="border-b-2 border-ink pb-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-mark.png" alt="" className="mb-5 h-20 w-auto" />
+          <ClinicMark className="mb-5 h-20 w-auto" />
           <p className="eyebrow">First start · no staff yet</p>
           <h1 className="mt-1.5 text-[26px] leading-tight font-semibold tracking-tight">
             Open the clinic
           </h1>
-          <p className="mt-1 font-mono text-[13px] text-ink-2">
+          <p className="mt-1 font-mono text-[14px] text-ink-2">
             This happens once. Everyone else is added from inside.
           </p>
         </header>
@@ -593,24 +1053,29 @@ function LoginScreen({
 
             <div className="border-t border-rule pt-4">
               <p className="eyebrow text-center">
-                {newPin.length < 6 ? 'Choose a six-digit PIN' : 'Type the same six digits again'}
+                {newPin.length < NEW_PIN_LENGTH
+                  ? 'Choose a four-digit PIN'
+                  : 'Type the same four digits again'}
               </p>
 
-              <div className="mt-3 flex justify-center gap-3" role="status" aria-label="PIN entry">
-                {Array.from({ length: 6 }, (_, index) => (
-                  <span
-                    key={index}
-                    className={`h-4 w-4 rounded-full border border-rule ${index < step.length ? 'bg-ink' : ''}`}
-                  />
-                ))}
-              </div>
+              <PinDots length={NEW_PIN_LENGTH} filled={step.length} label="PIN entry" />
 
-              <div className="mx-auto mt-6 w-72">
+              {/*
+               * `w-full` under the cap, not a fixed 18rem.
+               *
+               * This pad was `w-72` — 288px — inside a card that spends 32px on
+               * its own padding inside a main that spends another 40px. On a
+               * 320px screen that is 248px of room for 288px of buttons, so the
+               * very first screen anybody sees in this clinic scrolled
+               * sideways, on the one screen where the controls are the entire
+               * point.
+               */}
+              <div className="mx-auto mt-6 w-full max-w-[288px]">
                 <Numpad disabled={saving} onDigit={pushPinDigit} onBackspace={dropPinDigit} />
               </div>
 
-              <p className="mt-3 text-center text-[12px] leading-snug text-ink-2">
-                Six digits. Not the same one six times, and not a run like 123456 — those are
+              <p className="mt-3 text-center text-[13px] leading-snug text-ink-2">
+                Four digits. Not the same one four times, and not a run like 1234 — those are
                 the first two anybody tries.
               </p>
             </div>
@@ -629,7 +1094,7 @@ function LoginScreen({
           busy={saving}
           busyLabel="Opening…"
           disabled={!readyToOpen}
-          disabledReason="Fill in a name and a username, then type the same six digits twice."
+          disabledReason="Fill in a name and a username, then type the same four digits twice."
           onClick={() => void openTheClinic()}
         >
           Open the clinic
@@ -654,40 +1119,37 @@ function LoginScreen({
 
   if (selected) {
     return (
-      <main className="mx-auto min-h-screen w-full max-w-lg px-5 py-10">
+      <main className="mx-auto min-h-screen w-full max-w-lg px-4 py-10 sm:px-5">
         <header className="border-b-2 border-ink pb-4 text-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-mark.png" alt="" className="mx-auto mb-5 h-20 w-auto" />
+          <ClinicMark className="mx-auto mb-5 h-20 w-auto" />
           <p className="eyebrow">{selected.roles.map((role) => ROLE_LABEL[role]).join(' · ')}</p>
           <h1 className="mt-1.5 text-[26px] leading-tight font-semibold tracking-tight">{selected.name}</h1>
-          <p className="mt-1 font-mono text-[13px] text-ink-2">Enter your six-digit PIN</p>
+          <p className="mt-1 font-mono text-[14px] text-ink-2">
+            {pinLength === 4 ? 'Enter your four-digit PIN' : 'Enter your six-digit PIN'}
+          </p>
         </header>
 
-        <div className="mt-7 flex justify-center gap-3" role="status" aria-label="PIN entry">
-          {Array.from({ length: 6 }, (_, index) => (
-            <span
-              key={index}
-              className={`h-4 w-4 rounded-full border border-rule ${index < pin.length ? 'bg-ink' : ''}`}
-            />
-          ))}
-        </div>
+        <PinDots length={pinLength} filled={pin.length} label={`${pinLength}-digit PIN entry`} />
 
         {shown ? (
           <div className="mt-5">
-            <Notice tone={shown.tone === 'good' ? 'good' : 'bad'}>{shown.message}</Notice>
+            <Notice tone={shown.tone === 'good' ? 'good' : shown.tone === 'unknown' ? 'unknown' : 'bad'}>
+              {shown.message}
+            </Notice>
           </div>
         ) : null}
 
-        <div className="mx-auto mt-7 w-72">
+        <div className="mx-auto mt-7 w-full max-w-[288px]">
           <Numpad
             disabled={busy}
-            onDigit={(digit) => setPin((current) => (current + digit).slice(0, 6))}
+            onDigit={(digit) => setPin((current) => (current + digit).slice(0, pinLength))}
             onBackspace={() => setPin((current) => current.slice(0, -1))}
           />
         </div>
 
         <Button
           variant="ghost"
+          icon="arrow-left"
           className="mt-7 w-full"
           onClick={() => { setSelected(null); setPin('') }}
         >
@@ -698,15 +1160,14 @@ function LoginScreen({
   }
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-lg px-5 py-10">
+    <main className="mx-auto min-h-screen w-full max-w-lg px-4 py-10 sm:px-5">
       <header className="border-b-2 border-ink pb-4">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-mark.png" alt="" className="mb-5 h-20 w-auto" />
+        <ClinicMark className="mb-5 h-20 w-auto" />
         <p className="eyebrow">Staff access · shared clinic tablet</p>
         <h1 className="mt-1.5 text-[26px] leading-tight font-semibold tracking-tight">
           Jayamurugan Clinic
         </h1>
-        <p className="mt-1 font-mono text-[13px] text-ink-2">
+        <p className="mt-1 font-mono text-[14px] text-ink-2">
           Sessions last 30 minutes on this tablet.
         </p>
       </header>
@@ -715,7 +1176,12 @@ function LoginScreen({
         <CardBody>
           <p className="eyebrow">Who are you?</p>
 
-          {loading ? <p className="mt-3 text-[13px] text-ink-2">Reading the staff list…</p> : null}
+          {loading ? (
+            <p className="mt-3 flex items-center gap-2 text-[14px] text-ink-2">
+              <Icon name="ring" size={17} className="jmc-spin" />
+              Reading the staff list…
+            </p>
+          ) : null}
 
           {loadError ? (
             <div className="mt-3">
@@ -732,11 +1198,11 @@ function LoginScreen({
           */}
           {!loading && !loadError && staff.length === 0 ? (
             <div className="mt-3 grid gap-3">
-              <p className="text-[13px] leading-relaxed text-ink-2">
+              <p className="text-[14px] leading-relaxed text-ink-2">
                 Nobody can sign in yet. A clinic arrives with an empty staff list — the first
                 administrator is created here, once, and everybody else is added from inside.
               </p>
-              <Button variant="primary" onClick={() => setOpening(true)}>
+              <Button variant="primary" icon="plus" onClick={() => setOpening(true)}>
                 Create the first administrator
               </Button>
             </div>
@@ -751,25 +1217,45 @@ function LoginScreen({
                 className="flex min-h-14 w-full items-center justify-between gap-3 rounded-box border border-rule bg-sheet px-4 text-left active:bg-paper-2"
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-[15px] font-medium">{person.name}</span>
-                  <span className="block truncate text-[12px] text-ink-2">
+                  <span className="block truncate text-[16px] font-medium">{person.name}</span>
+                  <span className="block truncate text-[13px] text-ink-2">
                     {person.roles.map((role) => ROLE_LABEL[role]).join(' · ')}
                   </span>
                 </span>
-                <span aria-hidden="true" className="shrink-0 font-mono text-ink-2">
-                  →
-                </span>
+                <Icon name="chevron-right" size={20} className="text-ink-2" />
               </button>
             ))}
           </div>
 
           {shown ? (
             <div className="mt-4">
-              <Notice tone={shown.tone === 'good' ? 'good' : 'bad'}>{shown.message}</Notice>
+              <Notice tone={shown.tone === 'good' ? 'good' : shown.tone === 'unknown' ? 'unknown' : 'bad'}>
+                {shown.message}
+              </Notice>
             </div>
           ) : null}
         </CardBody>
       </Card>
     </main>
+  )
+}
+
+/**
+ * How many digits have been typed, without showing which.
+ *
+ * `role="status"` so a screen-reader user hears the count rise; the label says
+ * how many are expected, because a pad that submits on the last digit is
+ * otherwise silent about how many that is.
+ */
+function PinDots({ length, filled, label }: { length: number; filled: number; label: string }) {
+  return (
+    <div className="mt-7 flex justify-center gap-3" role="status" aria-label={label}>
+      {Array.from({ length }, (_, index) => (
+        <span
+          key={index}
+          className={`h-4 w-4 rounded-full border border-rule ${index < filled ? 'bg-ink' : ''}`}
+        />
+      ))}
+    </div>
   )
 }
