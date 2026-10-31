@@ -21,6 +21,7 @@ npm run test:db               # the characterization suite against it
 npm run staging:drill         # the real backup and restore scripts, rehearsed
 npm run staging:archive-drill # the STORED-object restore proof, rehearsed — §5c
 npm run staging:rehearse      # every migration from Slice 2 on, over a clinic with history
+npm run staging:clean-start   # launch night: the clean start, then the twenty-one, over the clinic's nine
 npm run staging:down          # stop it (add :destroy to remove it entirely)
 ```
 
